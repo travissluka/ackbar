@@ -5,3 +5,7 @@ __pycache__/
 venv/
 *.egg-info/
 .claude/settings.local.json
+
+# build artifacts and downloaded test data
+pkg/jedi/build/
+pkg/jedi/test-data-release/

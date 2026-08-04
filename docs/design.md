@@ -92,11 +92,39 @@ Consequences:
   Self-perpetuating, like v2's resubmission, but at the graph level instead of stuffing an
   entire cycle into one job.
 
-There is a thin **site layer**: spack-stack path, partition, account, core count, MPI launcher,
-`scratch_root`, `output_root`, and the queue limits below. That is site configuration, not a
-workload manager abstraction. v2's `MACHINE` / `MODEL_SCRIPT` indirection layers are not
-carried forward, and neither is an abstraction over Slurm itself. If a machine without Slurm
-ever matters, the graph is data and a different emitter gets written then.
+There is a thin **site layer**, described below. v2's `MACHINE` / `MODEL_SCRIPT` indirection
+layers are not carried forward, and neither is an abstraction over Slurm itself. If a machine
+without Slurm ever matters, the graph is data and a different emitter gets written then.
+
+## The site layer
+
+Machine-dependent paths are not eliminated, because they cannot be. They are **confined to one
+file per machine**, and nothing outside that file may name a path that only exists on one
+machine.
+
+`site/<name>.sh`, selected by `$ACKBAR_SITE` and defaulting to the short hostname. It is
+sourced by the build scripts and read by the workflow, so there is exactly one place to edit
+when ackbar lands on a new machine, and one file to read to find out what a machine assumes.
+
+What it carries:
+
+| | |
+|---|---|
+| environment | how to activate spack-stack (its path is machine dependent, and on rancor it currently lives in a personal `env.sh` outside the repo) |
+| build | `NJOBS`, build type, and the CMake generator |
+| data roots | dataset root, `scratch_root`, `output_root` |
+| scheduler | partition, account, MPI launcher, `max_submit_jobs`, `max_array_size`, `can_submit_from_compute` |
+
+**Make is the default generator.** Ninja is faster and is what rancor happens to have, but it
+is not reliably present on HPC, and a build that only works where Ninja is installed is a
+machine dependency wearing a different hat. A site file may opt into Ninja; nothing else may
+assume it.
+
+This is worth doing early rather than late, because the leaks accumulate quietly. Already
+present before any workflow code exists: `source ~/work/env.sh` in both build scripts, a
+`/data/...` dataset root reached through a symlink inside a submodule, `/data/ackbar` scratch
+paths in the Slurm smoke test, and a CMake generator exported by a personal environment file.
+None of those are wrong on rancor. All of them are wrong everywhere else.
 
 ### What Slurm actually does, as opposed to what is convenient to assume
 

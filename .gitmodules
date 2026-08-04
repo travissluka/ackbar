@@ -2,3 +2,31 @@
 	path = pkg/mom6sis2
 	url = https://github.com/NOAA-GFDL/MOM6-examples.git
 	branch = dev/gfdl
+[submodule "pkg/jedi/gsw"]
+	path = pkg/jedi/gsw
+	url = ssh://git@github.com/jcsda-internal/GSW-Fortran.git
+	branch = develop
+[submodule "pkg/jedi/oops"]
+	path = pkg/jedi/oops
+	url = ssh://git@github.com/jcsda-internal/oops.git
+	branch = develop
+[submodule "pkg/jedi/vader"]
+	path = pkg/jedi/vader
+	url = ssh://git@github.com/jcsda-internal/vader.git
+	branch = develop
+[submodule "pkg/jedi/saber"]
+	path = pkg/jedi/saber
+	url = ssh://git@github.com/jcsda-internal/saber.git
+	branch = develop
+[submodule "pkg/jedi/ioda"]
+	path = pkg/jedi/ioda
+	url = ssh://git@github.com/jcsda-internal/ioda.git
+	branch = develop
+[submodule "pkg/jedi/ufo"]
+	path = pkg/jedi/ufo
+	url = ssh://git@github.com/jcsda-internal/ufo.git
+	branch = develop
+[submodule "pkg/jedi/soca"]
+	path = pkg/jedi/soca
+	url = ssh://git@github.com/jcsda-internal/soca.git
+	branch = develop
