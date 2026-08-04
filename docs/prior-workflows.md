@@ -71,7 +71,7 @@ not propagate failure. Neither touches the expensive parts.
 The self-resubmission heuristic compounds this: the job is sized against a measured average
 cycle time, which bakes in the serial cost rather than exposing it.
 
-**Requirement for mmw: member-level work must be expressible as independent units the
+**Requirement for ACKBAR: member-level work must be expressible as independent units the
 scheduler can place concurrently.** Whether they actually run at once is a resource decision
 (on rancor, 8 cores means something like 4 members at 2 PEs, or oversubscription), not a
 structural one.
@@ -223,7 +223,7 @@ init, hofx, var, checkpoint. Everything else is a stub or absent:
 For SOCA configuration content, port from v2 and re-check against current SOCA. Take v3 for
 structure only.
 
-## Implications for mmw
+## Implications for ACKBAR
 
 1. **Ensemble members are independent scheduler units.** Non-negotiable, and the single
    biggest reason not to inherit v2. Design it in from the first ensemble step, not after the

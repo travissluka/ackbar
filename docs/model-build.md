@@ -1,7 +1,7 @@
 # Building MOM6-SIS2
 
-Our clone: `~/work/mmw/mom6sis2`, branch **`dev/gfdl`**, tracked as a git submodule of the
-`mmw` repo. Build driver: `~/work/mmw/build-model.sh`.
+Our clone: `~/work/ackbar/mom6sis2`, branch **`dev/gfdl`**, tracked as a git submodule of the
+`ackbar` repo. Build driver: `~/work/ackbar/build-model.sh`.
 
 Keep this clone and its nested submodules at **full history**, not `--depth 1`. A shallow
 clone only holds commits near a branch tip, so once `dev/gfdl` (or any nested submodule's
@@ -41,7 +41,7 @@ the risk that matters for restart-file interop between the forecast model and th
 Check where things stand with:
 
 ```bash
-git -C ~/work/mmw/mom6sis2 log -1 --date=short --format='%h %ad %s'
+git -C ~/work/ackbar/mom6sis2 log -1 --date=short --format='%h %ad %s'
 git -C ~/work/jedi/bundle/soca/external/mom6/MOM6 log -1 --date=short --format='%h %ad %s'
 ```
 
@@ -92,12 +92,12 @@ one-way step, so do it before spinning up, not mid-experiment.
 
 ## Cloning
 
-Normally you get this for free by cloning the `mmw` repo, which pins `mom6sis2` as a
+Normally you get this for free by cloning the `ackbar` repo, which pins `mom6sis2` as a
 submodule:
 
 ```bash
-git -C ~/work/mmw submodule update --init mom6sis2
-cd ~/work/mmw/mom6sis2
+git -C ~/work/ackbar submodule update --init mom6sis2
+cd ~/work/ackbar/mom6sis2
 git submodule update --init \
     src/MOM6 src/SIS2 src/FMS2 src/coupler src/atmos_null src/land_null \
     src/ice_param src/icebergs src/mkmf
@@ -145,15 +145,15 @@ A 12-hour `OM_1deg` cold start on 8 PEs, which exercises the executable, the `.d
 wiring and restart writing together.
 
 ```bash
-RD=/data/mmw/test/om_1deg_smoke
+RD=/data/ackbar/test/om_1deg_smoke
 mkdir -p $RD/RESTART
-cd ~/work/mmw/mom6sis2/ice_ocean_SIS2/OM_1deg
+cd ~/work/ackbar/mom6sis2/ice_ocean_SIS2/OM_1deg
 cp input.nml MOM_input MOM_override SIS_input SIS_override \
    data_table diag_table diag_table.MOM6 diag_table.SIS field_table $RD/
 ln -s $PWD/INPUT $RD/INPUT          # symlink, do NOT cp -rL (dereferences ~1GB of WOA13)
 printf 'LAYOUT = 4,2\nIO_LAYOUT = 1,1\n' > $RD/MOM_layout
 printf 'LAYOUT = 4,2\nIO_LAYOUT = 1,1\n' > $RD/SIS_layout
-ln -sf ~/work/mmw/mom6sis2/ice_ocean_SIS2/build/coupler_main $RD/coupler_main
+ln -sf ~/work/ackbar/mom6sis2/ice_ocean_SIS2/build/coupler_main $RD/coupler_main
 cd $RD && source ~/work/env.sh && mpiexec -n 8 ./coupler_main > run.log 2>&1
 ```
 

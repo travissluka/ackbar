@@ -1,6 +1,6 @@
 # Slurm on rancor
 
-A single-node Slurm so the mmw workflow engine can be developed against a real batch
+A single-node Slurm so the ACKBAR workflow engine can be developed against a real batch
 scheduler (sbatch, job dependencies, arrays, sacct polling) before it ever runs on an
 HPC. It is a test scheduler, not a way to get more out of the box: rancor has 8 physical
 cores and no other users.

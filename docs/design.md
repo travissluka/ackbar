@@ -1,4 +1,4 @@
-# mmw workflow design
+# ACKBAR workflow design
 
 Design decisions for the cycling SOCA workflow. Rationale traces back to
 `docs/prior-workflows.md` wherever a decision exists to avoid repeating v2 or v3.

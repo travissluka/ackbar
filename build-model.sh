@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build MOM6-SIS2 (ice_ocean_SIS2 / coupler_main) from ~/work/mmw/mom6sis2
+# Build MOM6-SIS2 (ice_ocean_SIS2 / coupler_main) from ~/work/ackbar/mom6sis2
 # using the spack-stack toolchain. See docs/model-build.md.
 set -e
 

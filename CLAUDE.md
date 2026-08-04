@@ -1,6 +1,6 @@
-# CLAUDE.md - mmw
+# CLAUDE.md - ackbar
 
-Guidance for Claude Code in `~/work/mmw`.
+Guidance for Claude Code in `~/work/ackbar`.
 
 ## Name
 
@@ -12,7 +12,7 @@ concurrent units. The lineage is real, not invented: `scripts/workflow/cycle.sh`
 workflow already carried `# "It's a trap!!" -Admiral Ackbar` above its abort handler, a joke
 about bash's `trap` builtin. Worth putting back.
 
-The repository and working directory are still `mmw`.
+The repository, working directory, and experiment output tree are all `ackbar`.
 
 ## Goal
 
@@ -35,16 +35,16 @@ degree) is the target for real experiments; `OM_1deg` is the development and tes
 
 | Path | What |
 |---|---|
-| `~/work/mmw` | this project (the new workflow) |
+| `~/work/ackbar` | this project (the new workflow) |
 | `~/work/jedi` | JEDI Skylab bundle; has its own `CLAUDE.md` and `claude/` doc set |
 | `~/work/jedi/bundle/soca` | SOCA source (model interface for MOM6/SIS2) |
 | `~/work/jedi/build/bin` | built `soca_*.x` executables |
 | `~/work/soca-science` | reference: old bash workflow (read-only reference) |
 | `~/work/soca-science-v3` | reference: unfinished Python rewrite |
 | `~/work/soca-science-v3.test` | its test experiment dir; has a 1deg `model_data/` tree |
-| `~/work/mmw/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
-| `~/work/mmw/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
-| `/data/mmw` | our experiment and test-run output |
+| `~/work/ackbar/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
+| `~/work/ackbar/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
+| `/data/ackbar` | our experiment and test-run output |
 | `~/work/mom6sis2` | old (2022) clone with a hand-rolled mkmf `build.sh`; reference only |
 | `/data/mom6-datasets` | the `.datasets` tree for MOM6-examples; see `docs/model-data.md` |
 | `/data` | experiment output goes here, not `/home` (check free space with `df -h /data`) |

@@ -5,11 +5,11 @@
 #
 #   tools/slurm/smoke-test.sh
 #
-# Runs as your normal user. Scratch lands in /data/mmw/test/slurm-smoke.
+# Runs as your normal user. Scratch lands in /data/ackbar/test/slurm-smoke.
 
 set -euo pipefail
 
-WORK=/data/mmw/test/slurm-smoke
+WORK=/data/ackbar/test/slurm-smoke
 rm -rf "$WORK"; mkdir -p "$WORK"; cd "$WORK"
 
 hr() { printf '\n--- %s\n' "$*"; }
