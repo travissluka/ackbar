@@ -31,6 +31,7 @@ degree) is the target for real experiments; `OM_1deg` is the development and tes
 | `~/work/soca-science-v3` | reference: unfinished Python rewrite |
 | `~/work/soca-science-v3.test` | its test experiment dir; has a 1deg `model_data/` tree |
 | `~/work/mmw/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
+| `~/work/mmw/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
 | `/data/mmw` | our experiment and test-run output |
 | `~/work/mom6sis2` | old (2022) clone with a hand-rolled mkmf `build.sh`; reference only |
 | `/data/mom6-datasets` | the `.datasets` tree for MOM6-examples; see `docs/model-data.md` |
@@ -49,6 +50,19 @@ Sets `JEDI_ROOT`, `OMP_NUM_THREADS=1`, ccache/mold/Ninja build accelerators.
 `ecflow` module; both are candidates to avoid building things ourselves.
 
 Machine budget: 8 physical cores / 16 threads. `mpiexec -n 8` for MPI runs, `make -j16`.
+
+### Batch scheduler
+
+rancor runs a real single-node Slurm so the workflow can be developed against `sbatch`,
+job arrays, `afterok` dependencies, and `sacct` polling before it ever sees an HPC.
+**`docs/slurm.md`** is the reference: install/reconfigure procedure, cluster shape, the
+portable command subset the workflow should limit itself to, the traps (`mpiexec`/hydra
+needs `HYDRA_LAUNCHER=fork` inside an allocation), and how to switch to two fake nodes.
+
+The essentials: `tools/slurm/` holds the config, `sudo tools/slurm/install.sh config svc`
+applies a change (never edit `/etc/slurm` directly), partitions are `debug` (30 min) and
+`compute` (8 h, default), and job outcome comes from `sacct`, never from a job's absence
+from `squeue`.
 
 ## MOM6-SIS2 (the model)
 
@@ -197,9 +211,10 @@ Not started: anything SOCA-side or workflow-side.
 ## Open decisions
 
 - Workflow engine: plain bash self-resubmission (v1), rocoto (v3, not installed), ecflow
-  (available in spack-stack), cylc, or none at all given this is a single workstation with
-  no batch scheduler. rancor has no SLURM, so the "workload manager" abstraction both
-  prior workflows carry may be dead weight.
+  (available in spack-stack), cylc, or a scheduler-native chain of `sbatch` dependencies.
+  rancor now runs a single-node Slurm (see `docs/slurm.md`), so the "workload manager"
+  abstraction both prior workflows carry can be developed and tested here rather than
+  written blind against a real HPC.
 - Whether the workflow lives as a Python package (v3 style) or as scripts.
 - How to write the analysis back into MOM6 restarts now that the checkpoint app is gone.
 - Whether the SOCA model config keeps MOM6's back-compat parameter pins

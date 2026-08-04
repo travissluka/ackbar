@@ -1,0 +1,22 @@
+# slurmdbd.conf for rancor. install.sh substitutes @DBPASS@ and installs this
+# to /etc/slurm/slurmdbd.conf mode 0600 owned by slurm.
+AuthType=auth/munge
+DbdHost=localhost
+DbdPort=6819
+
+SlurmUser=slurm
+DebugLevel=info
+LogFile=/var/log/slurm/slurmdbd.log
+PidFile=/run/slurmdbd.pid
+
+StorageType=accounting_storage/mysql
+StorageHost=localhost
+StoragePort=3306
+StorageUser=slurm
+StoragePass=@DBPASS@
+StorageLoc=slurm_acct_db
+
+# Keep everything; this is a test cluster, the tables stay tiny.
+PurgeEventAfter=12months
+PurgeJobAfter=12months
+PurgeStepAfter=12months
