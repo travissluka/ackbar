@@ -2,6 +2,18 @@
 
 Guidance for Claude Code in `~/work/mmw`.
 
+## Name
+
+**ACKBAR: Assimilation Cycling Kit for Benchmarking And Research.**
+
+Named for the Mon Calamari admiral: an aquatic species, and he commands a fleet, which is the
+right image for a system whose defining feature is that ensemble members run as independent
+concurrent units. The lineage is real, not invented: `scripts/workflow/cycle.sh` in the v1 bash
+workflow already carried `# "It's a trap!!" -Admiral Ackbar` above its abort handler, a joke
+about bash's `trap` builtin. Worth putting back.
+
+The repository and working directory are still `mmw`.
+
 ## Goal
 
 Build a new ocean DA workflow for running cycling SOCA experiments (3DVAR / LETKF / hybrid)
