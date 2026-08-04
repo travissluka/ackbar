@@ -49,7 +49,8 @@ in its own config file as "the regional hack", is not the model to follow.
 | `~/work/soca-science` | reference: old bash workflow (read-only reference) |
 | `~/work/soca-science-v3` | reference: unfinished Python rewrite |
 | `~/work/soca-science-v3.test` | its test experiment dir; has a 1deg `model_data/` tree |
-| `~/work/ackbar/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
+| `~/work/ackbar/pkg/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
+| `~/work/ackbar/pkg/jedi` | planned: the vendored JEDI bundle, one submodule per repo. Not created yet |
 | `~/work/ackbar/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
 | `/data/ackbar` | our experiment and test-run output |
 | `~/work/mom6sis2` | old (2022) clone with a hand-rolled mkmf `build.sh`; reference only |
@@ -240,11 +241,38 @@ single-node install, `docs/slurm.md`, is the development target); observations a
 downloaded in-cycle and OSSE is the first obs source; spinup, static B, observations and
 forcing are all offline stages.
 
+Settled by the design review: the cycle throttle is 1; the healer is a manual command, not a
+recurring job; config provenance is layer replay rather than wrapped values; scratch and output
+are separate roots named by the site layer; every member including the control is `mem###`;
+task completion is temp-then-rename plus a sentinel, never skip-if-exists; cleanup keys off
+artifact existence rather than job state; the whole config is schema-validated and every job's
+YAML is generated up front before anything is submitted; the model is a config axis
+(`mom6sis2`, `persistence`, `stub`); a stub model plus fault injection is milestone 0, because
+8 cores cannot demonstrate member parallelism with the real model.
+
+Four Slurm behaviors the design now handles explicitly, all easy to get wrong: unsatisfiable
+dependents pend forever rather than being cancelled unless the site sets
+`kill_invalid_depend`; requeue poisons dependencies permanently, so healing always means fresh
+job ids; a requeued batch script reruns from its first line, so the submitter needs
+`--no-requeue` plus an `O_EXCL` marker; and `afterok` edges cannot be attached to a job that
+ended more than `MinJobAge` ago.
+
+**`pkg/` is where everything ackbar builds lives.** `pkg/mom6sis2` is there now; `pkg/jedi`,
+the vendored bundle with one submodule per JEDI repo, is not created yet. Until it is,
+`~/work/jedi` is what SOCA executables come from.
+
 ## Open decisions
 
-- How to write the analysis back into MOM6 restarts now that the checkpoint app is gone. Both
-  IAU and a direct restart write are wanted, selectable per experiment. Investigate what SOCA
-  offers before writing anything; resolve by spike test during implementation.
+- How to write the analysis back into MOM6 restarts now that the checkpoint app is gone.
+  Direct restart write is first, behind a single writeback contract ("produce the restart set
+  the next forecast reads") so IAU is later an alternate implementation rather than a second
+  graph shape. Investigate what SOCA offers before writing anything; spike before milestone 3.
+- What a solver does with a missing or diverged ensemble member: fail the cycle, run degraded,
+  or replace from the mean. Different graph shapes and different science, so it is per
+  experiment.
+- Whether getting `srun` to launch MOM6 on rancor (a PMI plugin Slurm can talk to) is worth the
+  effort. Decided yes; not done. Without it, job steps and per-task accounting differ between
+  rancor and production.
 - Whether the SOCA model config keeps MOM6's back-compat parameter pins
   (`EQN_OF_STATE = "WRIGHT"` and friends) or drops them for the corrected physics with
   `ENABLE_BUGS_BY_DEFAULT = False`. See `docs/model-build.md`. Decide before generating an

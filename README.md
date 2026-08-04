@@ -28,17 +28,23 @@ to be cheap to define, reproducible, and directly comparable to one another.
 - **Everything an experiment needs exists before the experiment starts.** Initial conditions,
   static background error, observations and forcing are produced by separate offline stages and
   consumed read-only. Nothing is generated on the fly during cycle one.
-- **Configuration is explicit layers**, deep-merged, with provenance recorded so any resolved
-  value can be traced to the layer that set it. YAML is generated from data structures, never
-  templated with `sed`.
+- **Configuration is explicit layers**, deep-merged, validated against a schema, and fully
+  resolved before anything is submitted. Every job's YAML is generated and checked up front, so
+  a bad path fails in seconds rather than eight hours into a run. YAML is generated from data
+  structures, never templated with `sed`.
 - **Two solvers, not seven modes.** Variational and LETKF, with covariance (static, ensemble,
-  hybrid) and window (3D, FGAT, 4D) carried by configuration rather than by mode dispatch.
-- **Domain is a configuration axis**, not a flag. Global and regional are the same code path,
-  with regional adding open boundary forcing, grid-edge masking, and domain-scoped observation
-  culling as ordinary configured stages.
+  hybrid) and window (3D, FGAT, 4D) carried by configuration rather than by mode dispatch. The
+  forecast model is a configuration axis too: MOM6-SIS2, persistence, or a stub that exercises
+  the workflow at no model cost.
+- **Domain is a configuration axis**, not a flag. Regional is a set of ordinary configured
+  stages (open boundary forcing, grid-edge masking, domain-scoped observation culling) rather
+  than a special mode, though it also carries a build-level constraint on how SOCA is compiled.
+- **Everything ackbar runs is pinned by ackbar.** The JEDI bundle and the forecast model are
+  submodules under `pkg/`, and each experiment records the exact commits and binaries that
+  produced it. Comparisons are only meaningful if the code is accounted for.
 - **Built to be monitored and healed**, because HPCs kill jobs for reasons unrelated to the
-  science. Per-stage CPU and memory are harvested from `sacct` into the experiment directory,
-  and failed subgraphs can be regenerated and resubmitted automatically.
+  science. Per-stage CPU and memory are harvested into the experiment directory, and a failed
+  subgraph can be regenerated and resubmitted.
 
 ## Documentation
 
@@ -54,20 +60,22 @@ to be cheap to define, reproducible, and directly comparable to one another.
 
 ```
 build-model.sh     build MOM6-SIS2
+build-jedi.sh      build the JEDI bundle
 docs/              design and reference documentation
-mom6sis2/          submodule: NOAA-GFDL/MOM6-examples, branch dev/gfdl
+pkg/jedi/          the JEDI bundle: CMakeLists plus one submodule per repo
+pkg/mom6sis2/      submodule: NOAA-GFDL/MOM6-examples, branch dev/gfdl
 tools/slurm/       local single-node Slurm configuration
 ```
 
 ## Getting the source
 
-The model is a submodule and needs **full history**, not a shallow clone, so that pinned
-commits stay fetchable once upstream branches move on.
+Submodules need **full history**, not a shallow clone, so that pinned commits stay fetchable
+once upstream branches move on.
 
 ```bash
 git clone https://github.com/travissluka/ackbar.git
 cd ackbar
-git submodule update --init mom6sis2
+git submodule update --init pkg/mom6sis2
 ```
 
 See [`docs/model-build.md`](docs/model-build.md) for the nested submodules, the input data

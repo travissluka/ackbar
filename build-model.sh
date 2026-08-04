@@ -1,9 +1,9 @@
 #!/bin/bash
-# Build MOM6-SIS2 (ice_ocean_SIS2 / coupler_main) from ~/work/ackbar/mom6sis2
+# Build MOM6-SIS2 (ice_ocean_SIS2 / coupler_main) from ~/work/ackbar/pkg/mom6sis2
 # using the spack-stack toolchain. See docs/model-build.md.
 set -e
 
-MODEL_DIR=${MODEL_DIR:-$(dirname "$(readlink -f "$0")")/mom6sis2}
+MODEL_DIR=${MODEL_DIR:-$(dirname "$(readlink -f "$0")")/pkg/mom6sis2}
 TARGET=${TARGET:-ice_ocean_SIS2}
 
 source ~/work/env.sh

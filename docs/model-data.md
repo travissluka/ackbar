@@ -27,7 +27,7 @@ find -L ice_ocean_SIS2/OM_1deg/INPUT -maxdepth 1 -type l    # prints only BROKEN
 ## How it is wired on rancor
 
 ```
-~/work/ackbar/mom6sis2/.datasets -> /data/mom6-datasets
+~/work/ackbar/pkg/mom6sis2/.datasets -> /data/mom6-datasets
 ```
 
 `/data/mom6-datasets` is assembled, not downloaded wholesale:
