@@ -185,9 +185,10 @@ Model side is up:
 
 - `mom6sis2` cloned on `dev/gfdl` with the needed submodules, `.datasets` wired, builds
   clean to `ice_ocean_SIS2/build/coupler_main`.
-- `OM_1deg` runs: a 12-hour cold start on 8 PEs from WOA13 completed and wrote a full
-  restart set. The `main`-branch version of that run is kept at
-  `/data/mmw/test/om_1deg_smoke.main` for comparison against the `dev/gfdl` build.
+- `OM_1deg` runs: a 12-hour cold start on 8 PEs from WOA13 completes and writes a full
+  restart set. Built from either the `main` or the `dev/gfdl` MOM6 pin it gives identical
+  `ocean.stats`, because the config carries back-compat pins for every answer-changing
+  default that moved in between.
 - `OM_1deg` and `OM4_05` input data resolves fully; `OM4_025` is short only its
   `mask_table.*` files (see `docs/model-data.md`).
 
