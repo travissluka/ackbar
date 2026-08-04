@@ -1,0 +1,4 @@
+[submodule "mom6sis2"]
+	path = mom6sis2
+	url = https://github.com/NOAA-GFDL/MOM6-examples.git
+	branch = dev/gfdl
