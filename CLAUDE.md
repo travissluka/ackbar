@@ -208,20 +208,31 @@ Model side is up:
 
 Not started: anything SOCA-side or workflow-side.
 
+## Design
+
+**`docs/design.md`** is the reference for how the workflow is meant to work: Slurm as a hard
+dependency owning the dependency graph, offline stages producing every experiment input,
+layered configuration, the DA mode decomposition, cross-cycle overlap, resource accounting,
+monitoring and healing, and the build order. **`docs/prior-workflows.md`** records what the two
+prior attempts did and which of their mistakes the design exists to avoid.
+
+Settled since those docs were written: Slurm is assumed rather than abstracted over (rancor's
+single-node install, `docs/slurm.md`, is the development target); observations are never
+downloaded in-cycle and OSSE is the first obs source; spinup, static B, observations and
+forcing are all offline stages.
+
 ## Open decisions
 
-- Workflow engine: plain bash self-resubmission (v1), rocoto (v3, not installed), ecflow
-  (available in spack-stack), cylc, or a scheduler-native chain of `sbatch` dependencies.
-  rancor now runs a single-node Slurm (see `docs/slurm.md`), so the "workload manager"
-  abstraction both prior workflows carry can be developed and tested here rather than
-  written blind against a real HPC.
-- Whether the workflow lives as a Python package (v3 style) or as scripts.
-- How to write the analysis back into MOM6 restarts now that the checkpoint app is gone.
+- How to write the analysis back into MOM6 restarts now that the checkpoint app is gone. Both
+  IAU and a direct restart write are wanted, selectable per experiment. Investigate what SOCA
+  offers before writing anything; resolve by spike test during implementation.
 - Whether the SOCA model config keeps MOM6's back-compat parameter pins
   (`EQN_OF_STATE = "WRIGHT"` and friends) or drops them for the corrected physics with
-  `ENABLE_BUGS_BY_DEFAULT = False`. See `docs/model-build.md`.
-- Which initial condition to cycle from: cold start from WOA13, or the spun-up 1deg
-  restarts in `/data/OLD/soca_science_expdata`.
+  `ENABLE_BUGS_BY_DEFAULT = False`. See `docs/model-build.md`. Decide before generating an
+  initial condition, since dropping them invalidates any state spun up under the old physics.
+- How much of the workflow lives in a Python package versus in the job scripts it emits.
+- Ensemble geometry on rancor: 8 cores against an 8-PE model run means parallel members need
+  fewer PEs each, or oversubscription.
 
 ## Conventions
 
