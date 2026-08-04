@@ -203,6 +203,50 @@ is `solver: none`, and observation evaluation is a property of any run. In a DA 
 analysis application produces `ombg`/`oman` itself; in a free run a standalone hofx task
 produces the same diagnostics.
 
+## Domains
+
+Three classes must be supported, not two:
+
+- **global 1 degree** (`OM_1deg`), the development and test domain
+- **global quarter degree** (`OM4_025`), the production domain
+- **regional domains at various resolutions**
+
+**Domain is a first-class configuration axis**, on the same footing as DA mode. It is not a
+flag bolted onto a global system, which is exactly what v2 did: `DA_REGIONAL_ENABLED` is
+described in its own config file as "triggers the regional hack". That implementation is not
+carried forward. The capability is.
+
+A domain layer names the grid, bathymetry, resolution, PE layout, and open boundary setup.
+The static and initial-condition stages key off it.
+
+Regional costs more than a different grid file. What it actually pulls in:
+
+- **Symmetric memory.** MOM6 regional configurations use symmetric memory, and SOCA links its
+  own MOM6 as a library from NOAA-EMC. If the two are built inconsistently the restart array
+  shapes disagree. v2 papered over this with `soca_dynsym2dyn.sh`, converting restarts between
+  layouts, while its own config file carried the note "TODO investigate building soca with
+  MOM6 regional (symmetric memory)". That TODO is the real fix and it is a build-level
+  decision, not a workflow one. It has to be settled before regional works at all.
+- **Open boundary conditions.** Regional runs need boundary forcing from a parent solution, so
+  they add both a per-cycle input and an offline stage that global configurations do not have.
+  Note that MOM6's OBC code was substantially overhauled between the 2024 and 2026 pins (see
+  `docs/model-build.md`), so any OBC configuration ported from a v2-era regional setup should
+  be assumed stale until checked.
+- **Grid edge masking.** The analysis must not write into the boundary and sponge zone. v2
+  zeroed the outer ring of `mask2d` after gridgen (`soca_domom6_action.py mask-grid-edges`).
+- **Observation culling to the domain.** v2 did this per cycle with `soca_domaincheck.py` and
+  flagged it in its own source as a temporary fix that "new workflow should address in a more
+  effective manner". Cull at archive-build time instead, so the per-cycle path stays identical
+  across domains.
+- **Domain-specific observation configuration.** v2 kept a parallel tree under
+  `configs/soca/regional/hat10/obs/` where several observers genuinely differ from their
+  global counterparts (for example ADT variants referenced to a different geoid). So observer
+  configuration layers by domain, which the configuration design already supports.
+- **A constraint on the writeback decision.** v2 was forced onto the python direct-write path
+  for regional, because its restarts were dynamic-symmetric and the model-based checkpoint
+  could not handle them. Whichever approach the writeback spike settles on has to work for
+  regional too, not just global.
+
 ## Observations
 
 **No downloading inside the cycle.** v2 could download and convert observations mid-cycle
@@ -228,14 +272,15 @@ Each produces versioned, read-only inputs. Experiments are pure consumers.
 
 | Stage | Keyed on | Contents |
 |---|---|---|
-| static | resolution | `soca_gridspec.nc`, horizontal correlation scales, localization scales |
-| initial condition | source and date | a spun-up restart set |
-| observations | period | archive of ioda files, real or OSSE-generated |
+| static | domain | `soca_gridspec.nc`, horizontal correlation scales, localization scales |
+| initial condition | domain, source, date | a spun-up restart set |
+| observations | period (and domain, if culled) | archive of ioda files, real or OSSE-generated |
 | forcing | period | atmospheric forcing archive |
+| boundary forcing | domain, period | open boundary conditions from a parent solution (regional only) |
 
-Static is keyed on **resolution, not experiment**, so one `static/om_1deg/` is shared
-read-only across every experiment at that resolution. That is what makes experiments
-comparable by construction.
+Static is keyed on **domain, not experiment**, so one `static/om_1deg/` is shared read-only
+across every experiment on that domain. That is what makes experiments comparable by
+construction.
 
 **Spinup is a separate job script**, not part of any experiment. It either cold starts from
 WOA13 and integrates with realistic atmospheric forcing, or converts an external state (GFS,
@@ -309,7 +354,8 @@ milestones; everything else is configuration.
 
 ## Not carried forward
 
-From v2: in-cycle observation downloading, R2D2, the regional hack, the `MACHINE` and
+From v2: in-cycle observation downloading, R2D2, the regional *implementation* (the capability
+is first class here, see Domains above), the `MACHINE` and
 `MODEL_SCRIPT` indirection layers, `sed`-templated YAML, environment variables as the
 inter-step interface, generate-if-missing inputs, the 3D-to-4D symlink farm, and every serial
 member loop.

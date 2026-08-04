@@ -69,9 +69,12 @@ commits over ~2 years. The parts with teeth:
 - **Restart and I/O rework**: `MOM_restart.F90` and `MOM_io.F90` each grew by ~550 lines,
   and EMC's "flexible restart" work merged. This is the code path SOCA's analysis-to-restart
   interop depends on, and the strongest argument for staying close to SOCA's MOM6 vintage.
-- Bulk churn not relevant to a global ocean-ice config: a very large open-boundary-condition
-  overhaul (would matter for regional), ALE/regridding, ice shelf, CVMix and MARBL updates,
-  new Zanna-Bolton and ML-diffusivity parameterizations, Apache-2 relicense.
+- **A very large open-boundary-condition overhaul.** Irrelevant to the global configs, and
+  directly relevant to the regional domains ACKBAR is meant to support (see Domains in
+  `docs/design.md`). Treat any OBC configuration ported from a soca-science-era regional setup
+  as stale until checked against this MOM6.
+- Bulk churn not relevant to a global ocean-ice config: ALE/regridding, ice shelf, CVMix and
+  MARBL updates, new Zanna-Bolton and ML-diffusivity parameterizations, Apache-2 relicense.
 
 Note that the `OM_1deg` *configuration* barely differs between the branches: `MOM_override`,
 `SIS_input`, `input.nml`, `data_table` and `diag_table` are identical, and `MOM_input` gains

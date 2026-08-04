@@ -31,6 +31,13 @@ Development plan: get the latest MOM6-SIS2 from GFDL compiling first, prove the 
 (`OM_1deg`) global config runs, then build the DA cycling around it. `OM4_025` (quarter
 degree) is the target for real experiments; `OM_1deg` is the development and test config.
 
+**Regional domains at various resolutions are in scope**, alongside the two global configs,
+and domain is a first-class configuration axis rather than a flag. Regional pulls in
+symmetric-memory restart compatibility with SOCA's own MOM6, open boundary forcing from a
+parent solution, grid-edge masking, domain-scoped observation culling, and domain-specific
+observer configuration. See Domains in `docs/design.md`. v2's `DA_REGIONAL_ENABLED`, described
+in its own config file as "the regional hack", is not the model to follow.
+
 ## Where things live
 
 | Path | What |

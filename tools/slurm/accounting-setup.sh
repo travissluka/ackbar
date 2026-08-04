@@ -10,13 +10,13 @@
 set -euo pipefail
 
 CLUSTER=rancor
-ACCOUNT=mmw
+ACCOUNT=ackbar
 USER_NAME=${SUDO_USER:-$USER}
 
 [[ $EUID -eq 0 ]] || { echo "run me with sudo" >&2; exit 1; }
 
 sacctmgr -i add cluster "$CLUSTER"                                     || true
-sacctmgr -i add account "$ACCOUNT" Description="mmw ocean DA workflow" \
+sacctmgr -i add account "$ACCOUNT" Description="ACKBAR ocean DA workflow" \
          Organization=jcsda Cluster="$CLUSTER"                         || true
 sacctmgr -i add user "$USER_NAME" Account="$ACCOUNT" \
          DefaultAccount="$ACCOUNT" AdminLevel=Admin                    || true

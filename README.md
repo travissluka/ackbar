@@ -10,9 +10,9 @@ Status: **design stage.** The model side works; no workflow code is written yet.
 ## What it is for
 
 Running and comparing cycling marine DA experiments: 3DVar, LETKF, ensemble and hybrid
-EnVar, over 3D and 4D windows, at global 1 degree and quarter degree resolution. The
-comparison is the point, so experiments are meant to be cheap to define, reproducible, and
-directly comparable to one another.
+EnVar, over 3D and 4D windows, on global domains at 1 degree and quarter degree and on
+regional domains at various resolutions. The comparison is the point, so experiments are meant
+to be cheap to define, reproducible, and directly comparable to one another.
 
 ## Design in one page
 
@@ -33,6 +33,9 @@ directly comparable to one another.
   templated with `sed`.
 - **Two solvers, not seven modes.** Variational and LETKF, with covariance (static, ensemble,
   hybrid) and window (3D, FGAT, 4D) carried by configuration rather than by mode dispatch.
+- **Domain is a configuration axis**, not a flag. Global and regional are the same code path,
+  with regional adding open boundary forcing, grid-edge masking, and domain-scoped observation
+  culling as ordinary configured stages.
 - **Built to be monitored and healed**, because HPCs kill jobs for reasons unrelated to the
   science. Per-stage CPU and memory are harvested from `sacct` into the experiment directory,
   and failed subgraphs can be regenerated and resubmitted automatically.
