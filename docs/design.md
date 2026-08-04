@@ -332,6 +332,15 @@ milestones; everything else is configuration.
    inheriting v2's `f###` symlink farm.
 7. **EDA** as an ensemble source, which mostly falls out of 4.
 
+**All of the above is on the global domains**, `OM_1deg` for development and `OM4_025` for
+production. Regional comes after, once global cycling works. See Domains for what it pulls in.
+
+One caveat on that deferral: the symmetric-memory question is a **build-level** decision about
+how SOCA's own MOM6 is compiled, not a workflow feature that can be bolted on at the end. If
+it turns out SOCA's MOM6 needs rebuilding to match regional configurations, that is worth
+discovering before the workflow has been built and validated entirely against non-symmetric
+restarts. Answer it early even though the regional work itself is deferred.
+
 ## Open
 
 - **Analysis to MOM6 restart.** Both IAU and direct restart write are wanted, selectable per
