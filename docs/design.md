@@ -470,6 +470,16 @@ YAML is generated from data structures. v2's three layers of `sed` (token replac
 `!IF_APP_*` line prefixes, and block splicing with hardcoded indentation) are not carried
 forward in any form.
 
+**ackbar and JEDI do not read the same YAML.** PyYAML implements YAML 1.1, whose float
+resolver requires a decimal point and an explicitly signed exponent. eckit and yaml-cpp
+implement the YAML 1.2 core schema, which requires neither. So `halo size: 500e3`, written
+exactly that way in `soca_letkf.yaml`, is the string `'500e3'` to ackbar and the number 500000
+to JEDI, and so are `5.0e5` and `1e-3`. The re-emitted file usually still looks right, because
+PyYAML writes these back unquoted; the damage is internal, where ackbar's own schema rejects a
+string it wanted to be a number and the error names a value that looks fine. The ported
+observer configs are full of thresholds written this way, so validation checks for it
+explicitly rather than leaving it to be discovered per file.
+
 ## Configuration validation
 
 A cycle is many jobs, and a bad value in one of them should not be discovered by a job that
@@ -699,48 +709,15 @@ member array, since that requires matching index ranges.
 
 ## Build order
 
-Chosen by what each step de-risks, not by which mode it is.
+See [`build-order.md`](build-order.md), which carries the implementation phases, the test tier
+each is verified at, and the spikes that must land before particular phases.
 
-0. **The stub model and the local test harness.** `model: stub` plus deterministic fault
-   injection: member 7 exits nonzero, member 12 runs past its time limit, member 3 asks for
-   impossible memory, task X exits 0 having written nothing. A 20 member ensemble at 1 PE and
-   30 seconds a member exercises the real graph, real arrays, real `aftercorr`, real dependency
-   behavior, real heal-and-resubmit, real cleanup, in about two minutes.
-
-   This is milestone 0 rather than a testing afterthought, because on 8 physical cores an
-   `--array=1-20` of 8-PE forecasts runs strictly serially. Without it the property the whole
-   project exists for cannot be demonstrated locally, and none of the failure paths that carry
-   the actual risk can be exercised at all until an HPC allocation is on the line. Two local
-   Slurm profiles belong here too: one with `DependencyParameters=kill_invalid_depend`, one with
-   enforced limits and a small `MaxSubmitJobs`, so both site behaviors get handled rather than
-   discovered.
-
-1. **Free run cycling** (`solver: none`, `model: mom6sis2`). The spine: cycle, restart, resume,
-   clean up. Also produces the OSSE truth run.
-2. **hofx.** Exercises the entire observation pipeline with no analysis entangled in it, and
-   doubles as the OSSE observation generator.
-3. **Variational + static + 3d.** Milestone: static B, and analysis-to-restart writeback. Bring
-   this up on `model: persistence` first: the full DA loop, including writeback and background
-   handoff, at no model cost, and a baseline to score against once MOM6 is back in the loop.
-4. **LETKF.** Milestone: parallel members, ensemble initial conditions, recentering.
-5. **Ensemble and hybrid covariance.** Configuration only, once 3 and 4 both work.
-6. **4D windows.** Milestone: sub-window forecast slots. Design these deliberately rather than
-   inheriting v2's `f###` symlink farm.
-7. **EDA** as an ensemble source, which mostly falls out of 4.
-
-Alongside milestone 1: **get `srun` launching MOM6 on rancor**, which needs a PMI plugin Slurm
-can talk to, since `MpiDefault` is currently unset and `docs/slurm.md` therefore mandates
-`mpiexec`. Without it, job steps, per-task binding, and per-step accounting all differ between
-rancor and production, exactly where the interesting behavior lives.
-
-**All of the above is on the global domains**, `OM_1deg` for development and `OM4_025` for
-production. Regional comes after, once global cycling works. See Domains for what it pulls in.
-
-One caveat on that deferral: the symmetric-memory question is a **build-level** decision about
-how SOCA's own MOM6 is compiled, not a workflow feature that can be bolted on at the end. If
-it turns out SOCA's MOM6 needs rebuilding to match regional configurations, that is worth
-discovering before the workflow has been built and validated entirely against non-symmetric
-restarts. Answer it early even though the regional work itself is deferred.
+The shape of it: the workflow machinery (configuration, graph, submission, healing) is built
+and finished against a stub model before any real science runs through it, because that is the
+only way the ensemble parallelism this project exists for can be demonstrated on 8 cores, and
+the only cheap way to exercise the failure paths. The science milestones then follow in the
+order that de-risks them fastest: free run, hofx, variational, LETKF, hybrid, 4D, EDA, and
+regional last.
 
 ## Open
 

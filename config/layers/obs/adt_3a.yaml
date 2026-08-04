@@ -1,0 +1,74 @@
+# Ported from soca-science configs/soca/obs/adt_3a.yaml.
+#
+# What changed in the port, and why:
+#
+#   *obs_distribution / *obs_distribution_opt  ->  $(obs_distribution) etc.
+#       These were YAML anchors defined in the *solver* file, so the same
+#       observer got RoundRobin under 3DVar and Halo under LETKF. That is
+#       layering by DA mode, done through anchors. It is now what it always
+#       was: a value the da/* layer sets.
+#
+#   *obs_land_mask  ->  an ordinary filter with $(obs_land_mask_min)
+#       Same story: the threshold was 0.9 under 3DVar and 0.5 under LETKF.
+#       Filter chains have no natural merge key (there are two BlackList
+#       filters below), so they replace wholesale, and the varying part is a
+#       substituted value rather than a merged one.
+#
+#   !IF_APP_letkf obs localizations  ->  removed
+#       Now supplied by da/letkf. Note that the original guarded this block
+#       with !IF_APP_letkf while sst_noaa19 used !IF_letkf, so one of the two
+#       never fired. That bug is only possible because the mechanism was sed.
+#
+#   __SEED__  ->  {{seed}}
+#       Job-time, and must derive from experiment, cycle and member so that a
+#       heal reproduces the original ensemble.
+
+observations:
+- obs space:
+    name: adt_3a
+    distribution:
+      name: $(obs_distribution)
+      options: $(obs_distribution_options)
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle}}/adt_3a.{{window_begin}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle}}/$(experiment).adt_3a.{{window_begin}}.nc4
+    simulated variables: [absoluteDynamicTopography]
+    io pool:
+      max pool size: 1
+    obs perturbations seed: '{{seed}}'
+  obs operator:
+    name: ADT
+  obs error:
+    covariance model: diagonal
+  obs filters:
+  - filter: Domain Check
+    where:
+    - variable: {name: GeoVaLs/sea_area_fraction}
+      minvalue: $(obs_land_mask_min)
+  - filter: Domain Check
+    where:
+    - variable: {name: GeoVaLs/sea_surface_temperature}
+      minvalue: 5.0
+  - filter: Background Check
+    absolute threshold: 0.2
+  - filter: BlackList
+    where:
+    - variable: {name: MetaData/latitude}
+      minvalue: -65
+      maxvalue: -30
+    - variable: {name: MetaData/longitude}
+      minvalue: -125
+      maxvalue: -90
+  - filter: BlackList
+    where:
+    - variable: {name: MetaData/latitude}
+      minvalue: -65
+      maxvalue: -30
+    - variable: {name: MetaData/longitude}
+      minvalue: 60
+      maxvalue: 110

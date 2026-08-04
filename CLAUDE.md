@@ -233,8 +233,10 @@ Not started: anything SOCA-side or workflow-side.
 **`docs/design.md`** is the reference for how the workflow is meant to work: Slurm as a hard
 dependency owning the dependency graph, offline stages producing every experiment input,
 layered configuration, the DA mode decomposition, cross-cycle overlap, resource accounting,
-monitoring and healing, and the build order. **`docs/prior-workflows.md`** records what the two
-prior attempts did and which of their mistakes the design exists to avoid.
+and monitoring and healing. **`docs/build-order.md`** carries the implementation phases, the
+test tier each is verified at, and the spikes that must land before particular phases.
+**`docs/prior-workflows.md`** records what the two prior attempts did and which of their
+mistakes the design exists to avoid.
 
 Settled since those docs were written: Slurm is assumed rather than abstracted over (rancor's
 single-node install, `docs/slurm.md`, is the development target); observations are never

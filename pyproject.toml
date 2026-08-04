@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ackbar"
+version = "0.0.0"
+description = "Assimilation Cycling Kit for Benchmarking And Research"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml",
+    "jsonschema",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+ackbar = "ackbar.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

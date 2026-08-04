@@ -9,3 +9,4 @@ venv/
 # build artifacts and downloaded test data
 pkg/jedi/build/
 pkg/jedi/test-data-release/
+.pytest_cache/

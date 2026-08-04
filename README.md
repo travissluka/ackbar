@@ -50,7 +50,8 @@ to be cheap to define, reproducible, and directly comparable to one another.
 
 | Document | Contents |
 |---|---|
-| [`docs/design.md`](docs/design.md) | How the workflow is meant to work. Execution model, configuration layering, DA mode decomposition, task graph, offline stages, build order. |
+| [`docs/design.md`](docs/design.md) | How the workflow is meant to work. Execution model, configuration layering, DA mode decomposition, task graph, offline stages. |
+| [`docs/build-order.md`](docs/build-order.md) | What gets built in what order, what each phase is tested against, and the spikes that must land first. |
 | [`docs/prior-workflows.md`](docs/prior-workflows.md) | Review of the two prior attempts and the mistakes this design exists to avoid. |
 | [`docs/model-build.md`](docs/model-build.md) | Building MOM6-SIS2: repository ownership, branch choice, the submodule recipe and its traps, smoke test. |
 | [`docs/model-data.md`](docs/model-data.md) | The `.datasets` mechanism and the MOM6-examples input data inventory. |

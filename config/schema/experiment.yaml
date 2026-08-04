@@ -1,0 +1,169 @@
+# ACKBAR's own schema for a fully merged experiment configuration.
+#
+# Two jobs in one document:
+#   1. validate the keys ACKBAR owns, strictly
+#   2. declare how lists merge, via x-ackbar-merge-key
+#
+# Keeping both here means the merge rules cannot drift away from the shape they
+# describe. JSON Schema validators ignore x- annotations.
+#
+# Strictness is deliberate and uneven. Where ACKBAR owns the keys, unknown ones
+# are an error, because a typo that is silently ignored is exactly the failure
+# this document exists to prevent. Where the subtree is verbatim JEDI config,
+# unknown keys are allowed, because ACKBAR's schema describes ACKBAR's config
+# and is not a model of OOPS.
+
+$schema: https://json-schema.org/draft/2020-12/schema
+title: ACKBAR experiment
+type: object
+required: [experiment, domain, cycle, model, solver]
+additionalProperties: false
+
+properties:
+
+  experiment:
+    type: object
+    required: [name]
+    additionalProperties: false
+    properties:
+      name:
+        type: string
+        # Part of every job name and --comment, so it has to survive sacct and
+        # shell quoting intact.
+        pattern: '^[A-Za-z][A-Za-z0-9_-]*$'
+        maxLength: 32
+      description: { type: string }
+
+  vars:
+    # Experiment-time substitution values, referenced as $(name). Free form by
+    # nature: a layer introduces the variables it needs, and the port of the
+    # soca-science observer configs is what forced this to exist. Those files
+    # varied obs distribution and the land mask threshold by DA mode through
+    # YAML anchors redefined in each solver file. Filter chains have no merge
+    # key, so the varying part has to be a substituted value rather than a
+    # merged one, and that is exactly why substitution runs after the merge.
+    type: object
+    additionalProperties: true
+
+  domain:
+    type: object
+    required: [name]
+    additionalProperties: false
+    properties:
+      name: { type: string }
+      resources:
+        # Per-task resources live in the domain layer, because domain is what
+        # actually drives the difference between OM_1deg and OM4_025. The site
+        # layer supplies only partition, account, launcher, roots and limits.
+        type: object
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          properties:
+            ntasks: { type: integer, minimum: 1 }
+            time: { type: string, pattern: '^(\d+-)?\d{1,2}:\d{2}(:\d{2})?$' }
+            mem: { type: string, pattern: '^\d+[KMGT]?$' }
+            layout:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items: { type: integer, minimum: 1 }
+
+  cycle:
+    type: object
+    required: [start, length, count]
+    additionalProperties: false
+    properties:
+      start: { type: string, format: date-time }
+      length: { type: string, pattern: '^P' }
+      count: { type: integer, minimum: 1 }
+      throttle: { type: integer, minimum: 1 }
+
+  model:
+    type: object
+    required: [name]
+    properties:
+      name:
+        enum: [mom6sis2, persistence, stub]
+      # Everything else under model is the model's own namelist-shaped config,
+      # which varies by model and is not ACKBAR's to describe.
+    allOf:
+      - if:
+          properties: { name: { const: stub } }
+          required: [name]
+        then:
+          required: [stub]
+          properties:
+            stub:
+              type: object
+              required: [seconds]
+              additionalProperties: false
+              properties:
+                seconds: { type: number, minimum: 0 }
+                bytes: { type: integer, minimum: 0 }
+                fail:
+                  # Deterministic fault injection, the whole point of the stub.
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    exit_nonzero: { type: array, items: { type: integer } }
+                    overrun_time: { type: array, items: { type: integer } }
+                    overrun_memory: { type: array, items: { type: integer } }
+                    write_nothing: { type: array, items: { type: integer } }
+
+  solver:
+    type: object
+    required: [name]
+    additionalProperties: false
+    properties:
+      name:
+        enum: [none, variational, letkf]
+      covariance:
+        enum: [static, ensemble, hybrid]
+      window:
+        enum: ['3d', fgat, '4d']
+
+  ensemble:
+    type: object
+    required: [size]
+    additionalProperties: false
+    properties:
+      size: { type: integer, minimum: 1 }
+      source:
+        enum: [offline, eda, perturbation]
+      # A missing member is routine once members are array elements, so the
+      # policy is per experiment and is stated rather than defaulted silently.
+      on_missing_member:
+        enum: [fail_cycle, run_degraded, replace_from_mean]
+
+  observations:
+    # The list that makes the whole keyed-merge machinery necessary: a da/letkf
+    # layer changes one observer's localization without restating the others.
+    type: array
+    x-ackbar-merge-key: obs space.name
+    items:
+      type: object
+      required: [obs space]
+      # Everything below an observer is UFO's, not ACKBAR's.
+      additionalProperties: true
+      properties:
+        obs space:
+          type: object
+          required: [name]
+          additionalProperties: true
+          properties:
+            name: { type: string }
+            required: { type: boolean }
+
+  forecast:
+    type: object
+    additionalProperties: false
+    properties:
+      extended:
+        type: object
+        required: [length, every]
+        additionalProperties: false
+        properties:
+          length: { type: string, pattern: '^P' }
+          every: { type: string, pattern: '^P' }
+          members: { type: array, items: { type: integer, minimum: 0 } }

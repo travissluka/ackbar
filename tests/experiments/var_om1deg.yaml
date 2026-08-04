@@ -1,0 +1,12 @@
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/variational
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: var_om1deg
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 30

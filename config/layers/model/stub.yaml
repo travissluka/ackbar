@@ -1,0 +1,7 @@
+# The fake model that makes the workflow testable on 8 cores. Burns wallclock,
+# writes correctly sized output, does no science.
+model:
+  name: stub
+  stub:
+    seconds: 30
+    bytes: 1048576

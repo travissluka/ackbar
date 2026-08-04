@@ -1,0 +1,40 @@
+# Ported from soca-science configs/soca/obs/sst_noaa19.yaml.
+# See obs/adt_3a.yaml for what the port changes and why.
+
+observations:
+- obs space:
+    name: sst_noaa19
+    distribution:
+      name: $(obs_distribution)
+      options: $(obs_distribution_options)
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle}}/sst_noaa19.{{window_begin}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle}}/$(experiment).sst_noaa19.{{window_begin}}.nc4
+    simulated variables: [seaSurfaceTemperature]
+    io pool:
+      max pool size: 1
+    obs perturbations seed: '{{seed}}'
+  obs operator:
+    name: Identity
+    observation alias file: obsop_name_map.yml
+  obs error:
+    covariance model: diagonal
+  obs filters:
+  - filter: Domain Check
+    where:
+    - variable: {name: GeoVaLs/sea_area_fraction}
+      minvalue: $(obs_land_mask_min)
+  - filter: Bounds Check
+    minvalue: -2.0
+    maxvalue: 36.0
+  - filter: Background Check
+    threshold: 5.0
+  - filter: Domain Check
+    where:
+    - variable: {name: ObsError/seaSurfaceTemperature}
+      minvalue: 0.001

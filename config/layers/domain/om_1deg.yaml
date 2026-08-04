@@ -1,0 +1,12 @@
+domain:
+  name: om_1deg
+  resources:
+    forecast:
+      ntasks: 8
+      time: '00:30:00'
+      mem: 16G
+      layout: [4, 2]
+    da:
+      ntasks: 8
+      time: '01:00:00'
+      mem: 32G

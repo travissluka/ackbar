@@ -1,0 +1,10 @@
+# Variational solver. Carries the values that soca-science smuggled through the
+# YAML anchors defined at the top of soca_3dvar.yaml.
+solver:
+  name: variational
+  covariance: static
+  window: '3d'
+vars:
+  obs_distribution: RoundRobin
+  obs_distribution_options: {}
+  obs_land_mask_min: 0.9

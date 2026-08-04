@@ -1,0 +1,16 @@
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: letkf_om1deg
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 30
+ensemble:
+  size: 20
+  source: offline
+  on_missing_member: run_degraded

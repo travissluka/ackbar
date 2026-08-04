@@ -1,0 +1,29 @@
+# LETKF solver. The distribution and land mask differ from variational, which
+# in soca-science was expressed by redefining &obs_distribution and
+# &obs_land_mask in soca_letkf.yaml.
+solver:
+  name: letkf
+  covariance: ensemble
+  window: '3d'
+vars:
+  obs_distribution: Halo
+  # soca-science wrote this as 500e3, which PyYAML reads as the string '500e3'
+  # while eckit reads it as a float. See ackbar.config.lint.
+  obs_distribution_options: {halo size: 500000}
+  obs_land_mask_min: 0.5
+
+# Localization is added per observer. Each element names only the observer it
+# addresses; nothing else about the observer is restated.
+observations:
+- obs space:
+    name: adt_3a
+  obs localizations:
+  - localization method: Rossby
+    rossby mult: 1.0
+    min grid mult: 1.0
+- obs space:
+    name: sst_noaa19
+  obs localizations:
+  - localization method: Rossby
+    rossby mult: 1.0
+    min grid mult: 1.0

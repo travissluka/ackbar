@@ -1,0 +1,4 @@
+model:
+  name: mom6sis2
+  namelist: mom_input.nml
+  fields metadata: fields_metadata.yaml
