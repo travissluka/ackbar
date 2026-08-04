@@ -105,7 +105,6 @@ git submodule update --init \
     src/MOM6 src/SIS2 src/FMS2 src/coupler src/atmos_null src/land_null \
     src/ice_param src/icebergs src/mkmf
 git -C src/MOM6 submodule update --init pkg/CVMix-src pkg/GSW-Fortran
-ln -sfn /data/mom6-datasets .datasets
 ```
 
 Starting from scratch instead, the first line is
@@ -123,12 +122,17 @@ Two things bite here:
 ## Building
 
 ```bash
-./build-model.sh          # NJOBS=16 TARGET=ice_ocean_SIS2 by default
+./build-model.sh          # TARGET=ice_ocean_SIS2 by default
 ```
 
-The script sources `~/work/env.sh` for the spack-stack toolchain and sets
-`CC/MPICC=mpicc`, `FC/MPIFC=mpif90`, and `FCFLAGS` with `-fallow-argument-mismatch
--fallow-invalid-boz` (needed for gcc 13 against this vintage of FMS).
+The script sources `site/activate.sh`, which loads the site file for this machine
+(`docs/design.md`, The site layer). That supplies the spack-stack toolchain, the job count,
+and `ACKBAR_DATASETS_ROOT`, which the script wires to `pkg/mom6sis2/.datasets` so the input
+data symlink is not something you maintain by hand.
+
+On top of that it sets `CC/MPICC=mpicc`, `FC/MPIFC=mpif90`, and `FCFLAGS` with
+`-fallow-argument-mismatch -fallow-invalid-boz` (needed for gcc 13 against this vintage of
+FMS).
 
 Build layout, autoconf under the hood:
 
@@ -151,7 +155,7 @@ A 12-hour `OM_1deg` cold start on 8 PEs, which exercises the executable, the `.d
 wiring and restart writing together.
 
 ```bash
-RD=/data/ackbar/test/om_1deg_smoke
+RD=$ACKBAR_TEST_ROOT/om_1deg_smoke   # source site/activate.sh first
 mkdir -p $RD/RESTART
 cd ~/work/ackbar/pkg/mom6sis2/ice_ocean_SIS2/OM_1deg
 cp input.nml MOM_input MOM_override SIS_input SIS_override \
@@ -160,7 +164,7 @@ ln -s $PWD/INPUT $RD/INPUT          # symlink, do NOT cp -rL (dereferences ~1GB 
 printf 'LAYOUT = 4,2\nIO_LAYOUT = 1,1\n' > $RD/MOM_layout
 printf 'LAYOUT = 4,2\nIO_LAYOUT = 1,1\n' > $RD/SIS_layout
 ln -sf ~/work/ackbar/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main $RD/coupler_main
-cd $RD && source ~/work/env.sh && mpiexec -n 8 ./coupler_main > run.log 2>&1
+cd $RD && source ~/work/ackbar/site/activate.sh && mpiexec -n 8 ./coupler_main > run.log 2>&1
 ```
 
 Gotchas:

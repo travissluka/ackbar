@@ -5,11 +5,13 @@
 #
 #   tools/slurm/smoke-test.sh
 #
-# Runs as your normal user. Scratch lands in /data/ackbar/test/slurm-smoke.
+# Runs as your normal user. Scratch lands under the site's test root.
 
 set -euo pipefail
 
-WORK=/data/ackbar/test/slurm-smoke
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/site/activate.sh"
+
+WORK=$ACKBAR_TEST_ROOT/slurm-smoke
 rm -rf "$WORK"; mkdir -p "$WORK"; cd "$WORK"
 
 hr() { printf '\n--- %s\n' "$*"; }

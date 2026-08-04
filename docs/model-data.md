@@ -24,13 +24,17 @@ Check a config is fully satisfied with:
 find -L ice_ocean_SIS2/OM_1deg/INPUT -maxdepth 1 -type l    # prints only BROKEN links
 ```
 
-## How it is wired on rancor
+## How it is wired
+
+MOM6-examples reaches its input data through a `.datasets` symlink at the top of the clone.
+The root it points at is machine dependent, so `ACKBAR_DATASETS_ROOT` in the site file owns it
+and `build-model.sh` creates the symlink:
 
 ```
-~/work/ackbar/pkg/mom6sis2/.datasets -> /data/mom6-datasets
+pkg/mom6sis2/.datasets -> $ACKBAR_DATASETS_ROOT
 ```
 
-`/data/mom6-datasets` is assembled, not downloaded wholesale:
+On rancor that root is `/data/mom6-datasets`, and it is assembled, not downloaded wholesale:
 
 - symlinks to the already-unpacked trees in `/data/OLD/MOM6_static`
   (`OM4_025`, `OM4_05`, `OM4_360x320_C180`, `CORE`, `GOLD_SIS`, `AM2_LM3_MOM6i_1deg`,

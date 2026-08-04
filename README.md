@@ -64,8 +64,13 @@ build-jedi.sh      build the JEDI bundle
 docs/              design and reference documentation
 pkg/jedi/          the JEDI bundle: CMakeLists plus one submodule per repo
 pkg/mom6sis2/      submodule: NOAA-GFDL/MOM6-examples, branch dev/gfdl
+site/              one file per machine, the only place machine paths may appear
 tools/slurm/       local single-node Slurm configuration
 ```
+
+Everything machine-specific (where spack-stack lives, which filesystems hold scratch and
+output, partition and account, queue limits) is confined to `site/<hostname>.sh`. Porting
+ackbar to a new machine is writing one of those, modelled on `site/rancor.sh`.
 
 ## Getting the source
 
