@@ -3,10 +3,13 @@
 Our clone: `~/work/mmw/mom6sis2`, branch **`dev/gfdl`**, tracked as a git submodule of the
 `mmw` repo. Build driver: `~/work/mmw/build-model.sh`.
 
-The submodule clone is shallow (`--depth 1`). That is fine while the pinned commit is near
-the tip of `dev/gfdl`, but a fresh `git submodule update --init --depth 1` will stop finding
-it once upstream moves on. Either fetch without `--depth`, or run
-`git -C mom6sis2 fetch --unshallow` here before that becomes a problem.
+Keep this clone and its nested submodules at **full history**, not `--depth 1`. A shallow
+clone only holds commits near a branch tip, so once `dev/gfdl` (or any nested submodule's
+branch) moves on, the commit we pinned is no longer fetchable and the checkout breaks. Full
+history costs about 250 MB across all twelve repos, which is nothing next to the datasets.
+
+Check with `git -C mom6sis2 rev-parse --is-shallow-repository`; repair with
+`git -C <repo> fetch --unshallow`.
 
 ## Which GitHub organization owns what
 
@@ -89,15 +92,21 @@ one-way step, so do it before spinning up, not mid-experiment.
 
 ## Cloning
 
+Normally you get this for free by cloning the `mmw` repo, which pins `mom6sis2` as a
+submodule:
+
 ```bash
-git clone --depth 1 -b dev/gfdl https://github.com/NOAA-GFDL/MOM6-examples.git mom6sis2
-cd mom6sis2
-git submodule update --init --depth 1 \
+git -C ~/work/mmw submodule update --init mom6sis2
+cd ~/work/mmw/mom6sis2
+git submodule update --init \
     src/MOM6 src/SIS2 src/FMS2 src/coupler src/atmos_null src/land_null \
     src/ice_param src/icebergs src/mkmf
-git -C src/MOM6 submodule update --init --depth 1 pkg/CVMix-src pkg/GSW-Fortran
+git -C src/MOM6 submodule update --init pkg/CVMix-src pkg/GSW-Fortran
 ln -sfn /data/mom6-datasets .datasets
 ```
+
+Starting from scratch instead, the first line is
+`git clone -b dev/gfdl https://github.com/NOAA-GFDL/MOM6-examples.git mom6sis2`.
 
 Two things bite here:
 
