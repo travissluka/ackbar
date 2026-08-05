@@ -32,11 +32,11 @@ observations:
     obsdatain:
       engine:
         type: H5File
-        obsfile: $(obs_dir)/{{current_cycle}}/adt_3a.{{window_begin}}.nc4
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/adt_3a.{{window_begin:%Y%m%d%H}}.nc4
     obsdataout:
       engine:
         type: H5File
-        obsfile: $(obs_out_dir)/{{current_cycle}}/$(experiment).adt_3a.{{window_begin}}.nc4
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%d%H}}/$(experiment).adt_3a.{{window_begin:%Y%m%d%H}}.nc4
     simulated variables: [absoluteDynamicTopography]
     io pool:
       max pool size: 1

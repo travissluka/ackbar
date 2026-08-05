@@ -1,24 +1,28 @@
 """The ackbar command line.
 
-Phase 0 exposes the configuration core only: resolve a layer stack, explain
-where a value came from, and validate the result against ACKBAR's schema. The
-graph-level checks that make up the rest of ``validate`` arrive with the graph,
-in phase 1.
+What exists so far is everything that can be checked before a scheduler is
+involved: resolve a layer stack, explain where a value came from, build the task
+graph, and validate the result. Submission arrives in phase 2; see
+`docs/build-order.md`.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 import yaml
 
+from .config.jobtime import SYMBOLS, render, symbols
 from .config.layers import LayerError, merge_layers, resolve_layers
-from .config.lint import ambiguous_numbers
 from .config.merge import MergeError
-from .config.resolve import ResolveError, resolve, unresolved
-from .config.schema import load_schema, merge_keys, validate
+from .config.resolve import ResolveError, resolve
+from .config.schema import load_schema, merge_keys
 from .config.why import why
+from .duration import DurationError
+from .graph import GraphError, build_graph, to_dot, to_text
 from .site import SiteError, load_site
+from .validate import FILESYSTEM_STEPS, STEPS, validate_experiment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LAYERS = REPO_ROOT / "config" / "layers"
@@ -43,7 +47,25 @@ def _resolved(args, substitute=True):
 
 def cmd_resolve(args):
     _, _, _, config = _resolved(args, substitute=not args.raw)
+    if args.cycle is not None:
+        # The second pass, shown for one job rather than left as {{...}}. This
+        # is what the job actually reads.
+        config = render(config, symbols(config, args.cycle, args.member))
     yaml.safe_dump(config, sys.stdout, sort_keys=False, default_flow_style=False)
+    return 0
+
+
+def cmd_symbols(args):
+    print("Job-time symbols. The set is closed: anything else is an error.\n")
+    for name, description in SYMBOLS:
+        print(f"  {{{{{name}}}}}".ljust(26) + description)
+    print(
+        "\nA whole-token string takes the symbol's type; embedded in text it "
+        "interpolates\nas text. Either form may carry a format spec after a "
+        "colon, so dates take\nstrftime patterns: {{current_cycle:%Y%m%d%H}}."
+    )
+    print("\nExperiment-time values use $(...) instead, and are frozen when the "
+          "experiment\nis created. See `ackbar config resolve`.")
     return 0
 
 
@@ -73,42 +95,74 @@ def _render(value):
     return text
 
 
+def cmd_graph(args):
+    _, _, _, config = _resolved(args)
+    graph = build_graph(config)
+    cycles = set(args.cycles) if args.cycles else None
+
+    if args.json:
+        data = graph.to_dict()
+        if cycles is not None:
+            keep = {n["id"] for n in data["nodes"] if n["cycle"] in cycles}
+            data["nodes"] = [n for n in data["nodes"] if n["id"] in keep]
+            data["edges"] = [
+                e for e in data["edges"] if e["from"] in keep and e["to"] in keep
+            ]
+        json.dump(data, sys.stdout, indent=2, sort_keys=False)
+        print()
+    elif args.dot:
+        print(to_dot(graph, cycles))
+    else:
+        print(to_text(graph, cycles))
+    return 0
+
+
 def cmd_validate(args):
     layers, keys, schema, config = _resolved(args)
-    errors = validate(config, schema)
+    site = load_site()
+    root = site.get("root", str(REPO_ROOT))
+    findings, _, ran = validate_experiment(
+        config, schema, site, root, offline=args.offline
+    )
 
-    for path, value in ambiguous_numbers(config):
-        errors.append((
-            path,
-            f"{value!r} is a string to ACKBAR and a number to JEDI. PyYAML reads "
-            f"YAML 1.1, where an exponent needs an explicit sign; eckit reads "
-            f"YAML 1.2, where it does not. Write it as a plain number.",
-        ))
+    by_step = {}
+    for finding in findings:
+        by_step.setdefault(finding.step, []).append(finding)
 
-    # Belt and braces: resolve() raises on an unknown symbol, so anything left
-    # here means the substitution pass has a hole in it.
-    for path, value in unresolved(config):
-        errors.append((path, f"unsubstituted token remains: {value!r}"))
+    ok = True
+    for number, title in STEPS:
+        problems = by_step.get(number, [])
+        if number not in ran:
+            reason = "--offline" if number in FILESYSTEM_STEPS and args.offline \
+                else "an earlier step failed"
+            print(f"  {number}. {title}: not run ({reason})")
+            continue
+        if not problems:
+            print(f"  {number}. {title}: ok")
+            continue
+        ok = False
+        print(f"  {number}. {title}: {len(problems)} problem(s)")
 
-    if not errors:
-        print(f"ok: {len(layers)} layers, {len(config)} top-level keys")
+    if ok:
+        print(f"\nok: {len(layers)} layers, {config['cycle']['count']} cycles")
         return 0
 
     # Name the layer as well as the path. "Which file do I edit" is the only
     # question worth answering at this moment, and the merge replay already
     # knows.
-    print(f"{len(errors)} problem(s) in {args.experiment}:", file=sys.stderr)
-    for path, message in errors:
-        blame = _blame(layers, keys, path)
-        where = path or "<root>"
-        print(f"  {where}: {message}", file=sys.stderr)
+    sys.stdout.flush()
+    print(f"\n{len(findings)} problem(s) in {args.experiment}:", file=sys.stderr)
+    for finding in findings:
+        print(f"  [{finding.step}] {finding.where or '<root>'}: {finding.message}",
+              file=sys.stderr)
+        blame = _blame(layers, keys, finding.where)
         if blame:
             print(f"      last set by layer: {blame}", file=sys.stderr)
     return 1
 
 
 def _blame(layers, keys, path):
-    if not path:
+    if not path or path.startswith("/"):
         return None
     try:
         history = why(layers, path, keys)
@@ -131,7 +185,22 @@ def main(argv=None):
 
     p = sub.add_parser("validate", help="check an experiment before anything is submitted")
     p.add_argument("experiment", type=Path)
+    p.add_argument(
+        "--offline", action="store_true",
+        help="skip the steps that need the filesystem or the site's queue limits",
+    )
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("graph", help="show the task graph")
+    p.add_argument("experiment", type=Path)
+    p.add_argument(
+        "--cycle", dest="cycles", type=int, action="append",
+        help="show only this cycle; repeatable",
+    )
+    output = p.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="the machine-readable form")
+    output.add_argument("--dot", action="store_true", help="graphviz")
+    p.set_defaults(func=cmd_graph)
 
     config = sub.add_parser("config", help="inspect resolved configuration")
     config_sub = config.add_subparsers(dest="config_command", required=True)
@@ -141,6 +210,11 @@ def main(argv=None):
         "--raw", action="store_true",
         help="stop after the merge, leaving $(...) unsubstituted",
     )
+    p.add_argument(
+        "--cycle", type=int, default=None,
+        help="also run the job-time pass, as the job for this cycle would see it",
+    )
+    p.add_argument("--member", type=int, default=0, help="member for --cycle")
     p.add_argument("experiment", type=Path)
     p.set_defaults(func=cmd_resolve)
 
@@ -149,10 +223,14 @@ def main(argv=None):
     p.add_argument("key", help="dotted path, e.g. observations[0].obs error.covariance model")
     p.set_defaults(func=cmd_why)
 
+    p = config_sub.add_parser("symbols", help="list the closed set of job-time symbols")
+    p.set_defaults(func=cmd_symbols)
+
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (LayerError, MergeError, ResolveError, SiteError) as error:
+    except (LayerError, MergeError, ResolveError, SiteError, GraphError,
+            DurationError) as error:
         print(f"ackbar: {error}", file=sys.stderr)
         return 2
 

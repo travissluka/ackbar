@@ -187,8 +187,9 @@ class TestResolvedPort:
 
     def test_job_time_tokens_survive_the_experiment_time_pass(self, resolved):
         space = observer(resolved, "adt_3a")["obs space"]
-        assert "{{current_cycle}}" in space["obsdatain"]["engine"]["obsfile"]
-        assert "{{window_begin}}" in space["obsdatain"]["engine"]["obsfile"]
+        obsfile = space["obsdatain"]["engine"]["obsfile"]
+        assert "{{current_cycle:%Y%m%d%H}}" in obsfile
+        assert "{{window_begin:%Y%m%d%H}}" in obsfile
         assert space["obs perturbations seed"] == "{{seed}}"
 
     def test_nothing_is_left_unsubstituted(self, resolved):

@@ -1,12 +1,53 @@
+# The 1 degree global domain: development and test.
+#
+# Per-task resources live here rather than in the site layer, because domain is
+# what actually drives the difference between OM_1deg and OM4_025. The site
+# layer supplies partition, account, launcher, roots and limits, and nothing
+# that depends on the size of the problem.
+
 domain:
   name: om_1deg
   resources:
+    # Everything that is bookkeeping: python, shell, a few file operations.
+    # Named `default` so that adding a task does not silently submit it with
+    # whatever sbatch defaults to, which on a real machine is one core.
+    default:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 4G
+
     forecast:
       ntasks: 8
       time: '00:30:00'
+      mem: 16G
+      layout: [4, 2]
+    forecast.ext:
+      # The same model, a longer integration.
+      ntasks: 8
+      time: '04:00:00'
       mem: 16G
       layout: [4, 2]
     da:
       ntasks: 8
       time: '01:00:00'
       mem: 32G
+    hofx:
+      ntasks: 8
+      time: '00:20:00'
+      mem: 16G
+    b.vt:
+      ntasks: 8
+      time: '00:15:00'
+      mem: 16G
+    recenter:
+      ntasks: 8
+      time: '00:15:00'
+      mem: 16G
+    writeback:
+      ntasks: 1
+      time: '00:20:00'
+      mem: 16G
+    post.state:
+      ntasks: 1
+      time: '00:20:00'
+      mem: 8G

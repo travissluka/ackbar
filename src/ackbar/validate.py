@@ -1,0 +1,304 @@
+"""Everything checkable before a single job is submitted.
+
+A cycle is many jobs and a bad value in one of them should not be discovered by
+a job that starts eight hours from now. This is the whole of the early warning
+system, and it is more load-bearing than it looks: JEDI offers no reliable
+parse-and-exit at the application level, so nothing between here and the running
+executable will catch anything. There is no step that asks JEDI whether it likes
+its own configuration, because such a check would cover an unpredictable subset
+of it, and a check that reports success for configurations that will still fail
+is worse than no check.
+
+What carries that weight instead is step 3. Malformed JEDI YAML is rare here,
+because it is generated from data structures rather than templated with `sed`.
+Missing and misnamed *files* are the common failure, and those are entirely
+checkable up front.
+"""
+
+import os
+from dataclasses import dataclass
+
+from .config.jobtime import JobTimeError, render, symbols
+from .config.jobtime import unresolved as unresolved_jobtime
+from .config.lint import ambiguous_numbers
+from .config.resolve import unresolved as unresolved_experiment
+from .config.schema import validate as validate_schema
+from .duration import DurationError
+from .graph import GraphError, build_graph, job_time_context, member_set
+
+#: The steps, in the order they run. Reported individually so that "what was
+#: actually checked" is visible rather than implied by an exit code.
+STEPS = (
+    (1, "the merged config against ACKBAR's schema"),
+    (2, "every job's config, for every cycle and member"),
+    (3, "every referenced input path exists"),
+    (4, "every executable exists and is runnable"),
+    (5, "projected job count against queue limits"),
+    (6, "the graph is acyclic and member arrays share the index set"),
+)
+
+#: Steps that consult the filesystem or the site's scheduler limits. `--offline`
+#: skips these, which is what the tier 0 and 1 tests run and what is useful on a
+#: machine where the data is not staged yet.
+FILESYSTEM_STEPS = (3, 4, 5)
+
+
+@dataclass(frozen=True)
+class Finding:
+    step: int
+    where: str
+    message: str
+
+
+def validate_experiment(config, schema, site, root, offline=False):
+    """Check an experiment. Returns (findings, graph, steps that actually ran).
+
+    Later steps are skipped rather than attempted when an earlier one has
+    already failed, and which ones ran is returned rather than implied. A
+    report that silently checked four of six things is the failure mode this
+    command exists to prevent.
+    """
+    findings = list(_schema_step(config, schema))
+    ran = {1}
+
+    if findings:
+        # A config that fails its own schema cannot be reasoned about further:
+        # everything below would be reading values it has just been told are
+        # the wrong shape, and would fail with a traceback rather than a
+        # message.
+        return _sorted(findings), None, ran
+
+    try:
+        graph = build_graph(config)
+    except (GraphError, DurationError) as error:
+        findings.append(Finding(6, "", str(error)))
+        return _sorted(findings), None, ran | {6}
+
+    ran |= {2, 6}
+    findings += _graph_step(config, graph)
+
+    jobtime_findings, paths = _jobtime_step(config, graph)
+    findings += jobtime_findings
+
+    if not offline:
+        ran |= {3, 4, 5}
+        findings += _path_step(paths, site)
+        findings += _executable_step(graph, root)
+        findings += _limit_step(graph, site)
+
+    return _sorted(findings), graph, ran
+
+
+def _sorted(findings):
+    return sorted(findings, key=lambda f: (f.step, f.where, f.message))
+
+
+def _schema_step(config, schema):
+    for where, message in validate_schema(config, schema):
+        yield Finding(1, where, message)
+
+    for where, value in ambiguous_numbers(config):
+        yield Finding(1, where, (
+            f"{value!r} is a string to ACKBAR and a number to JEDI. PyYAML reads "
+            f"YAML 1.1, where an exponent needs an explicit sign; eckit reads "
+            f"YAML 1.2, where it does not. Write it as a plain number."
+        ))
+
+    # resolve() raises on an unknown symbol, so anything surviving here means
+    # the experiment-time pass has a hole in it.
+    for where, value in unresolved_experiment(config):
+        yield Finding(1, where, f"unsubstituted experiment-time token: {value!r}")
+
+
+def _jobtime_step(config, graph):
+    """Render the config as every job will see it, and collect its paths.
+
+    Generating the whole experiment's configuration up front is cheap, and it
+    is also a strong test that graph generation really is deterministic and
+    free of side effects: nothing here could work otherwise.
+
+    Rendered once per (cycle, member) rather than once per node, because the
+    job-time symbols depend on those two and nothing else.
+    """
+    findings = []
+    paths = set()
+    for cycle, member in job_time_context(config, graph):
+        try:
+            rendered = render(config, symbols(config, cycle, member))
+        except JobTimeError as error:
+            findings.append(Finding(
+                2, error.path, f"cycle {cycle} member {member}: {error.message}"
+            ))
+            continue
+        for where, value in unresolved_jobtime(rendered):
+            findings.append(Finding(
+                2, where, f"cycle {cycle}: token survived substitution: {value!r}"
+            ))
+        _collect_paths(rendered, paths)
+
+    # One finding per distinct problem, not one per cycle: a bad symbol in a
+    # shared config would otherwise be reported hundreds of times.
+    return _dedupe(findings), paths
+
+
+def _collect_paths(node, out):
+    if isinstance(node, dict):
+        for value in node.values():
+            _collect_paths(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_paths(value, out)
+    elif isinstance(node, str) and _looks_like_path(node):
+        out.add(node)
+
+
+def _looks_like_path(text):
+    # Absolute and with no whitespace. JEDI's own namespaced names ("MetaData/
+    # latitude", "GeoVaLs/sea_area_fraction") are relative and do not match.
+    return text.startswith("/") and len(text) > 1 and not any(c.isspace() for c in text)
+
+
+def _path_step(paths, site):
+    """Inputs must exist. Outputs are what the experiment is about to create.
+
+    The distinction is by root: anything under the scratch or output root is
+    this experiment's own product, and everything else absolute is something it
+    consumes and cannot make.
+    """
+    roots = tuple(
+        os.path.normpath(site[key])
+        for key in ("scratch_root", "output_root")
+        if site.get(key)
+    )
+    findings = []
+    for path in sorted(paths):
+        if _under(path, roots):
+            continue
+        if not os.path.exists(path):
+            findings.append(Finding(3, path, "input path does not exist"))
+        elif not os.access(path, os.R_OK):
+            findings.append(Finding(3, path, "input path is not readable"))
+    return findings
+
+
+def _under(path, roots):
+    normalized = os.path.normpath(path)
+    return any(
+        normalized == root or normalized.startswith(root + os.sep) for root in roots
+    )
+
+
+def _executable_step(graph, root):
+    """Executables are repository-relative, because ACKBAR pins what it runs.
+
+    Matching them against the recorded provenance belongs here too, and lands
+    with the provenance record itself.
+    """
+    findings = []
+    for relative in sorted({n.exe for n in graph.nodes if n.exe}):
+        path = os.path.join(root, relative)
+        if not os.path.exists(path):
+            findings.append(Finding(
+                4, relative, "executable does not exist; has the bundle been built?"
+            ))
+        elif not os.access(path, os.X_OK):
+            findings.append(Finding(4, relative, "executable is not runnable"))
+    return findings
+
+
+def _limit_step(graph, site):
+    """Projected in-flight job count against the site's limits.
+
+    Every array task counts individually against a submit limit, so at large
+    ensemble sizes this approaches the per-user cap. Refusing here beats
+    discovering it three cycles in, where a rejected `sbatch` inside the
+    submitter stops the experiment silently.
+
+    Projected disk is the other half of this step and is not computed yet:
+    there is no measured per-cycle size until something writes one, which is
+    the stub model.
+    """
+    findings = []
+    per_cycle = max(
+        (sum(node.jobs for node in graph.cycle_nodes(c)) for c in graph.cycles),
+        default=0,
+    )
+    in_flight = per_cycle * graph.throttle
+
+    limit = _as_int(site.get("max_submit_jobs"))
+    if limit and in_flight > limit:
+        findings.append(Finding(5, "cycle.throttle", (
+            f"{in_flight} jobs would be in flight ({per_cycle} per cycle times "
+            f"a throttle of {graph.throttle}), over this site's "
+            f"max_submit_jobs of {limit}"
+        )))
+
+    array_limit = _as_int(site.get("max_array_size"))
+    if array_limit:
+        for node in graph.nodes:
+            if node.members and max(node.members) + 1 > array_limit:
+                findings.append(Finding(5, node.task, (
+                    f"array index {max(node.members)} is over this site's "
+                    f"max_array_size of {array_limit}"
+                )))
+                break
+    return findings
+
+
+def _graph_step(config, graph):
+    """Structure, plus the two things Slurm will not tell you about.
+
+    A member array whose index set differs from the canonical one produces an
+    `aftercorr` edge that never fires, and shows up as a job pending forever
+    rather than as an error. And a task with no declared resources would be
+    submitted with whatever `sbatch` defaults to, which on a real machine is a
+    single core.
+    """
+    findings = []
+    canonical = member_set(config)
+    for node in sorted(graph.nodes, key=lambda n: n.id):
+        # forecast.ext is the one declared subset, and it is why the edge into
+        # it stays afterok rather than upgrading to aftercorr.
+        if node.members and node.task != "forecast.ext" and node.members != canonical:
+            findings.append(Finding(6, node.id, (
+                f"member array {list(node.members)} differs from the canonical "
+                f"index set {list(canonical)}"
+            )))
+
+    for task in sorted({n.task for n in graph.nodes if not n.resources}):
+        findings.append(Finding(6, f"domain.resources.{task}", (
+            "no resources declared for this task, and no domain.resources.default"
+        )))
+
+    for edge in graph.edges:
+        if edge.kind != "aftercorr":
+            continue
+        up, down = _node(graph, edge.parent), _node(graph, edge.child)
+        if up.members != down.members:
+            findings.append(Finding(6, f"{edge.parent} -> {edge.child}", (
+                "aftercorr between arrays with different index sets never fires"
+            )))
+    return findings
+
+
+def _node(graph, node_id):
+    cycle, _, task = node_id.partition(".")
+    return graph.get(int(cycle), task)
+
+
+def _dedupe(findings):
+    seen, out = set(), []
+    for finding in findings:
+        key = (finding.step, finding.where, finding.message.split(":", 1)[-1])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(finding)
+    return out
+
+
+def _as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

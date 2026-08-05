@@ -48,9 +48,12 @@ Still no scheduler.
 - **Build:** the task graph as data (nodes, typed edges), task enable and disable driven by the
   merged config, the closed set of job-time symbols, `ackbar validate` steps 1 through 6, and
   `ackbar graph`.
-- **Test:** tier 1. Golden graphs for free run, 3DVar, LETKF, hybrid, 4D, OSSE, and a long
-  forecast cadence. Determinism is a test: generate twice, compare. Properties: the graph is
-  acyclic, every member level array carries the canonical index set, no leaf has a successor.
+- **Test:** tier 1. Golden graphs per distinct shape: free run, 3DVar, 4D, LETKF, and hybrid
+  with a long forecast cadence. An OSSE truth run is a free run with observations configured,
+  and 4D differs from 3D in configuration but not yet in the graph, so both are pinned rather
+  than given shapes of their own. Determinism is a test: generate twice, compare. Properties:
+  the graph is acyclic, every member level array carries the canonical index set, no leaf has a
+  successor, and `aftercorr` never joins arrays with different index sets.
 - **Done when:** a 50 cycle, 20 member hybrid graph generates in seconds and matches its golden,
   and `validate` rejects a missing input path and a missing executable before anything is
   submitted.

@@ -183,7 +183,7 @@ def _require(config, path):
     cur = config
     for part in path:
         if not isinstance(cur, dict) or part not in cur:
-            raise ResolveError(f"required for substitution", ".".join(path))
+            raise ResolveError("required for substitution", ".".join(path))
         cur = cur[part]
     return cur
 

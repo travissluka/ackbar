@@ -1,0 +1,60 @@
+{
+  "cycles": 50,
+  "nodes": 558,
+  "jobs": 3558,
+  "edges": {
+    "afterok": 307,
+    "aftercorr": 100,
+    "afterany": 250
+  },
+  "tasks": {
+    "b.vt": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "cleanup": {
+      "nodes": 49,
+      "jobs": 49
+    },
+    "da": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "forecast": {
+      "nodes": 50,
+      "jobs": 1050
+    },
+    "forecast.ext": {
+      "nodes": 10,
+      "jobs": 10
+    },
+    "post.obs": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "post.state": {
+      "nodes": 50,
+      "jobs": 1050
+    },
+    "stage.obs": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "stats": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "submit": {
+      "nodes": 49,
+      "jobs": 49
+    },
+    "verify": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "writeback": {
+      "nodes": 50,
+      "jobs": 1050
+    }
+  }
+}

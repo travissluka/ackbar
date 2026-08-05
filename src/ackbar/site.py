@@ -12,7 +12,20 @@ import os
 #: the phases that submit jobs arrive.
 REQUIRED = ("scratch_root", "output_root")
 
-OPTIONAL = ("site", "partition", "account", "launcher", "datasets_root")
+OPTIONAL = (
+    "site",
+    "root",
+    "partition",
+    "account",
+    "launcher",
+    "datasets_root",
+    # Queue limits. Validation projects the in-flight job count against these
+    # rather than discovering the cap three cycles in, where a rejected sbatch
+    # inside the submitter stops the experiment silently.
+    "max_submit_jobs",
+    "max_array_size",
+    "can_submit_from_compute",
+)
 
 
 class SiteError(Exception):

@@ -5,9 +5,10 @@
 A workflow for running cycling ocean data assimilation experiments with
 [SOCA](https://github.com/JCSDA-internal/soca), driving MOM6-SIS2 as the forecast model.
 
-Status: **early implementation.** The model and JEDI builds work. The configuration core
-(layer merge, schema validation, substitution, and blame) is the first piece of workflow code;
-nothing is submitted to a scheduler yet. See [`docs/build-order.md`](docs/build-order.md).
+Status: **early implementation.** The model and JEDI builds work. The configuration core (layer
+merge, schema validation, substitution, blame) and the task graph (generation, the job-time
+symbol set, `ackbar validate`) are in; nothing is submitted to a scheduler yet. See
+[`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
 
@@ -72,6 +73,7 @@ pkg/mom6sis2/      submodule: NOAA-GFDL/MOM6-examples, branch dev/gfdl
 site/              one file per machine, the only place machine paths may appear
 src/ackbar/        the workflow itself
 tests/             tiers 0 and 1: no scheduler, no JEDI, no model
+tests/goldens/     task graphs, pinned per configuration shape
 tools/slurm/       local single-node Slurm configuration
 ```
 
@@ -109,15 +111,28 @@ and output roots come from:
 
 ```bash
 source site/activate.sh
-ackbar validate      tests/experiments/letkf_om1deg.yaml
-ackbar config resolve tests/experiments/letkf_om1deg.yaml
-ackbar config why    tests/experiments/letkf_om1deg.yaml 'vars.obs_land_mask_min'
+ackbar validate --offline tests/experiments/letkf_om1deg.yaml
+ackbar graph              tests/experiments/letkf_om1deg.yaml --cycle 2
+ackbar graph --dot        tests/experiments/letkf_om1deg.yaml --cycle 1 | dot -Tpng -o graph.png
+ackbar config resolve     tests/experiments/letkf_om1deg.yaml --cycle 2 --member 3
+ackbar config why         tests/experiments/letkf_om1deg.yaml 'vars.obs_land_mask_min'
+ackbar config symbols
 ```
 
 Configuration resolves in a fixed order: **merge, then substitute, then validate.** Merging
 last would stop a layer overriding a value another layer interpolated; validating before
 substitution would check `$(ntasks)` rather than the integer it stands for. `$(...)` is
-experiment time and is frozen once; `{{...}}` is job time and survives this pass untouched.
+experiment time and is frozen once; `{{...}}` is job time, survives that pass untouched, and
+comes from a closed set that `ackbar config symbols` prints.
+
+`validate` runs six steps and says which ones it ran. `--offline` skips the three that need the
+filesystem or the site's queue limits, which is what the test tiers use and what is useful on a
+machine where the input data is not staged yet. Without it the fixture experiments fail step 3,
+correctly: they reference an observation archive that does not exist here.
+
+The graph goldens under `tests/goldens/` are one line per node and per edge, so a diff is
+readable. Regenerate them with `ACKBAR_UPDATE_GOLDENS=1 python -m pytest tests/test_graph.py`,
+and read the diff rather than accepting it.
 
 ## Prior art
 

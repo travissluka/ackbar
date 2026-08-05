@@ -129,6 +129,12 @@ properties:
     additionalProperties: false
     properties:
       size: { type: integer, minimum: 1 }
+      # Whether a deterministic control runs alongside the ensemble. It is
+      # mem000 and it is inside the same member array, not a parallel concept:
+      # v2's ana/{ctrl,ens} split is what made every ensemble loop carry a
+      # special case. With a control the index set is 0..size, without it
+      # 1..size.
+      control: { type: boolean }
       source:
         enum: [offline, eda, perturbation]
       # A missing member is routine once members are array elements, so the

@@ -1,0 +1,27 @@
+# Variational with a hybrid covariance, an ensemble, and long forecasts on
+# their own cadence. The busiest graph shape ACKBAR produces.
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/variational
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: hybrid_om1deg
+solver:
+  covariance: hybrid
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 4
+ensemble:
+  size: 4
+  source: offline
+  on_missing_member: run_degraded
+forecast:
+  extended:
+    length: P7D
+    every: P2D
+    members: [0]
+vars:
+  obs_dir: /archive/obs/osse_2018

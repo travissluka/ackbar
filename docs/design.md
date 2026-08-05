@@ -448,7 +448,21 @@ Rules:
   frozen. The second resolves at job time, because cycle date, window begin and length,
   previous and next cycle, member index, forecast length, and MOM6's `current_date` and `hours`
   cannot be known once. v3 had exactly this split (`$(var)` and `{{var}}`); what it lacked was
-  a named, closed set of job-time symbols. That set is defined and validated, not discovered.
+  a named, closed set of job-time symbols. That set is defined and validated, not discovered,
+  and `ackbar config symbols` prints it. Either syntax may carry a format spec after a colon,
+  which is what lets one file want the same date two ways: `{{window_begin}}` is the ISO
+  instant JEDI parses, `{{current_cycle:%Y%m%d%H}}` is the archive directory that has no colons
+  in it.
+- **Cycle *n* is computable from *n* alone.** The analysis time is `cycle.start + (n-1) *
+  cycle.length`, the window is centred on it and one cycle long so that consecutive windows
+  tile without gap or overlap, and cycle 0 is where experiment setup materializes the offline
+  initial condition. Calendar durations (months, years) are rejected rather than approximated,
+  because `start + n * P1M` is not a function of `n`, and cycle 40's date would then depend on
+  the path taken to reach it rather than on the number. That would break `heal`, which
+  regenerates a subgraph without replaying what came before it.
+- **Seeds derive from experiment, cycle and member.** Anything else means a healed member
+  carries a different perturbation than the original run and nothing records it. `hash()` in
+  particular is salted per process and would do exactly that.
 - **Provenance by replay, not by wrapped values.** The ordered layer files are copied verbatim
   into `cfg/` next to the resolved config, and `ackbar config why <dotted.key>` replays the
   merge with the layer list truncated at each level, reporting the last truncation that changed
@@ -491,11 +505,20 @@ submission runs it implicitly:
 3. every referenced input path exists and is readable
 4. every executable exists and is runnable, and matches the recorded provenance
 5. projected disk usage against free space, and projected job count against queue limits
-6. the graph is acyclic, and every member-level array shares the canonical index set
+6. the graph is acyclic, every member-level array shares the canonical index set, and every
+   enabled task has declared resources
 
 Step 2 is the one that pays. Generating the whole experiment's YAML up front is cheap, it
 catches missing observation files and stale paths at the only moment when fixing them is free,
 and it is a strong test that graph generation really is deterministic and side effect free.
+
+Two properties of the report matter as much as the checks. **A step that did not run says so**,
+rather than being absorbed into a pass: `--offline` skips the three steps that need the
+filesystem or the site's queue limits, and a config that fails step 1 stops the rest, since
+everything below would be reading values it has just been told are the wrong shape. And **an
+input is distinguished from an output by root**: anything under the scratch or output root is
+something this experiment is about to create, and everything else absolute is something it
+consumes and cannot make.
 
 What it cannot catch is what JEDI itself will reject, since ackbar's schema describes ackbar's
 config rather than OOPS's.
@@ -699,10 +722,27 @@ the experiment's own cycle-0 forecast output location, so `da(1)` resolves its b
 exactly the same rule as `da(50)`. Without that one step the asymmetry the design claims to
 have removed is merely relocated, and `first_cycle_only` machinery comes back.
 
+Cross-cycle is `forecast(n) -> da(n+1)`, and also `forecast(n) -> b.vt(n+1)`, because vertical
+B calibrates from the background. With no analysis configured the restart handoff is
+`forecast(n) -> forecast(n+1)` directly.
+
+**Two tasks are roots of their cycle and nothing else is.** `stage.obs` reads the observation
+archive, which is an offline stage that exists before the experiment starts, so nothing in the
+experiment gates it. `cleanup` is gated on artifact existence rather than on job state, for the
+reasons in Task completion. Any other task without an incoming edge is a job that runs before
+its input exists, so the generator refuses to produce one.
+
 Ensemble shape: per-member forecasts are a job array over the canonical index set; LETKF is a
 single MPI job consuming all members; recentering and per-member writeback are arrays. Every
 one of these is a serial `for` loop in v2. The control is `mem000` within the same indexing,
 not a separate concept.
+
+**The canonical index set is `0..size`**, the control plus the ensemble, or `1..size` when
+`ensemble.control` is false. An experiment with no ensemble block still has one, `(0,)`, so
+`mem000` is member 0 of a set of one rather than a different kind of thing. A member-level task
+is submitted as an array even when the set has one element: emitting that one as a scalar job
+would look tidier and would silently invalidate every `aftercorr` edge into it, which Slurm
+reports as a job that pends forever rather than as an error.
 
 **A missing or diverged member is the normal case, not the exception.** Arrays make partial
 success routine, and the solver has to have a stated policy: fail the cycle, run degraded with
