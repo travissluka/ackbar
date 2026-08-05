@@ -790,8 +790,10 @@ across every experiment on that domain. That is what makes experiments comparabl
 construction.
 
 They live under `$ACKBAR_STATIC_ROOT`, one directory per stage, keyed as the table says and in
-that order: `ic/<domain>/<source>/<YYYYMMDDThh>` is the initial condition stage, and
-`static/<domain>` is the static stage.
+that order: `ic/<domain>/<source>/<YYYYMMDDThh>` is the initial condition stage,
+`obs/<source>/<period>` the observation stage, and `static/<domain>` the static stage. The
+observation layers append their own `<cycle>/` beneath what they are given, so `$(obs_dir)` names
+the archive and not a cycle inside it.
 
 `<source>` names the **producer**, since the domain and the date are already in the path around
 it: `woa13-smoke`, `jra55-spinup`, `osse-truth-<experiment>`. It is a directory level rather than
@@ -805,7 +807,11 @@ this path out and that is the last point anyone looks at it.
 An experiment names a product by path, through `$(static_root)`, rather than composing that path
 from its own domain and start date. Composition would tie the layout to the resolver and make a
 hand-placed input unusable, and the question an experiment is asking is which state, not which
-state happens to sit at its start date.
+state happens to sit at its start date. That holds for observations too: `$(obs_dir)` is a `vars`
+entry the experiment sets, the same way it sets `model.initial_condition`, and not a built-in
+computed from the site and the cycle range. An OSSE experiment and a real-observation experiment
+over the identical period differ in exactly that one line, which is a difference worth being able
+to read off the config.
 
 **Spinup is a separate job script**, not part of any experiment. It either cold starts from
 WOA13 and integrates with realistic atmospheric forcing, or converts an external state (GFS,

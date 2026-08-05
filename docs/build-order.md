@@ -210,6 +210,29 @@ OSSE observation generator.
   fail the cycle.
 - **Then:** promote a free run to an OSSE truth run and generate synthetic observations.
 
+The revalidation of the ported observer configs is mostly done, and what it turned up is where to
+look rather than a list of fixes. Every operator, filter, distribution and parameter key the two
+layers use still resolves against the pinned bundle, checked by grepping `pkg/jedi` for the maker
+strings, which is also how to recheck after a bundle bump. Three things are worth knowing before
+reading those configs:
+
+- **The ADT operator lives in UFO, not SOCA**, at `ufo/src/ufo/operators/marine/adt/`. Anyone
+  carrying soca-science intuition looks in `soca/src` first and concludes it was dropped. It also
+  asserts its variable is exactly `absoluteDynamicTopography` and fails at construction otherwise.
+- **`GeoVaLs/sea_surface_temperature` exists only because the fields metadata says so.** It is the
+  `name surface` of `sea_water_potential_temperature`, so an observer's land or temperature check
+  depends on the *model* layer's `fields metadata`, which is a coupling between two layers that
+  neither one mentions.
+- **`observation alias file` is valid on both operators and filters**, which is why the same key
+  appears in different places in ported configs without either being wrong.
+
+Two relative paths need somewhere to live and something to stage them: `obsop_name_map.yml` in
+the sst layer and `fields metadata` in the model layer. Both currently exist only under
+`soca/test/`, so ACKBAR needs its own copies. Note that `validate` cannot catch either, since
+step 3 stats absolute paths and these resolve against the run directory. That makes them the
+first inputs whose absence is a runtime failure rather than a pre-submission one, which is an
+argument for staging them the way the model's base case is staged rather than by hand.
+
 ## Phase 6. Variational, static B, 3D
 
 Static B and analysis-to-restart writeback.
