@@ -91,6 +91,20 @@ further down the chain reads plain `Dependency`, which is indistinguishable from
 parent is merely queued. "Nothing can make progress" is therefore a property of the whole
 queue, never of one row.
 
+What the two profiles look like from `heal`:
+
+| | permissive (default) | `kill_invalid_depend` |
+|---|---|---|
+| the failure's dependents | pend forever | cancelled |
+| the queue after a failure | never drains | drains |
+| what `sacct` says about them | nothing at all | `CANCELLED` |
+| `status` reads them as | stranded, from the `squeue` reason | failed, from accounting |
+| what `heal` has left to cancel | all of them | nothing, Slurm did it |
+
+So healing's `scancel` step is a no-op under the strict profile. That is not an argument for
+dropping it: the profile that needs it is the default one, and it is the profile a new site is
+most likely to be running.
+
 ## Requeue: two minutes, and it takes the whole array
 
 Two behaviours, and together they were worth several minutes of every test run.

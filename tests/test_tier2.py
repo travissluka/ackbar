@@ -523,7 +523,7 @@ def test_an_impossible_request_is_refused_before_anything_is_submitted(
 # `sbatch` anywhere in this section.
 
 @pytest.fixture(scope="module")
-def healed(runs):
+def healed(runs, profile):
     """One broken experiment taken all the way back to finished.
 
     Shares the module's run fixture rather than starting its own, so the first
@@ -544,7 +544,10 @@ def healed(runs):
         # heal that appeared to work here would mean the second attempt ran
         # something other than what failed.
         assert main(["heal", name]) == 0
-        assert wait_for_quiet(name) == "stuck"
+        # Under `kill_invalid_depend` the dependents are cancelled and the
+        # queue drains; under the default they pend forever. Either way nothing
+        # can make further progress, which is the property being waited on.
+        assert wait_for_quiet(name) in ("stuck", "drained")
         repeat = heal.plan(config, paths, graph)
     else:
         repeat = None
@@ -562,7 +565,7 @@ def healed(runs):
     after = state.collect(paths, graph)
     return type("Healed", (), {
         "paths": paths, "graph": graph, "before": before, "plan": plan,
-        "repeat": repeat, "after": after,
+        "repeat": repeat, "after": after, "profile": profile,
     })
 
 
@@ -579,10 +582,12 @@ def test_a_leaf_failure_does_not_stop_the_next_cycle(healed):
 
 def test_the_blast_radius_is_the_failure_and_its_dependents(healed):
     broken, closure, cancel = healed.plan
-    # The two injected faults, and possibly the direct dependent of the second:
-    # it reads `DependencyNeverSatisfied`, which is a state it never leaves on
-    # its own, so it is broken in its own right rather than merely waiting.
-    # Anything further down reads plain `Dependency` and is only pending.
+    # The two injected faults, plus however much of the tail the profile has
+    # already condemned. On a permissive Slurm that is the direct dependent,
+    # which reads `DependencyNeverSatisfied` and so is broken in its own right
+    # rather than merely waiting, while anything further down reads plain
+    # `Dependency` and is only pending. Under `kill_invalid_depend` the whole
+    # tail has been cancelled and every one of them is broken.
     assert {"1.post.state", "2.recenter"} <= set(broken)
     assert not {"1.forecast", "1.da", "2.da", "2.stage.obs"} & set(broken)
 
@@ -590,9 +595,15 @@ def test_the_blast_radius_is_the_failure_and_its_dependents(healed):
     assert {"2.writeback", "2.forecast", "2.post.state"} <= set(closure)
     # Not upstream, and not the healthy cycle that produced the input.
     assert not {"1.forecast", "1.da", "2.da", "2.stage.obs"} & set(closure)
-    # Cancelling is not optional: those jobs pend forever holding job ids, and
-    # a successful replacement upstream does not release them.
-    assert cancel
+    # On a permissive Slurm cancelling is not optional: those jobs pend forever
+    # holding job ids, and a successful replacement upstream does not release
+    # them. Under `kill_invalid_depend` Slurm has already cancelled them, so
+    # there is nothing live left and an empty list is the right answer rather
+    # than a missed step.
+    if healed.profile == "permissive":
+        assert cancel
+    else:
+        assert cancel == []
 
 
 def test_healing_twice_lands_in_the_same_place(healed):
