@@ -26,8 +26,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ackbar import ledger, slurm
-from ackbar.cli import main
+from ackbar import heal, ledger, slurm, state
+from ackbar.cli import _frozen, main
+from ackbar.graph import build_graph
 from ackbar.paths import Paths
 from ackbar.site import load_site
 
@@ -119,6 +120,13 @@ EXPERIMENTS = {
                       resources=SHORT),
     "t2_silent": dict(cycles=1, members=2, seconds=1,
                       fail={"write_nothing": ["1.recenter.*"]}),
+    # Two faults, one per cycle, and the first one deliberately lands on a leaf
+    # so that cycle 1 still submits cycle 2. That is what makes this a heal of
+    # an experiment that has moved on rather than of one that stopped dead, and
+    # it is the case where the closure has to reach across a cycle boundary
+    # without dragging in the healthy cycle 1 that produced it.
+    "t2_heal": dict(cycles=2, members=2, seconds=1,
+                    fail={"exit_nonzero": ["1.post.state.2", "2.recenter.2"]}),
     # Its own experiment, and not part of the matrix, purely for wall clock. A
     # Slurm-enforced timeout costs a whole minute, and inside the matrix that
     # minute would run after the other faults rather than alongside them.
@@ -506,3 +514,140 @@ def test_an_impossible_request_is_refused_before_anything_is_submitted(
     # submitter job inside a running experiment would report.
     assert main(["start", "t2_toobig"]) == 2
     assert wait_for_quiet("t2_toobig") == "drained"
+
+
+# --- healing -----------------------------------------------------------------
+#
+# The phase's done-criterion, written so that it fails if it needed help: every
+# recovery below goes through `ackbar heal` and there is no `scancel` or
+# `sbatch` anywhere in this section.
+
+@pytest.fixture(scope="module")
+def healed(runs):
+    """One broken experiment taken all the way back to finished.
+
+    Shares the module's run fixture rather than starting its own, so the first
+    two cycles are already broken by the time this begins and only the heal
+    rounds cost wall clock.
+    """
+    name = "t2_heal"
+    paths = runs[name].paths
+    config, _, _ = _frozen(name)
+    graph = build_graph(config)
+
+    before = state.collect(paths, graph)
+    plan = heal.plan(config, paths, graph, before)
+
+    if not FAST:
+        # Heal without fixing the cause first. The fault is deterministic, so
+        # the experiment has to come back broken in exactly the same place: a
+        # heal that appeared to work here would mean the second attempt ran
+        # something other than what failed.
+        assert main(["heal", name]) == 0
+        assert wait_for_quiet(name) == "stuck"
+        repeat = heal.plan(config, paths, graph)
+    else:
+        repeat = None
+
+    # Fixing the cause is an edit to the frozen config, which is what an
+    # operator would do: the experiment is resolved once and the jobs read that
+    # file, so this is the only place a fix can go.
+    frozen = yaml.safe_load(paths.frozen_config.read_text())
+    frozen["model"]["stub"].pop("fail", None)
+    paths.frozen_config.write_text(yaml.safe_dump(frozen, sort_keys=False))
+
+    assert main(["heal", name]) == 0
+    assert wait_for_quiet(name) == "drained"
+
+    after = state.collect(paths, graph)
+    return type("Healed", (), {
+        "paths": paths, "graph": graph, "before": before, "plan": plan,
+        "repeat": repeat, "after": after,
+    })
+
+
+def test_a_leaf_failure_does_not_stop_the_next_cycle(healed):
+    """Cycle 1's post.state failed and cycle 2 ran anyway.
+
+    An `aftercorr` leaf has no dependents, so fail-stop does not apply to it,
+    and this is the case where a heal has to work on an experiment that has
+    moved on rather than on one that stopped dead.
+    """
+    assert healed.before["1.post.state"].broken == (2,)
+    assert healed.before["2.da"].summary == state.COMPLETE
+
+
+def test_the_blast_radius_is_the_failure_and_its_dependents(healed):
+    broken, closure, cancel = healed.plan
+    # The two injected faults, and possibly the direct dependent of the second:
+    # it reads `DependencyNeverSatisfied`, which is a state it never leaves on
+    # its own, so it is broken in its own right rather than merely waiting.
+    # Anything further down reads plain `Dependency` and is only pending.
+    assert {"1.post.state", "2.recenter"} <= set(broken)
+    assert not {"1.forecast", "1.da", "2.da", "2.stage.obs"} & set(broken)
+
+    # Downstream of the cycle 2 failure, all of it.
+    assert {"2.writeback", "2.forecast", "2.post.state"} <= set(closure)
+    # Not upstream, and not the healthy cycle that produced the input.
+    assert not {"1.forecast", "1.da", "2.da", "2.stage.obs"} & set(closure)
+    # Cancelling is not optional: those jobs pend forever holding job ids, and
+    # a successful replacement upstream does not release them.
+    assert cancel
+
+
+def test_healing_twice_lands_in_the_same_place(healed):
+    """A deterministic fault, resubmitted unchanged, fails the same way."""
+    if FAST:
+        pytest.skip("ACKBAR_TIER2_FAST=1")
+    assert healed.repeat[0] == healed.plan[0]
+    assert set(healed.repeat[1]) == set(healed.plan[1])
+
+
+def test_heal_alone_takes_the_experiment_to_finished(healed):
+    assert state.finished(healed.after, healed.graph) == "finished"
+    for member in (1, 2):
+        assert (healed.paths.member_out("rst", 2, member) / "restart.stub").exists()
+
+
+def test_a_healed_node_is_a_new_attempt_in_the_ledger(healed):
+    attempts = ledger.attempts(healed.paths, 2, "recenter")
+    assert attempts >= 2
+    assert healed.after["2.recenter"].attempt == attempts
+
+
+def test_members_that_already_succeeded_skip_rather_than_rerun(healed):
+    """The whole node is resubmitted, not the failed member alone.
+
+    Keeping the index set identical is what lets an `aftercorr` edge be rebuilt
+    between two arrays; the cost of it is paid back by the sentinel, which is
+    the only thing that makes rerunning a finished member free.
+    """
+    log = sorted(healed.paths.sub("log").joinpath("2").glob("recenter.*_1.out"))
+    assert len(log) >= 2, "member 1 was not resubmitted with the array"
+    assert "already complete, skipping" in log[-1].read_text()
+
+
+def test_every_cycle_leaves_a_stats_file_after_a_heal(healed):
+    for cycle in (1, 2):
+        assert healed.paths.stats_file(cycle).exists()
+
+
+def test_the_stats_file_describes_the_healed_run_not_the_abandoned_one(healed):
+    """`stats` reruns on a heal even though it already succeeded.
+
+    It reports on a cycle rather than producing an artifact of its own, and a
+    heal changes which jobs that cycle consists of. Skipping on its sentinel
+    leaves a file describing the run that was thrown away.
+    """
+    records = [r for r in ledger.read(healed.paths)
+               if r["cycle"] == 2 and r["task"] == "recenter"]
+    assert len(records) >= 2
+    harvested = json.loads(healed.paths.stats_file(2).read_text())
+    assert records[-1]["job_id"] in {j["job_id"] for j in harvested["jobs"]}
+
+
+def test_cleanup_still_runs_on_an_experiment_that_needed_healing(healed):
+    # Gated on artifacts rather than job state, so a heal cannot talk it into
+    # deleting a restart that a resubmitted consumer is about to read.
+    assert not healed.paths.cycle_out("rst", 0).exists()
+    assert healed.paths.cycle_out("rst", 1).exists()

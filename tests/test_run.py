@@ -204,6 +204,35 @@ def test_cleanup_keeps_everything_when_the_proof_is_incomplete(env):
     assert paths.cycle_out("rst", 1).exists()
 
 
+def test_a_cleanup_that_refused_once_tries_again(env):
+    """Refusing writes a sentinel, and skipping on it leaks for good.
+
+    A cleanup declines while the cycle it is keeping is incomplete, which is
+    exactly the state a failure leaves behind. If that run were allowed to count
+    as done, the restarts it declined to delete would never be revisited.
+    """
+    _, _, paths = env
+    _complete_cycle(env, 1)
+    _complete_cycle(env, 2)
+    missing = paths.member_out("rst", 2, 2) / "restart.stub"
+    missing.unlink()
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists()
+
+    missing.write_bytes(b"healed")
+    do(env, 3, "cleanup")
+    assert not paths.cycle_out("rst", 1).exists()
+
+
+def test_stats_reruns_rather_than_reporting_the_run_it_replaced(env):
+    """The harvest describes a cycle, and a heal changes what the cycle is."""
+    _, _, paths = env
+    do(env, 1, "stats")
+    paths.stats_file(1).write_text('{"cycle": 1, "stale": true}')
+    do(env, 1, "stats")
+    assert "stale" not in json.loads(paths.stats_file(1).read_text())
+
+
 # --- the submitter body ------------------------------------------------------
 
 def test_the_halt_flag_stops_cycling_without_looking_like_a_failure(env):

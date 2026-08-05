@@ -159,6 +159,38 @@ on that cycle's forecast, so a failed cycle stops the chain rather than producin
 garbage off a bad background. `ackbar run` is what those job scripts call; it is not meant to
 be typed.
 
+When something breaks, three commands cover it and none of them needs `squeue` or `scancel` by
+hand:
+
+```bash
+ackbar status  stub_letkf            # a grid of tasks by cycle, and what is broken
+ackbar status  stub_letkf --verbose  # which job id was cycle 7's writeback
+ackbar heal    stub_letkf --dry-run  # the blast radius and what would be cancelled
+ackbar heal    stub_letkf            # cancel the stranded closure, resubmit it
+ackbar harvest stub_letkf --cycle 7  # pull sacct into stats/7.json
+```
+
+`status` is read-only and holds nothing: closing it does nothing, because a view that has to
+stay open for the workflow to advance is a view that stalls the experiment when an ssh session
+drops. It joins four sources, and needs all four. The ledger knows which job id was cycle 7's
+writeback. `sacct` knows the outcome, and is all that is left once a job leaves the queue.
+`squeue` knows the *reason*, which exists only while a job is queued and is the only place
+`DependencyNeverSatisfied` is ever visible. The sentinel on disk outlives all three, because
+`sacct` rows purge on a site retention and an experiment has to stay answerable after that.
+
+`heal` identifies the failure, takes the transitive closure of its dependents from the
+regenerated graph, **cancels every job in that closure that is still queued**, and resubmits
+with fresh state-aware edges. The cancel is the step that is easy to skip and cannot be:
+unsatisfiable dependents pend rather than die, so they are still holding job ids and claimed
+working directories, and a successful replacement upstream does not release them. Whole nodes
+are resubmitted rather than the failed members alone, so an `aftercorr` edge is never rebuilt
+between arrays whose index sets disagree; members that already succeeded skip on their
+sentinels in about a second. The closure stops at what has actually been submitted, because a
+failure strands the `submit` task and the next cycle does not exist yet.
+
+A heal does not fix the cause. A genuine nonzero exit resubmitted unchanged fails the same way,
+and `heal` says so and resubmits anyway rather than refusing.
+
 `tests/experiments/stub_letkf.yaml` is the workflow test case: 20 members, 3 cycles, one core
 and a few seconds each, no science. `model.stub.fail` injects faults at named jobs, so a
 failure is reproducible configuration rather than an afternoon nobody can repeat:

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from . import ledger, run, slurm
+from . import harvest, heal, ledger, run, slurm, state
 from .config.jobtime import SYMBOLS, render, symbols
 from .config.layers import LayerError, merge_layers, resolve_layers
 from .config.merge import MergeError
@@ -161,6 +161,125 @@ def cmd_cancel(args):
         return 0
     print(f"cancelling {len(live)} job(s): {', '.join(str(i) for i in sorted(live))}")
     slurm.scancel(sorted(live))
+    return 0
+
+
+def cmd_status(args):
+    """A read-only view, holding no state. Closing it does nothing.
+
+    Deliberately not fused with `heal`. v3's driver was a curses UI in a
+    foreground process that had to stay running for the workflow to advance, so
+    a dropped ssh session stalled the experiment. Viewing must never be
+    load-bearing.
+    """
+    config, _, paths = _frozen(args.name)
+    graph = build_graph(config)
+    statuses = state.collect(paths, graph)
+
+    tasks = sorted({s.task for s in statuses.values()})
+    width = max(len(t) for t in tasks)
+    cycles = graph.cycles
+
+    print(f"{args.name}: {len(graph.nodes)} nodes over {len(cycles)} cycles")
+    print()
+    # Cycle numbers read downward, a digit per row, because at fifty cycles the
+    # only thing that fits in a column is one character.
+    margin = " " * (width + 3)
+    for power in (100, 10, 1):
+        if max(cycles) < power:
+            continue
+        print(margin + "".join(
+            str(c // power % 10) if c >= power else " " for c in cycles
+        ))
+    for task in tasks:
+        row = "".join(
+            state.GLYPH[statuses[f"{c}.{task}"].summary]
+            if f"{c}.{task}" in statuses else " "
+            for c in cycles
+        )
+        print(f"  {task:<{width}} {row}")
+
+    print()
+    print("  " + "  ".join(
+        f"{state.GLYPH[name]} {name}" for name in state.SEVERITY
+    ))
+
+    overall = state.finished(statuses, graph)
+    print(f"\n{args.name} is {overall}")
+
+    if args.verbose:
+        # Which job id was cycle 7's writeback, which is the question no
+        # scheduler query can answer once the job has left the queue.
+        print("\nnodes:")
+        for node in graph.order():
+            status = statuses[node]
+            if not status.job_id:
+                continue
+            counts = ", ".join(f"{n} {s}" for s, n in
+                               sorted(status.counts().items()))
+            attempt = "" if status.attempt <= 1 else \
+                f", attempt {status.attempt}"
+            print(f"  {node:<{width + 4}} job {status.job_id}"
+                  f"{attempt}: {counts}")
+
+    if args.verbose or overall == "broken":
+        broken = [i for i, s in statuses.items() if s.broken]
+        broken.sort(key=lambda i: (statuses[i].cycle, statuses[i].task))
+        if broken:
+            print("\nbroken:")
+            for line in heal.describe(statuses, broken):
+                print(line)
+            print("\nrun `ackbar heal` to resubmit the affected subgraph")
+    return 0 if overall in ("finished", "running") else 1
+
+
+def cmd_heal(args):
+    config, site, paths = _frozen(args.name)
+    graph = build_graph(config)
+    statuses = state.collect(paths, graph)
+    broken, closure, cancel = heal.plan(config, paths, graph, statuses)
+
+    if not broken:
+        print(f"{args.name}: nothing is broken")
+        return 0
+
+    print(f"{len(broken)} broken node(s):")
+    for line in heal.describe(statuses, broken):
+        print(line)
+
+    stubborn = heal.unhealable(statuses, broken)
+    if stubborn:
+        print("\nresubmitting these unchanged will most likely fail the same "
+              "way; consider fixing the cause first:")
+        for node_id, reasons in stubborn:
+            print(f"  {node_id}: {', '.join(reasons)}")
+
+    # The blast radius, printed before anything is cancelled. One failed
+    # forecast invalidates every cycle in flight.
+    print(f"\nclosure is {len(closure)} node(s): {', '.join(closure)}")
+    if cancel:
+        print(f"will cancel {len(cancel)} live job(s): "
+              f"{', '.join(str(i) for i in cancel)}")
+
+    if args.dry_run:
+        print("\n--dry-run, nothing was cancelled or submitted")
+        return 0
+
+    _, _, cancelled, records = heal.heal(config, site, paths, graph=graph)
+    print(f"\ncancelled {len(cancelled)}, resubmitted {len(records)}:")
+    return _report(records)
+
+
+def cmd_harvest(args):
+    config, site, paths = _frozen(args.name)
+    cycles = args.cycles or build_graph(config).cycles
+    for cycle in cycles:
+        payload = harvest.write(paths, cycle, launcher=site.get("launcher", ""))
+        totals = payload["totals"]
+        print(f"  cycle {cycle}: {totals['jobs']} job(s), "
+              f"{totals['failed']} not completed, "
+              f"{totals['core_seconds']}s core, "
+              f"peak RSS {totals['max_rss_kb']}K -> {paths.stats_file(cycle)}")
     return 0
 
 
@@ -350,6 +469,24 @@ def main(argv=None):
     p.add_argument("name")
     p.set_defaults(func=cmd_cancel)
 
+    p = sub.add_parser("status", help="a read-only view of what the experiment is doing")
+    p.add_argument("name")
+    p.add_argument("--verbose", "-v", action="store_true",
+                   help="detail every broken node, not only when something is")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("heal", help="resubmit the subgraph affected by a failure")
+    p.add_argument("name")
+    p.add_argument("--dry-run", action="store_true",
+                   help="show the closure and what would be cancelled")
+    p.set_defaults(func=cmd_heal)
+
+    p = sub.add_parser("harvest", help="pull sacct into stats/<cycle>.json")
+    p.add_argument("name")
+    p.add_argument("--cycle", dest="cycles", type=int, action="append",
+                   help="only this cycle; repeatable. Default is all of them")
+    p.set_defaults(func=cmd_harvest)
+
     p = sub.add_parser("graph", help="show the task graph")
     p.add_argument("experiment", type=Path)
     p.add_argument(
@@ -390,7 +527,7 @@ def main(argv=None):
         return args.func(args)
     except (LayerError, MergeError, ResolveError, SiteError, GraphError,
             DurationError, CreateError, SubmitError, slurm.SlurmError,
-            run.TaskError) as error:
+            run.TaskError, heal.HealError) as error:
         print(f"ackbar: {error}", file=sys.stderr)
         return 2
 

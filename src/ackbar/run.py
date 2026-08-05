@@ -91,12 +91,26 @@ def stub_io(config, paths, task, cycle, member):
 
 # --- dispatch ----------------------------------------------------------------
 
+#: Tasks that must run again on a resubmission even though they already
+#: succeeded. Both report on or maintain the cycle as a whole rather than
+#: producing an artifact of their own, so "already done" is a claim about a
+#: cycle that a heal has since changed.
+#:
+#: `stats` harvests the accounting for its cycle; after a heal the cycle
+#: contains different jobs, and skipping leaves a file describing the run that
+#: was abandoned. `cleanup` refuses to delete while the cycle it is keeping is
+#: incomplete, which is exactly the state a failure leaves behind: skipping
+#: means the one run that refused is the only run there will ever be, and the
+#: restarts leak for the life of the experiment.
+RERUN_ALWAYS = ("stats", "cleanup")
+
+
 def run_task(config, site, paths, cycle, task, member=None):
     """Run one job to completion. Raises TaskError on anything unrecoverable."""
     sentinel = paths.sentinel(cycle, task, member)
     inputs, outputs = stub_io(config, paths, task, cycle, member)
 
-    if sentinel.exists() and all(p.exists() for p in outputs):
+    if task not in RERUN_ALWAYS and sentinel.exists() and all(p.exists() for p in outputs):
         # The only safe skip. Output-exists alone is what v2 had, and a job
         # killed during a restart write leaves an output that exists and is
         # truncated.
@@ -112,7 +126,7 @@ def run_task(config, site, paths, cycle, task, member=None):
     elif task == "cleanup":
         _cleanup(config, paths, cycle)
     elif task == "stats":
-        _stats(paths, cycle)
+        _stats(site, paths, cycle)
     else:
         _stub(config, paths, cycle, task, member, inputs, outputs)
 
@@ -367,15 +381,18 @@ def _cleanup(config, paths, cycle):
         print(f"ackbar: removed {target}")
 
 
-def _stats(paths, cycle):
+def _stats(site, paths, cycle):
     """The per-cycle resource harvest.
 
-    A placeholder in phase 2: the `sacct --json` join lands in phase 3, and
-    what this proves now is that an `afterany` leaf runs when its parents
-    failed, which is exactly when the harvest is most wanted.
+    An `afterany` leaf, so it runs whatever happened, which is the point: this
+    is the task most wanted exactly when something failed. It harvests its own
+    cycle including the jobs that are still running alongside it, so a row can
+    be incomplete; `ackbar status` reads the scheduler, not this file.
     """
-    _commit(paths.stats_file(cycle), json.dumps({
-        "cycle": cycle,
-        "harvested": False,
-        "note": "sacct harvest arrives in phase 3; see docs/build-order.md",
-    }, indent=2).encode() + b"\n")
+    from .harvest import write
+
+    payload = write(paths, cycle, launcher=site.get("launcher", ""))
+    totals = payload.get("totals", {})
+    print(f"ackbar: harvested {totals.get('jobs', 0)} job(s) for cycle {cycle}, "
+          f"{totals.get('core_seconds', 0)} core seconds, "
+          f"peak RSS {totals.get('max_rss_kb', 0)}K")

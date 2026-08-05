@@ -298,6 +298,13 @@ The central rule is **write to a temporary path, commit by atomic rename, and wr
 last** recording job id, attempt, and exit state. A task skips only when the final renamed
 artifact and its sentinel both exist.
 
+Two tasks are exempt and always rerun: `stats` and `cleanup`. Neither produces an artifact of
+its own, so "already done" is not a claim about a file but about a whole cycle, and a heal
+changes what that cycle consists of. A skipped `stats` leaves a harvest of the abandoned run. A
+skipped `cleanup` is worse: it refuses to delete while the cycle it is keeping is incomplete,
+which is precisely the state a failure leaves behind, so the one run that declined becomes the
+only run there will ever be and the restarts leak for the life of the experiment.
+
 The weaker rule, skip if the output path exists, is what v2 had and it is not sufficient here.
 A `TIMEOUT` or `OUT_OF_MEMORY` kill during a restart write leaves a truncated one gigabyte
 `MOM.res.nc` that exists. Under skip-if-exists the retry declines to redo the very task it was
@@ -381,6 +388,26 @@ them. Skipping step 3 gives two jobs per task, one of which will never run.
 
 Note the blast radius. `forecast(n) -> da(n+1)` means one failed forecast invalidates every
 cycle in flight. That is inherent to cycling, and it is another argument for `K = 1`.
+
+Two boundaries on the closure, both of them narrower than "everything downstream":
+
+- **It stops at what has actually been submitted.** A failure strands the `submit` task, so the
+  next cycle does not exist yet. Its nodes hold no job ids, have nothing to cancel and no edges
+  to rebuild, and the resubmitted `submit` will submit them in the ordinary way. Reaching into
+  them means asking the submitter to build a cycle whose own roots have never been submitted,
+  which is exactly the case it refuses on.
+- **It resubmits whole nodes, not the failed members.** Resubmitting `--array=3` of a twenty
+  member forecast would work and would be a smaller job, and it is not worth it: every member
+  that already succeeded skips on its sentinel in about a second, and keeping the index sets
+  identical means an `aftercorr` edge is never rebuilt between two arrays that disagree. Slurm
+  reports that disagreement as a job which pends forever rather than as an error, so it is the
+  failure mode to design against.
+
+A heal fixes consequences, never causes. A deterministic fault resubmitted unchanged fails
+identically, so `heal` names the failures that look genuine (`FAILED`, `TIMEOUT`,
+`OUT_OF_MEMORY`) and resubmits them anyway. Refusing would be the tool claiming to understand
+the science better than the person running it; saying nothing would be letting them heal three
+times before reading a log.
 
 **Manual first.** `ackbar heal <exp>` as a one-shot: list what failed, regenerate the subgraph,
 resubmit. The failure classifier, per-class retry policy, resource escalation, and a recurring

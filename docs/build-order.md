@@ -114,6 +114,34 @@ carry the real risk can be exercised until an HPC allocation is on the line.
 - **Done when:** every fault in the matrix is recoverable with `ackbar heal` and no manual
   `squeue` or `scancel`, and every cycle leaves a stats file.
 
+Four things this phase settled, none of them visible from the design and each of them a bug
+that only shows up hours in.
+
+**The closure has to stop at what was actually submitted.** A failure strands the `submit`
+task, so the next cycle does not exist: those nodes have no job ids, nothing to cancel and no
+edges to rebuild. Including them makes the heal try to submit a cycle whose own roots have
+never been submitted, which is exactly the case the submitter refuses on, and the heal dies
+half-applied.
+
+**`stats` and `cleanup` must not skip on their sentinels.** Every other task produces an
+artifact and "already done" is the truth about it. These two report on or maintain a cycle as a
+whole, and a heal changes what that cycle consists of. A skipped `stats` leaves a file
+describing the run that was thrown away; a skipped `cleanup` is worse, because the one run that
+refused to delete (correctly, the cycle it was keeping was incomplete) is then the only run
+there will ever be, and the restarts leak for the life of the experiment.
+
+**The cleanup-versus-heal race cannot happen, and the reason is worth writing down.** Cycle *n*
+deletes cycle *n-2* only once *n-1* is complete for every member, and `submit` is gated
+`afterok` on the forecast, so cycle *n* only exists at all once *n-1* finished. Anything a heal
+could resubmit that still reads *n-2* is upstream of that forecast, and a heal only ever
+resubmits downstream of a failure. The artifact gate is the safety net rather than the
+mechanism.
+
+**Healing is not fixing.** A deterministic fault resubmitted unchanged fails identically, which
+is the common case in practice. `heal` says which failures look like that and resubmits anyway,
+because refusing would mean the tool deciding it understands the science better than the person
+running it.
+
 At the end of this phase the workflow machinery is done. Everything after adds tasks and
 layers.
 
