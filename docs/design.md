@@ -781,6 +781,15 @@ Static is keyed on **domain, not experiment**, so one `static/om_1deg/` is share
 across every experiment on that domain. That is what makes experiments comparable by
 construction.
 
+They live under `$ACKBAR_STATIC_ROOT`, one directory per stage, keyed as the table says and in
+that order: `ic/<domain>/<YYYYMMDDThh>` is the initial condition stage, and `static/<domain>` is
+the static stage. An experiment names one by path, through `$(static_root)`, rather than
+composing that path from its own domain and start date. Composition would tie the layout to the
+resolver and make a hand-placed input unusable, and there is no case where an experiment wants
+whichever initial condition happens to sit at its start date rather than a named one. Each stage
+directory carries a `README` naming what produced it and what it is fit for, since "12 hour cold
+start" and "10 year spinup" are the same five files.
+
 **Spinup is a separate job script**, not part of any experiment. It either cold starts from
 WOA13 and integrates with realistic atmospheric forcing, or converts an external state (GFS,
 ORA5, and similar). Experiments assume an initial condition already exists.
