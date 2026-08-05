@@ -313,6 +313,42 @@ def test_the_launcher_and_the_task_size_come_from_config(env, tmp_path, monkeypa
     assert seen["cwd"] == run_dir
 
 
+def test_what_the_model_said_about_itself_outlives_the_run_directory(env, tmp_path):
+    """Scratch is deleted on success, and `ocean.stats` lives in scratch.
+
+    One line per timestep, and where an ocean that is blowing up says so. A
+    forecast that leaves only a restart set leaves nothing to answer "did that
+    look right" with.
+    """
+    _, _, paths = env
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "ocean.stats").write_text("En 4.3e-04, CFL 0.03\n")
+    (run_dir / "model.log").write_text("NOTE: ...\n")
+
+    mom6sis2.keep_traces(run_dir, paths.sub("log") / "2", "forecast", 0)
+
+    kept = sorted(p.name for p in (paths.sub("log") / "2").iterdir())
+    assert kept == ["forecast.mem000.model.log", "forecast.mem000.ocean.stats"]
+
+
+def test_a_failed_run_keeps_its_trace_too(env, tmp_path, monkeypatch):
+    # The failed attempt's trace is the one worth having, so the copy happens
+    # whatever the model exited with.
+    config, site, paths = env
+    source = restart_set(paths.member_out("rst", 0, 0))
+
+    def fake_run(command, cwd=None, **kwargs):
+        (Path(cwd) / "ocean.stats").write_text("CFL 8.0, and then NaN\n")
+        return type("R", (), {"returncode": 1})()
+
+    monkeypatch.setattr(mom6sis2.subprocess, "run", fake_run)
+    with pytest.raises(mom6sis2.ModelError):
+        mom6sis2.forecast(config, site, paths, 1, "forecast", 0,
+                          source=source, target=paths.member_out("rst", 1, 0))
+    assert (paths.sub("log") / "1" / "forecast.mem000.ocean.stats").exists()
+
+
 def test_a_nonzero_exit_names_the_log_that_explains_it(env, tmp_path, monkeypatch):
     config, site, _ = env
     monkeypatch.setattr(

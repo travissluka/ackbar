@@ -20,7 +20,7 @@ it" has a cheap answer most of the time.
 | 0 | unit: merge, resolution, schema | python only | seconds | every commit |
 | 1 | `validate` and graph goldens on fixture experiments | python only | seconds | every commit |
 | 2 | stub workflow end to end, including the fault matrix | Slurm; no JEDI, no model | minutes | every commit |
-| 3 | real cycling, `OM_1deg`, a few cycles | full build | hours | per phase |
+| 3 | real cycling, `OM_1deg`, a few cycles | full build | tens of minutes | per phase |
 | 4 | production scale, `OM4_025` | HPC | days | per release |
 
 Tiers 0 through 2 are the regression suite. Tier 2 is the important one: it is the only cheap

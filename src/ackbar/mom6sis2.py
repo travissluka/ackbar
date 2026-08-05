@@ -36,7 +36,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .config.jobtime import cycle_time, symbols
+from .config.jobtime import cycle_time, member_dir, symbols
 
 #: Files the run directory owns outright. Everything else in the base case
 #: directory is linked through untouched, so this list is also the answer to
@@ -53,11 +53,26 @@ class ModelError(Exception):
     pass
 
 
+#: Small text the model writes about itself, kept beside the job's own log.
+#: `ocean.stats` is where an ocean that is blowing up says so, one line per
+#: timestep, and it is the first thing anyone asks for. It lives in the run
+#: directory, which is scratch, which is deleted on success and purged by the
+#: site on failure, so a successful forecast would otherwise leave no trace of
+#: how it went at all.
+TRACES = ("ocean.stats", "SIS.stats", "logfile.000000.out")
+
+
 def forecast(config, site, paths, cycle, task, member, *, source, target):
     """One model integration, from *source* restarts to *target* restarts."""
     run = paths.scratch(cycle, task, member)
+    logs = paths.sub("log") / str(cycle)
     stage(config, run, cycle, task, source=source)
-    launch(config, site, run, task)
+    try:
+        launch(config, site, run, task)
+    finally:
+        # In `finally`, because the run that failed is the one whose trace is
+        # worth having.
+        keep_traces(run, logs, task, member)
     commit(run, target)
 
 
@@ -257,6 +272,25 @@ def launch(config, site, run, task):
             f"{' '.join(command)} exited {result.returncode}; the run directory "
             f"is kept, see {log}"
         )
+
+
+def keep_traces(run, logs, task, member):
+    """Copy the model's own small logs out of scratch, next to the job's log.
+
+    Named with the job id where there is one, for the same reason `--output`
+    is: a healed attempt must land beside the failed one rather than overwrite
+    the evidence of why it was healed.
+    """
+    attempt = os.environ.get("SLURM_ARRAY_JOB_ID") or os.environ.get("SLURM_JOB_ID")
+    index = os.environ.get("SLURM_ARRAY_TASK_ID")
+    stamp = f".{attempt}_{index}" if attempt and index else f".{attempt}" if attempt else ""
+    stem = task if member is None else f"{task}.{member_dir(member)}"
+
+    logs.mkdir(parents=True, exist_ok=True)
+    for name in ("model.log",) + TRACES:
+        source = run / name
+        if source.exists():
+            shutil.copyfile(source, logs / f"{stem}{stamp}.{name}")
 
 
 def commit(run, target):
