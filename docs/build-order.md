@@ -83,20 +83,21 @@ The first phase that touches Slurm. This is the milestone the project's premise 
 - **Done when:** the clean run finishes in a couple of minutes, and every fault reaches its
   intended terminal state on **both** Slurm profiles with nothing left pending and undiagnosed.
 
-Three things the fault matrix taught, all of them properties of Slurm rather than of ACKBAR.
-Only the *direct* dependent of a failed job reads `DependencyNeverSatisfied`; anything further
-down reads plain `Dependency`, which is indistinguishable from waiting on a job that will still
-run, so "stuck" is a property of the whole queue and not of one row. A job that exceeds
-`--mem` is killed only if the site constrains swap as well as RAM: with `ConstrainSwapSpace=no`
-it swaps its way past the limit and finishes `COMPLETED`. And a job whose dependency has just
-cleared can sit in `PENDING BeginTime` for two minutes on an idle cluster, which sets the floor
-on how fast this tier can possibly run. See `docs/slurm.md`.
+Three things the fault matrix taught, all of them properties of Slurm rather than of ACKBAR,
+and all three now in `docs/slurm.md`. Only the *direct* dependent of a failed job reads
+`DependencyNeverSatisfied`; anything further down reads plain `Dependency`, indistinguishable
+from waiting on a job that will still run, so "stuck" is a property of the whole queue and not
+of one row. A job that exceeds `--mem` is killed only if the site constrains swap as well as
+RAM. And a requeue costs about two minutes of deferral and, asked for by job id from inside an
+array element, takes every sibling with it.
 
-The suite is built around that floor. Every experiment is created and started up front and
-waited on together, so their scheduling latencies overlap instead of summing, and no single
-experiment carries two slow faults in series: the one-minute timeout has its own experiment
-precisely so that its minute runs alongside another experiment's deferral rather than after
-it.
+The suite is built around the cost of those. Every experiment is created and started up front
+and waited on together, so their scheduling latencies overlap instead of summing, and no
+experiment carries two slow faults in series: the one-minute timeout and the two-minute requeue
+each get their own, so their waits run alongside each other rather than end to end. The requeue
+case alone is most of the wall clock and `ACKBAR_TIER2_FAST=1` drops it, which is for iterating
+and not for what runs before a commit: requeue is the one fault the scheduler inflicts on its
+own, without being asked.
 
 This is phase 2 rather than a testing afterthought because on 8 physical cores an
 `--array=1-20` of 8-PE forecasts runs strictly serially. Without the stub, the property the

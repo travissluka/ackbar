@@ -265,6 +265,23 @@ def _burn_memory():
         chunks[-1][::4096] = b"\1" * len(chunks[-1][::4096])
 
 
+def _this_job():
+    """How Slurm wants *this* job named, which for an array element is
+    `<array id>_<index>` and not `$SLURM_JOB_ID`.
+
+    `SLURM_JOB_ID` inside an array element is that element's own id, and passing
+    it to `scontrol requeue` takes the **whole array** with it: every sibling is
+    killed and rerun, including the ones that had already finished. That is not
+    a hypothetical. It is what turned a one member fault into a three member
+    one, and it cost two minutes of Slurm's post-requeue deferral each time.
+    """
+    array, index = (os.environ.get("SLURM_ARRAY_JOB_ID"),
+                    os.environ.get("SLURM_ARRAY_TASK_ID"))
+    if array and index:
+        return f"{array}_{index}"
+    return os.environ.get("SLURM_JOB_ID")
+
+
 def _requeue(cycle, task):
     """Requeue this job once, mid-task, and let the rerun finish it.
 
@@ -275,7 +292,7 @@ def _requeue(cycle, task):
     if int(os.environ.get("SLURM_RESTART_COUNT", "0") or 0):
         print(f"ackbar: {cycle}.{task} resumed after requeue")
         return
-    job_id = os.environ.get("SLURM_JOB_ID")
+    job_id = _this_job()
     if not job_id:
         raise TaskError("requeue was injected outside Slurm")
     print(f"ackbar: {cycle}.{task} requeueing job {job_id}")

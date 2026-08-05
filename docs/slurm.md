@@ -91,31 +91,38 @@ further down the chain reads plain `Dependency`, which is indistinguishable from
 parent is merely queued. "Nothing can make progress" is therefore a property of the whole
 queue, never of one row.
 
-## The two-minute dependency deferral
+## Requeue: two minutes, and it takes the whole array
 
-A job whose dependency has just been satisfied can sit in `PENDING` with reason `BeginTime` for
-**two minutes** on a completely idle cluster:
+Two behaviours, and together they were worth several minutes of every test run.
+
+**A requeued job is deferred about two minutes** before it is eligible again. It shows as
+`PENDING` with reason `BeginTime`, which reads like a scheduling problem rather than what it
+is:
 
 ```
 JobState=PENDING Reason=BeginTime Dependency=(null)
 SubmitTime=...T11:48:05  EligibleTime=...T11:50:06
 ```
 
-`Dependency=(null)` means it is ready; `EligibleTime` is stamped 121 seconds after submission.
-Slurm backs off re-testing an unsatisfied dependency, and the back-off is not always cleared
-when the dependency clears. It does not happen on every transition, which is worse than if it
-did: a cycle usually advances a stage in about three seconds, and occasionally takes two
-minutes for no visible reason.
+`Dependency=(null)`, so it is ready; `EligibleTime` is stamped 121 seconds out. This is Slurm
+avoiding a tight requeue loop against a failing node, and there is no knob for it.
 
-Two consequences. Do not read a stalled-looking cycle as a fault until it has been that way for
-longer than this. And when timing anything, remember the deferral is per *transition*, so it is
-paid by the depth of a cycle rather than by its width.
+**`scontrol requeue $SLURM_JOB_ID` inside an array element requeues the entire array.** Every
+sibling is killed and rerun, including ones that had already finished, and each then waits out
+the deferral. Name the element as `$SLURM_ARRAY_JOB_ID`_`$SLURM_ARRAY_TASK_ID` instead.
+Measured: a requeue asked for by member 3 of a 3-element array restarted all three, together,
+150 seconds later.
 
-Suspected aggravator, unconfirmed: `MinJobAge=300` keeps finished jobs in the controller for
-five minutes, and with `default_queue_depth` at its default the scheduler stops examining the
-queue after a fixed number of jobs. A long test session accumulates hundreds of lingering
-records. If that is the cause, `SchedulerParameters=default_queue_depth=1000` and a shorter
-`MinJobAge` would reduce it. Worth measuring before believing.
+Three consequences. Do not read a stalled-looking cycle as a fault until it has been that way
+for longer than the deferral. Anything that requeues has to name the element precisely. And
+this is the sharpest argument there is for the idempotency rules in `design.md`: a node failure
+requeues jobs that already succeeded, and they must skip rather than redo. That path is not
+hypothetical, it is what these measurements ran through.
+
+Things that are *not* the cause, checked so nobody checks them again: queue depth and
+`MinJobAge`. With 332 finished job records still held by the controller, an eight stage chain
+of `aftercorr` arrays transitioned in 1 to 2 seconds every time, no deferrals. Measure with
+`tools/slurm/measure-latency.sh` before changing scheduler settings.
 
 Accounting goes through slurmdbd into MySQL, so **`sacct` works for completed jobs**. That
 matters: the workflow engine should learn a job's fate from `sacct`, not from parsing

@@ -115,8 +115,14 @@ test that exercises arrays, dependency edges and failure recovery.
 
 ```bash
 source site/activate.sh
-.venv/bin/python -m pytest tests/test_tier2.py
+.venv/bin/python -m pytest tests/test_tier2.py                     # about 3 minutes
+ACKBAR_TIER2_FAST=1 .venv/bin/python -m pytest tests/test_tier2.py # about 1, drops requeue
 ```
+
+Most of that three minutes is one thing: Slurm defers a requeued job about two minutes before
+it is eligible again. `ACKBAR_TIER2_FAST=1` skips the requeue case for iterating, and is the
+wrong thing to run before a commit, since requeue is the one fault the scheduler inflicts on
+its own without being asked.
 
 Anything that resolves a configuration needs the site layer, because that is where the scratch
 and output roots come from:

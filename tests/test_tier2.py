@@ -39,6 +39,14 @@ REPO = Path(__file__).resolve().parents[1]
 #: enough that a hang is reported rather than sat through.
 QUIET_TIMEOUT = 420
 
+#: `ACKBAR_TIER2_FAST=1` drops the requeue case, which alone is most of this
+#: file's wall clock: Slurm defers a requeued job about two minutes before it is
+#: eligible again, and no amount of overlapping gets under that. Everything else
+#: finishes in well under a minute. Use it while iterating; do not use it as the
+#: thing that runs before a commit, because requeue is the one fault the
+#: scheduler inflicts on its own, without being asked.
+FAST = os.environ.get("ACKBAR_TIER2_FAST") == "1"
+
 
 @pytest.fixture(scope="module", autouse=True)
 def require_slurm():
@@ -92,7 +100,6 @@ def build(tmp_path, name, *, cycles=2, members=4, seconds=2, fail=None,
 FAULTS = {
     "exit_nonzero": ["1.forecast.1"],
     "overrun_memory": ["1.forecast.2"],
-    "requeue": ["1.forecast.3"],
 }
 
 #: A one minute limit, because Slurm stores a time limit in whole minutes and
@@ -112,13 +119,23 @@ EXPERIMENTS = {
                       resources=SHORT),
     "t2_silent": dict(cycles=1, members=2, seconds=1,
                       fail={"write_nothing": ["1.recenter.*"]}),
-    # Its own experiment, and not part of the matrix, purely for wall clock.
-    # A Slurm-enforced timeout costs a whole minute, and in the matrix that
-    # minute would land *after* the dependency deferral above rather than
-    # alongside it.
+    # Its own experiment, and not part of the matrix, purely for wall clock. A
+    # Slurm-enforced timeout costs a whole minute, and inside the matrix that
+    # minute would run after the other faults rather than alongside them.
     "t2_timeout": dict(cycles=1, members=2, seconds=1, resources=SHORT,
                        fail={"overrun_time": ["1.da.*"]}),
+    # Its own for a sharper reason: Slurm defers a requeued job about two
+    # minutes before it is eligible again, which is the single slowest thing in
+    # this file. On its own that is two minutes of the suite; in the matrix it
+    # would be two minutes of the matrix, in series with everything else.
+    "t2_requeue": dict(cycles=1, members=3, seconds=1,
+                       fail={"requeue": ["1.forecast.2"]}),
 }
+
+if FAST:
+    del EXPERIMENTS["t2_requeue"]
+
+requeue_case = pytest.mark.skipif(FAST, reason="ACKBAR_TIER2_FAST=1")
 
 
 class Run:
@@ -386,19 +403,46 @@ def _enforces_memory():
     ).stdout.strip()
 
 
-def test_a_requeued_member_reruns_from_the_top_and_still_finishes(matrix):
+@requeue_case
+def test_a_requeued_member_reruns_from_the_top_and_still_finishes(runs):
     # Requeue on node failure is on by default and reruns the batch script from
     # its beginning, so every task has to be safe to run twice.
-    assert matrix[(1, "forecast", 3)] == "COMPLETED"
-    sentinel = json.loads(matrix.paths.sentinel(1, "forecast", 3).read_text())
+    run = runs["t2_requeue"]
+    assert run[(1, "forecast", 2)] == "COMPLETED"
+    sentinel = json.loads(run.paths.sentinel(1, "forecast", 2).read_text())
     assert sentinel["restarts"] >= 1
-    assert (matrix.paths.member_out("rst", 1, 3) / "restart.stub").exists()
+    assert (run.paths.member_out("rst", 1, 2) / "restart.stub").exists()
+
+
+@requeue_case
+def test_a_requeue_takes_only_the_element_that_asked_for_it(runs):
+    """`scontrol requeue $SLURM_JOB_ID` inside an array element requeues the
+    whole array, siblings and all, and each of them then waits out Slurm's two
+    minute post-requeue deferral. The element has to be named
+    `<array id>_<index>` instead.
+    """
+    run = runs["t2_requeue"]
+    requeued = json.loads(run.paths.sentinel(1, "forecast", 2).read_text())
+    for member in (1, 3):
+        sibling = json.loads(run.paths.sentinel(1, "forecast", member).read_text())
+        assert sibling["restarts"] == 0, \
+            f"member {member} was requeued along with member 2"
+    assert requeued["restarts"] >= 1
 
 
 def test_a_healthy_member_is_untouched_by_the_others(matrix):
     # aftercorr, elementwise: member 3 proceeds without waiting for member 1,
     # and member 1's failure does not cancel it.
     assert matrix[(1, "post.state", 3)] == "COMPLETED"
+
+
+@requeue_case
+def test_a_requeue_does_not_stall_the_rest_of_its_cycle(runs):
+    # The siblings finish on their own schedule while the requeued element
+    # waits out Slurm's deferral.
+    run = runs["t2_requeue"]
+    assert run[(1, "post.state", 1)] == "COMPLETED"
+    assert run[(1, "post.state", 3)] == "COMPLETED"
 
 
 def test_a_failed_member_strands_exactly_its_own_successor(matrix, profile):
