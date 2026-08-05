@@ -43,6 +43,16 @@ from .config.jobtime import cycle_time, member_dir, symbols
 #: "what does ACKBAR change about a stock MOM6-examples case".
 OWNED = ("input.nml", "MOM_layout", "SIS_layout", "diag_table")
 
+#: Files the base case ships that the model *writes* rather than reads. MOM6 and
+#: SIS2 dump the parameter set they actually ran with into the working directory,
+#: and MOM6-examples commits those dumps back into the case as documentation. So
+#: they are outputs sitting in an input directory, and linking them means the
+#: model opens a symlink for writing and edits the shared case in place: every
+#: member of every cycle of every experiment writing the same file, and a
+#: submodule that is permanently dirty so that a real change to it no longer
+#: shows. Skipped here, and written fresh in the run directory instead.
+GENERATED = ("MOM_parameter_doc.", "SIS_parameter_doc.", "available_diags.")
+
 #: What proves a restart set is complete. Written by `coupler_restart` after the
 #: component restarts, and the file the next cycle reads to know its own start
 #: date, so its absence is exactly the failure that matters.
@@ -94,6 +104,8 @@ def stage(config, run, cycle, task, *, source):
     run.mkdir(parents=True, exist_ok=True)
     for entry in sorted(os.scandir(base), key=lambda e: e.name):
         if entry.name in OWNED or entry.name in ("INPUT", "RESTART"):
+            continue
+        if entry.name.startswith(GENERATED):
             continue
         _link(run / entry.name, entry.path)
     _link(run / "coupler_main", _path(model, "executable"))

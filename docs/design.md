@@ -654,6 +654,14 @@ owns: `input.nml`, `MOM_layout`, `SIS_layout`, `diag_table`. That keeps the case
 coming from the model submodule instead of from a fork of it in this repository, and it makes
 "what did ACKBAR change" a four-item list rather than a diff.
 
+The exception is that a stock case also contains files the model *writes*. MOM6 and SIS2 dump the
+parameter set they actually ran with, and MOM6-examples commits those dumps back into the case as
+documentation, so they are outputs sitting in an input directory. Linking one means the model
+opens a symlink for writing and edits the shared case in place, under every other member, cycle
+and experiment at once. They are skipped, and the model writes its own into the run directory.
+`GENERATED` in `mom6sis2.py` is the list. The general form of the rule: link an input, never a
+name the model is going to open for writing, and the case directory does not distinguish them.
+
 Three of those four are worth saying why:
 
 - **The layout comes from the domain layer**, never from the case. MOM6-examples ships

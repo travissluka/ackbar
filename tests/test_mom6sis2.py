@@ -70,6 +70,9 @@ def base(tmp_path):
     # The placeholder layouts that ship with the real cases, PE counts and all.
     (case / "MOM_layout").write_text("LAYOUT = 12,10\n")
     (case / "SIS_layout").write_text("LAYOUT = 32,18\n")
+    # Model output that MOM6-examples commits back into the case as documentation.
+    (case / "MOM_parameter_doc.layout").write_text("LAYOUT = 12, 10\n")
+    (case / "SIS_parameter_doc.short").write_text("DT_ICE_DYNAMICS = 3600.0\n")
     for name in ("grid_spec.nc", "ocean_hgrid.nc", "JRA_tas.nc"):
         (case / "INPUT" / name).write_bytes(b"netcdf\n")
     return case
@@ -138,6 +141,17 @@ def test_the_files_ackbar_owns_are_real_files_not_links(env):
     run_dir = staged(env)
     for name in mom6sis2.OWNED:
         assert (run_dir / name).is_file() and not (run_dir / name).is_symlink()
+
+
+def test_what_the_model_writes_is_not_linked_back_into_the_shared_case(env, base):
+    # MOM6-examples commits the model's own parameter dumps into the case, so
+    # they are outputs living in an input directory. Linked, the model opens the
+    # symlink for writing and edits the shared case underneath every other
+    # experiment. Absent, it writes its own.
+    run_dir = staged(env)
+    for name in ("MOM_parameter_doc.layout", "SIS_parameter_doc.short"):
+        assert not (run_dir / name).exists(), f"{name} would be written through"
+    assert (base / "MOM_parameter_doc.layout").read_text() == "LAYOUT = 12, 10\n"
 
 
 def test_the_incoming_restarts_land_in_input_where_the_coupler_looks(env):
