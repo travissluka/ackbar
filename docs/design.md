@@ -782,13 +782,22 @@ across every experiment on that domain. That is what makes experiments comparabl
 construction.
 
 They live under `$ACKBAR_STATIC_ROOT`, one directory per stage, keyed as the table says and in
-that order: `ic/<domain>/<YYYYMMDDThh>` is the initial condition stage, and `static/<domain>` is
-the static stage. An experiment names one by path, through `$(static_root)`, rather than
-composing that path from its own domain and start date. Composition would tie the layout to the
-resolver and make a hand-placed input unusable, and there is no case where an experiment wants
-whichever initial condition happens to sit at its start date rather than a named one. Each stage
-directory carries a `README` naming what produced it and what it is fit for, since "12 hour cold
-start" and "10 year spinup" are the same five files.
+that order: `ic/<domain>/<source>/<YYYYMMDDThh>` is the initial condition stage, and
+`static/<domain>` is the static stage.
+
+`<source>` names the **producer**, since the domain and the date are already in the path around
+it: `woa13-smoke`, `jra55-spinup`, `osse-truth-<experiment>`. It is a directory level rather than
+part of the date's name because one source normally yields many dates. A spinup gets snapshotted
+at several states, and an OSSE truth run is promoted at whichever dates the experiments reading
+it need. The level also carries the stage's `README`, which is where provenance belongs: "12 hour
+cold start" and "10 year spinup" are the same five files, and only the `README` and the slug say
+which one this is. Name the slug so it warns, because an experiment selects a state by writing
+this path out and that is the last point anyone looks at it.
+
+An experiment names a product by path, through `$(static_root)`, rather than composing that path
+from its own domain and start date. Composition would tie the layout to the resolver and make a
+hand-placed input unusable, and the question an experiment is asking is which state, not which
+state happens to sit at its start date.
 
 **Spinup is a separate job script**, not part of any experiment. It either cold starts from
 WOA13 and integrates with realistic atmospheric forcing, or converts an external state (GFS,
