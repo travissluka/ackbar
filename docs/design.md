@@ -804,6 +804,14 @@ regional last.
   what soca-science did, but it is not the only valid position: 4DVar requires the window to
   begin at the analysis time, and 4DEnVar allows either. So window placement becomes a
   configured property of the solver when the 4D window work lands, not a constant.
+- **`da` is not necessarily one node.** Hybrid EnVar needs both the EnVar analysis and whatever
+  maintains the ensemble its covariance is drawn from (a LETKF, or another perturbation model),
+  and those are two distinct applications with distinct configs, resources, and member
+  cardinality inside the same cycle. The task table today gives `da` one name and one
+  executable chosen by solver. When hybrid is implemented this becomes either two tasks
+  (`da.var` and `da.ens`) or one task parameterized by instance, and the graph edges, the
+  resource table, and the per-task config paths all key off whichever is chosen. Decided in the
+  hybrid phase.
 - **Which application calibrates vertical B per cycle**, if a separate one does at all. The
   task exists in the graph with no executable named. `soca_sqrtvertloc.x` is not it: that is
   vertical *localization* for an ensemble covariance, a different quantity from the vertical

@@ -85,6 +85,11 @@ TASKS = (
         name="da",
         when=lambda config: _solver(config) != "none",
         exe=_da_exe,
+        # One node today because every solver implemented so far runs one
+        # application. Hybrid EnVar will not: it needs the EnVar analysis and
+        # whatever maintains its ensemble (a LETKF, or another perturbation
+        # model) in the same cycle, with different configs and resources. See
+        # Open in docs/design.md; splitting this is a hybrid-phase decision.
         description="the analysis. LETKF is one MPI job consuming every member",
     ),
     TaskDef(
