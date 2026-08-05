@@ -1,0 +1,16 @@
+# The domain for a workflow test: no grid, no static files, no science.
+#
+# It exists because resources are a property of the domain, and a stub run wants
+# resources that fit a laptop-sized allocation rather than OM_1deg's. Pairing
+# `domain/stub` with `model/stub` gives an experiment that exercises arrays,
+# dependency edges and failure recovery at one core per member.
+domain:
+  name: stub
+  resources:
+    # One entry, deliberately. Every stub task does the same thing, so a
+    # per-task table here would be a table of identical rows pretending to
+    # carry information.
+    default:
+      ntasks: 1
+      time: '00:02:00'
+      mem: 500M

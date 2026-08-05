@@ -1,0 +1,204 @@
+"""Every call ACKBAR makes to Slurm, in one place.
+
+Confined here so that the submitter, the healer and the harvest share one
+spelling of each command, and so that the tier 0 and 1 tests can replace `run`
+with a fake and exercise submission logic on a machine with no scheduler.
+
+Nothing here interprets the workflow. It converts arguments to a command and a
+command's output to plain data, and that is all.
+"""
+
+import json
+import shutil
+import subprocess
+
+#: The only state that means the artifact is there. Everything else that has
+#: left the queue is failed, deliberately: an unrecognized state is not good
+#: news, and the cost of being wrong is a job that reads a file that does not
+#: exist.
+SUCCESS = ("COMPLETED",)
+
+#: Still going, so no outcome yet. `sacct` reports these while a job is live.
+ACTIVE = ("RUNNING", "PENDING", "REQUEUED", "RESIZING", "SUSPENDED", "COMPLETING")
+
+#: A pending job whose dependency can never be satisfied. It never appears in
+#: `sacct` as failed at all, and unless the site sets
+#: `DependencyParameters=kill_invalid_depend` it pends forever, so `status` and
+#: `heal` have to recognize it from the queue reason and call it terminal.
+NEVER_SATISFIED = "DependencyNeverSatisfied"
+
+
+class SlurmError(Exception):
+    pass
+
+
+def available():
+    return shutil.which("sbatch") is not None
+
+
+def run(command, check=True, stdin=None):
+    """Run one Slurm command. The single point tests replace."""
+    result = subprocess.run(
+        command, capture_output=True, text=True, input=stdin,
+    )
+    if check and result.returncode != 0:
+        raise SlurmError(
+            f"{' '.join(command)} exited {result.returncode}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    return result
+
+
+def sbatch(script, *, job_name, comment, dependency=None, array=None,
+           partition=None, account=None, extra=()):
+    """Submit one script. Returns the job id as an integer.
+
+    Identity is carried twice, as the design requires: in the job name so
+    `sacct` rows are readable by eye, and in `--comment` so it survives into
+    accounting as a structured field. The name alone is not enough, because
+    `sacct` truncates it and because several experiments run at once.
+
+    `--array` and `--dependency` are command line rather than script, because
+    they are the two things that differ between the first attempt and a healed
+    one. Everything else is frozen in the script.
+    """
+    command = ["sbatch", "--parsable", f"--job-name={job_name}",
+               f"--comment={comment}"]
+    if dependency:
+        command.append(f"--dependency={dependency}")
+    if array:
+        command.append(f"--array={array}")
+    if partition:
+        command.append(f"--partition={partition}")
+    if account:
+        command.append(f"--account={account}")
+    command.extend(extra)
+    command.append(str(script))
+
+    result = run(command)
+    # `--parsable` gives "<id>" or "<id>;<cluster>".
+    return int(result.stdout.strip().split(";")[0])
+
+
+def queue(job_ids=None):
+    """Live state from `squeue`: {job id: (state, reason)}.
+
+    Reasons exist only while a job is queued and are gone forever afterward,
+    which is why this cannot be replaced by `sacct`. `sacct`'s own Reason field
+    is empty post mortem.
+
+    Array elements are collapsed onto their base job id. A node is one
+    submission here, and per element state belongs to the harvest, not to the
+    question "may I still depend on this".
+    """
+    command = ["squeue", "-h", "-o", "%i|%T|%r"]
+    if job_ids:
+        command += ["-j", ",".join(str(i) for i in job_ids)]
+    # A job id that has already left the queue makes squeue exit nonzero, which
+    # is the ordinary case here rather than an error.
+    result = run(command, check=False)
+    out = {}
+    for line in result.stdout.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 3:
+            continue
+        raw, state, reason = parts
+        base = raw.split("_")[0]
+        if not base.isdigit():
+            continue
+        # Worst state wins for an array: one pending element means the
+        # submission as a whole is not finished.
+        out.setdefault(int(base), (state, reason))
+    return out
+
+
+def accounting(job_ids):
+    """Outcome from `sacct --json`: {job id: {"state":, "reason":, "exit":}}.
+
+    `--json` rather than `-P`, because the parsable delimiter collides with the
+    structured comment ACKBAR puts identity in, and because the default column
+    widths truncate the job name.
+    """
+    if not job_ids:
+        return {}
+    command = ["sacct", "-j", ",".join(str(i) for i in job_ids), "--json"]
+    result = run(command, check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return {}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+    out = {}
+    for job in payload.get("jobs", []):
+        state = job.get("state", {})
+        current = state.get("current")
+        # Slurm spells this as a list in recent versions and a bare string in
+        # older ones.
+        if isinstance(current, list):
+            current = current[0] if current else "UNKNOWN"
+        out[int(job["job_id"])] = {
+            "state": current or "UNKNOWN",
+            "reason": state.get("reason", ""),
+            "comment": (job.get("comment") or {}).get("job", ""),
+            "name": job.get("name", ""),
+        }
+    return out
+
+
+def state_of(job_ids):
+    """What each job id is, as the submitter needs to know it.
+
+    One of `active`, `completed`, `failed`, `unknown`. The queue is consulted
+    first and wins, because a job that is still in it has no `sacct` outcome
+    yet, and because `DependencyNeverSatisfied` is visible only there.
+    """
+    live = queue(job_ids)
+    done = accounting([i for i in job_ids if i not in live])
+
+    out = {}
+    for job_id in job_ids:
+        if job_id in live:
+            state, reason = live[job_id]
+            out[job_id] = "failed" if reason == NEVER_SATISFIED else "active"
+            continue
+        record = done.get(job_id)
+        if record is None:
+            out[job_id] = "unknown"
+        elif record["state"] in SUCCESS:
+            out[job_id] = "completed"
+        elif record["state"] in ACTIVE:
+            out[job_id] = "active"
+        else:
+            out[job_id] = "failed"
+    return out
+
+
+def scancel(job_ids):
+    if not job_ids:
+        return
+    run(["scancel"] + [str(i) for i in job_ids], check=False)
+
+
+def array_spec(members, throttle=None):
+    """`--array` for a member index set, as compact ranges.
+
+    Compact because a site's `MaxArrayTasks` and the command line both care,
+    and because `1-20` in `squeue` is readable where twenty comma separated
+    indices are not.
+    """
+    if not members:
+        return None
+    ordered = sorted(members)
+    runs = []
+    start = previous = ordered[0]
+    for value in ordered[1:]:
+        if value == previous + 1:
+            previous = value
+            continue
+        runs.append((start, previous))
+        start = previous = value
+    runs.append((start, previous))
+    spec = ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+    return f"{spec}%{throttle}" if throttle else spec

@@ -72,13 +72,23 @@ The first phase that touches Slurm. This is the milestone the project's premise 
   append-only ledger, member arrays wired with `aftercorr`, the cycle throttle and the
   submitter job, and two local Slurm profiles (one with
   `DependencyParameters=kill_invalid_depend`, one with enforced limits and a small
-  `MaxSubmitJobs`).
-- **Test:** tier 2. A 20 member, 3 cycle experiment at 1 PE and 30 seconds a member. Then the
-  fault matrix, injected deterministically: nonzero exit, run past the time limit, impossible
-  memory request, exit 0 having written nothing, requeue mid-task, and a member that never
-  starts.
-- **Done when:** the clean run finishes in about two minutes, and every fault reaches its
+  `MaxSubmitJobs`), switched by `tools/slurm/profile.sh`.
+- **Test:** tier 2, in `tests/test_tier2.py`. A 20 member, 3 cycle experiment at 1 PE and a few
+  seconds a member. Then the fault matrix, injected deterministically through
+  `model.stub.fail`: nonzero exit, run past the time limit, blow the memory request, exit 0
+  having written nothing, and requeue mid-task. Two of the six in the original list are not
+  fault injectors and never were: an impossible memory request is a `resources` value that
+  `sbatch` rejects, and a member that never starts is what an `aftercorr` child does when its
+  own element failed. Both are tested as what they are.
+- **Done when:** the clean run finishes in a couple of minutes, and every fault reaches its
   intended terminal state on **both** Slurm profiles with nothing left pending and undiagnosed.
+
+Two things the fault matrix taught, both of them properties of Slurm rather than of ACKBAR.
+Only the *direct* dependent of a failed job reads `DependencyNeverSatisfied`; anything further
+down reads plain `Dependency`, which is indistinguishable from waiting on a job that will
+still run, so "stuck" is a property of the whole queue and not of one row. And a job that
+exceeds `--mem` is killed only if the site constrains swap as well as RAM: with
+`ConstrainSwapSpace=no` it swaps its way past the limit and finishes `COMPLETED`.
 
 This is phase 2 rather than a testing afterthought because on 8 physical cores an
 `--array=1-20` of 8-PE forecasts runs strictly serially. Without the stub, the property the

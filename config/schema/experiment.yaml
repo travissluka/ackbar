@@ -103,13 +103,26 @@ properties:
                 bytes: { type: integer, minimum: 0 }
                 fail:
                   # Deterministic fault injection, the whole point of the stub.
+                  #
+                  # Each entry is a selector `<cycle>.<task>[.<member>]`, every
+                  # field a shell glob: `2.forecast.3`, `*.da.*`,
+                  # `3.forecast.ext.*`. Same job, same fault, every time, so a
+                  # healed attempt reproduces the failure it is meant to fix
+                  # rather than passing by luck.
+                  #
+                  # An impossible memory request is not here, because it is a
+                  # resources value rather than a fault: an experiment tests it
+                  # by asking for more memory than the partition has. Nor is "a
+                  # member that never starts", which is what exit_nonzero on one
+                  # array element does to its aftercorr child.
                   type: object
                   additionalProperties: false
                   properties:
-                    exit_nonzero: { type: array, items: { type: integer } }
-                    overrun_time: { type: array, items: { type: integer } }
-                    overrun_memory: { type: array, items: { type: integer } }
-                    write_nothing: { type: array, items: { type: integer } }
+                    exit_nonzero: { type: array, items: { type: string } }
+                    overrun_time: { type: array, items: { type: string } }
+                    overrun_memory: { type: array, items: { type: string } }
+                    write_nothing: { type: array, items: { type: string } }
+                    requeue: { type: array, items: { type: string } }
 
   solver:
     type: object

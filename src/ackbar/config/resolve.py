@@ -58,7 +58,8 @@ def builtin_symbols(config, site):
     })
     # The on-disk layout, so that no layer spells these out and they cannot
     # disagree with what the workflow actually creates.
-    for sub in ("cfg", "ledger", "stats", "log", "rst", "bkg", "ana", "obs_out"):
+    for sub in ("cfg", "ledger", "stats", "log", "rst", "bkg", "ana", "obs_out",
+                "done"):
         symbols[f"{sub}_dir"] = f"{experiment_dir}/{sub}"
     return symbols
 

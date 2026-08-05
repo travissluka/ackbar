@@ -62,6 +62,35 @@ Two partitions, so partition selection in the workflow is exercised rather than 
 Containment is cgroup v2 (`ProctrackType=proctrack/cgroup`, `TaskPlugin=task/cgroup,task/affinity`),
 which is what makes a job that blows its `--mem` get killed the way it would on an HPC.
 
+That needs **`ConstrainSwapSpace=yes`** as well as `ConstrainRAMSpace=yes`. With RAM alone,
+Slurm sets the cgroup's `memory.max` and leaves `memory.swap.max` unlimited, so a job that
+exceeds its request swaps past the limit and finishes `COMPLETED` instead of `OUT_OF_MEMORY`.
+The workflow's memory fault test skips itself, with that explanation, on a cluster configured
+the other way.
+
+## Two dependency profiles
+
+Slurm's default is that a job whose dependency failed **pends forever** with reason
+`DependencyNeverSatisfied` and never appears in `sacct` as failed at all. With
+`DependencyParameters=kill_invalid_depend` it is cancelled instead, and the same experiment
+leaves a completely different trail. Sites differ, the workflow has to handle both and depend
+on neither, and the only way to know it does is to run the tier 2 suite under each:
+
+```bash
+sudo tools/slurm/profile.sh strict      && pytest tests/test_tier2.py
+sudo tools/slurm/profile.sh permissive  && pytest tests/test_tier2.py
+tools/slurm/profile.sh                  # which one is live
+```
+
+The strict profile also puts a small `MaxSubmitJobsPerUser` on a QOS, so that `ackbar validate`
+step 5 is checked against a limit that exists rather than against rancor's 10000.
+
+One thing the profiles do *not* change, and which is worth knowing before reading a stuck
+queue: only the **direct** dependent of a failed job reads `DependencyNeverSatisfied`. Anything
+further down the chain reads plain `Dependency`, which is indistinguishable from a job whose
+parent is merely queued. "Nothing can make progress" is therefore a property of the whole
+queue, never of one row.
+
 Accounting goes through slurmdbd into MySQL, so **`sacct` works for completed jobs**. That
 matters: the workflow engine should learn a job's fate from `sacct`, not from parsing
 logs, because that is the only thing that still knows about a job after it leaves the

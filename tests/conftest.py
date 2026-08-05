@@ -21,8 +21,20 @@ SITE = {
 }
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "tier2: needs a real Slurm and the real site; see docs/build-order.md",
+    )
+
+
 @pytest.fixture(autouse=True)
-def fixed_site(monkeypatch):
+def fixed_site(request, monkeypatch):
+    if request.node.get_closest_marker("tier2"):
+        # Tier 2 submits to a real scheduler, and the jobs it submits read the
+        # site the same way any other job does. Pinning a fake site here would
+        # give the test one set of roots and its own jobs another.
+        return
     for key, value in SITE.items():
         monkeypatch.setenv(key, value)
     # ACKBAR_ROOT decides where executables are looked for. Leaving whatever

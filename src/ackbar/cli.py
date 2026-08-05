@@ -1,9 +1,12 @@
 """The ackbar command line.
 
-What exists so far is everything that can be checked before a scheduler is
-involved: resolve a layer stack, explain where a value came from, build the task
-graph, and validate the result. Submission arrives in phase 2; see
-`docs/build-order.md`.
+Two families of command, split by what they read.
+
+**Before an experiment exists**, `config`, `graph` and `validate` take a path to
+an experiment file and walk the layer stack. **After `ackbar create`**, every
+command takes an experiment *name* and reads the frozen `cfg/experiment.yaml`.
+That split is the "resolved once and frozen" rule made operational: a job eight
+hours from now must not depend on a layer file nobody has touched since.
 """
 
 import argparse
@@ -13,15 +16,19 @@ from pathlib import Path
 
 import yaml
 
+from . import ledger, run, slurm
 from .config.jobtime import SYMBOLS, render, symbols
 from .config.layers import LayerError, merge_layers, resolve_layers
 from .config.merge import MergeError
 from .config.resolve import ResolveError, resolve
 from .config.schema import load_schema, merge_keys
 from .config.why import why
+from .create import CreateError, create
 from .duration import DurationError
 from .graph import GraphError, build_graph, to_dot, to_text
+from .paths import Paths
 from .site import SiteError, load_site
+from .submit import SubmitError, submit_cycle
 from .validate import FILESYSTEM_STEPS, STEPS, validate_experiment
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +50,118 @@ def _resolved(args, substitute=True):
     if substitute:
         config = resolve(config, load_site())
     return layers, keys, schema, config
+
+
+def _frozen(name):
+    """The frozen config of an experiment that already exists, by name.
+
+    No layer tree, no substitution, no schema: this is the file the experiment
+    was created from, and reading anything else here would mean a job's config
+    could change under it between cycle 1 and cycle 50.
+    """
+    site = load_site()
+    paths = Paths(
+        experiment=name,
+        output_root=Path(site["output_root"]),
+        scratch_root=Path(site["scratch_root"]),
+    )
+    if not paths.frozen_config.exists():
+        raise CreateError(
+            f"no experiment named {name!r} under {site['output_root']} "
+            f"({paths.frozen_config} does not exist). Run `ackbar create` first."
+        )
+    with open(paths.frozen_config) as handle:
+        return yaml.safe_load(handle), site, paths
+
+
+def cmd_create(args):
+    layers, _, schema, config = _resolved(args)
+    site = load_site()
+    root = site.get("root", str(REPO_ROOT))
+    paths, graph, scripts = create(
+        config, site, schema, layers, root=root, force=args.force,
+    )
+    print(f"created {paths.experiment_dir}")
+    print(f"  {len(layers)} layers frozen, {len(scripts)} job scripts emitted")
+    print(f"  {len(graph.nodes)} nodes over {config['cycle']['count']} cycles")
+    print(f"\nstart it with: ackbar start {paths.experiment}")
+    return 0
+
+
+def cmd_start(args):
+    config, site, paths = _frozen(args.name)
+    if ledger.submitted_cycles(paths):
+        raise SubmitError(
+            f"{args.name} has already been started. `ackbar resume` re-arms a "
+            f"paused experiment; `ackbar heal` deals with a broken one."
+        )
+    return _report(submit_cycle(config, site, paths, 1, dry_run=args.dry_run))
+
+
+def cmd_submit(args):
+    config, site, paths = _frozen(args.name)
+    return _report(submit_cycle(config, site, paths, args.cycle,
+                                dry_run=args.dry_run))
+
+
+def _report(records):
+    for record in records:
+        spec = record.get("array")
+        if not isinstance(spec, str):
+            spec = slurm.array_spec(record.get("members") or ())
+        line = f"  {record['cycle']}.{record['task']}"
+        if spec:
+            line += f"[{spec}]"
+        print(f"{line:<30} {record.get('job_id', '-')!s:>8}  "
+              f"{record.get('dependency') or ''}")
+    return 0
+
+
+def cmd_run(args):
+    """The body of every emitted job script."""
+    config, site, paths = _frozen(args.name)
+    return run.run_task(config, site, paths, args.cycle, args.task, args.member)
+
+
+def cmd_pause(args):
+    _, _, paths = _frozen(args.name)
+    paths.halt_flag.write_text("paused by ackbar pause\n")
+    print(f"{paths.halt_flag} created; the graph will drain and stop at a "
+          f"cycle boundary")
+    return 0
+
+
+def cmd_resume(args):
+    config, site, paths = _frozen(args.name)
+    if paths.halt_flag.exists():
+        paths.halt_flag.unlink()
+        print(f"removed {paths.halt_flag}")
+    cycles = ledger.submitted_cycles(paths)
+    if not cycles:
+        raise SubmitError(f"{args.name} has never been started; use `ackbar start`")
+    nxt = max(cycles) + 1
+    if nxt > config["cycle"]["count"]:
+        print(f"cycle {max(cycles)} is the last; nothing to re-arm")
+        return 0
+    return _report(submit_cycle(config, site, paths, nxt, dry_run=args.dry_run))
+
+
+def cmd_cancel(args):
+    """Cancel the union of the ledger's job ids and a name-prefix queue scan.
+
+    Both, because `scancel` has no name glob and the ledger cannot know about a
+    job somebody submitted by hand, while the queue cannot know about a job that
+    has not started yet under a name Slurm truncated.
+    """
+    _, _, paths = _frozen(args.name)
+    known = {r["job_id"] for r in ledger.read(paths)}
+    live = set(slurm.queue()) & known
+    if not live:
+        print("nothing of this experiment is in the queue")
+        return 0
+    print(f"cancelling {len(live)} job(s): {', '.join(str(i) for i in sorted(live))}")
+    slurm.scancel(sorted(live))
+    return 0
 
 
 def cmd_resolve(args):
@@ -191,6 +310,46 @@ def main(argv=None):
     )
     p.set_defaults(func=cmd_validate)
 
+    p = sub.add_parser("create", help="freeze an experiment on disk and emit its jobs")
+    p.add_argument("experiment", type=Path)
+    p.add_argument(
+        "--force", action="store_true",
+        help="overwrite an existing experiment that has not submitted anything",
+    )
+    p.set_defaults(func=cmd_create)
+
+    p = sub.add_parser("start", help="submit the first cycle")
+    p.add_argument("name", help="experiment name, as given to `ackbar create`")
+    p.add_argument("--dry-run", action="store_true",
+                   help="show what would be submitted, and submit nothing")
+    p.set_defaults(func=cmd_start)
+
+    p = sub.add_parser("submit", help="submit one cycle; the submitter job's own verb")
+    p.add_argument("name")
+    p.add_argument("--cycle", type=int, required=True)
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_submit)
+
+    p = sub.add_parser("run", help="run one task; this is what a job script calls")
+    p.add_argument("name")
+    p.add_argument("--cycle", type=int, required=True)
+    p.add_argument("--task", required=True)
+    p.add_argument("--member", type=int, default=None)
+    p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("pause", help="stop cleanly at the next cycle boundary")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_pause)
+
+    p = sub.add_parser("resume", help="clear the halt flag and re-arm")
+    p.add_argument("name")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_resume)
+
+    p = sub.add_parser("cancel", help="cancel every live job of an experiment")
+    p.add_argument("name")
+    p.set_defaults(func=cmd_cancel)
+
     p = sub.add_parser("graph", help="show the task graph")
     p.add_argument("experiment", type=Path)
     p.add_argument(
@@ -230,7 +389,8 @@ def main(argv=None):
     try:
         return args.func(args)
     except (LayerError, MergeError, ResolveError, SiteError, GraphError,
-            DurationError) as error:
+            DurationError, CreateError, SubmitError, slurm.SlurmError,
+            run.TaskError) as error:
         print(f"ackbar: {error}", file=sys.stderr)
         return 2
 

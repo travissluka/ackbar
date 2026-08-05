@@ -6,9 +6,11 @@ A workflow for running cycling ocean data assimilation experiments with
 [SOCA](https://github.com/JCSDA-internal/soca), driving MOM6-SIS2 as the forecast model.
 
 Status: **early implementation.** The model and JEDI builds work. The configuration core (layer
-merge, schema validation, substitution, blame) and the task graph (generation, the job-time
-symbol set, `ackbar validate`) are in; nothing is submitted to a scheduler yet. See
-[`docs/build-order.md`](docs/build-order.md).
+merge, schema validation, substitution, blame), the task graph (generation, the job-time symbol
+set, `ackbar validate`) and the workflow engine (job emission, submission, the ledger,
+daemon-free cycling) are in, and cycle end to end against a real Slurm with a stub model. No
+science runs through it yet: the forecast, analysis and observation tasks arrive with their
+phases. See [`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
 
@@ -58,7 +60,7 @@ to be cheap to define, reproducible, and directly comparable to one another.
 | [`docs/prior-workflows.md`](docs/prior-workflows.md) | Review of the two prior attempts and the mistakes this design exists to avoid. |
 | [`docs/model-build.md`](docs/model-build.md) | Building MOM6-SIS2: repository ownership, branch choice, the submodule recipe and its traps, smoke test. |
 | [`docs/model-data.md`](docs/model-data.md) | The `.datasets` mechanism and the MOM6-examples input data inventory. |
-| [`docs/slurm.md`](docs/slurm.md) | The single-node Slurm used to develop against a real scheduler. |
+| [`docs/slurm.md`](docs/slurm.md) | The single-node Slurm used to develop against a real scheduler, and the two dependency profiles the workflow is tested under. |
 
 ## Layout
 
@@ -74,7 +76,8 @@ site/              one file per machine, the only place machine paths may appear
 src/ackbar/        the workflow itself
 tests/             tiers 0 and 1: no scheduler, no JEDI, no model
 tests/goldens/     task graphs, pinned per configuration shape
-tools/slurm/       local single-node Slurm configuration
+tests/test_tier2.py  tier 2: the workflow end to end on a real Slurm
+tools/slurm/       local single-node Slurm configuration and its two profiles
 ```
 
 Everything machine-specific (where spack-stack lives, which filesystems hold scratch and
@@ -103,7 +106,16 @@ against, which is the point of the phase ordering.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m pytest          # tiers 0 and 1, under a second
+.venv/bin/python -m pytest          # tiers 0 and 1, a couple of seconds
+```
+
+Tier 2 runs the whole workflow against a real Slurm with a stub model, and is skipped unless
+`sbatch` exists and the site is activated. It takes a few minutes, and it is the only cheap
+test that exercises arrays, dependency edges and failure recovery.
+
+```bash
+source site/activate.sh
+.venv/bin/python -m pytest tests/test_tier2.py
 ```
 
 Anything that resolves a configuration needs the site layer, because that is where the scratch
@@ -117,6 +129,41 @@ ackbar graph --dot        tests/experiments/letkf_om1deg.yaml --cycle 1 | dot -T
 ackbar config resolve     tests/experiments/letkf_om1deg.yaml --cycle 2 --member 3
 ackbar config why         tests/experiments/letkf_om1deg.yaml 'vars.obs_land_mask_min'
 ackbar config symbols
+```
+
+## Running an experiment
+
+An experiment is created once and then addressed by name. Creation validates it, freezes the
+merged config and the layer files verbatim, records what produced it, and emits a batch script
+for every node of every cycle. After that nothing reads the layer tree again, so editing a
+layer cannot change a run already in flight.
+
+```bash
+source site/activate.sh
+ackbar create tests/experiments/stub_letkf.yaml   # validate, freeze, emit
+ackbar start  stub_letkf                          # submit cycle 1
+ackbar start  stub_letkf --dry-run                # show the edges, submit nothing
+ackbar pause  stub_letkf                          # stop at the next cycle boundary
+ackbar resume stub_letkf                          # clear the halt flag and re-arm
+ackbar cancel stub_letkf                          # cancel everything still queued
+```
+
+There is no daemon. Cycle *n*'s graph contains a job that submits cycle *n+1*, gated `afterok`
+on that cycle's forecast, so a failed cycle stops the chain rather than producing cycles of
+garbage off a bad background. `ackbar run` is what those job scripts call; it is not meant to
+be typed.
+
+`tests/experiments/stub_letkf.yaml` is the workflow test case: 20 members, 3 cycles, one core
+and a few seconds each, no science. `model.stub.fail` injects faults at named jobs, so a
+failure is reproducible configuration rather than an afternoon nobody can repeat:
+
+```yaml
+model:
+  stub:
+    seconds: 3
+    fail:
+      exit_nonzero: ['2.forecast.7']    # <cycle>.<task>[.<member>], each field a glob
+      overrun_time: ['*.da.*']
 ```
 
 Configuration resolves in a fixed order: **merge, then substitute, then validate.** Merging

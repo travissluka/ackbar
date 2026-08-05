@@ -254,8 +254,11 @@ site:
     removed by the task on success, retained on failure
 
 <output_root>/<exp>/
+    HALT          present while paused; every submitter checks it
     cfg/          resolved config, the ordered layer files verbatim, provenance record
-    ledger/       append-only submission records
+    cfg/<cycle>/<task>.sh   the emitted batch script, one per node
+    ledger/       append-only submission records, and the per-cycle submit marker
+    done/<cycle>/<task>[.mem###].json   sentinels, written last by a successful task
     stats/        <cycle>.json, one file per cycle, never appended to
     log/          job stdout and stderr, by cycle and task
     rst/<cycle>/mem###/     restart sets
@@ -266,8 +269,19 @@ site:
 
 Rules that fall out of this:
 
+- **A cycle directory is named by the cycle that *produced* it**, not by the valid time of what
+  is in it. `rst/7` is what cycle 7's forecast wrote, and cycle 8's analysis reads it. The
+  alternative, naming by valid time, reads better in isolation and costs more everywhere it
+  matters: under producer naming a node's outputs are always under its own cycle number, so
+  cleanup is a cycle count rather than a data-flow analysis, and the offline initial condition
+  goes in `rst/0` as the output of a forecast that never ran.
 - **Scratch is deleted by the task itself on success and kept on failure.** A failed cycle
   leaves everything needed to debug it; a successful one leaves nothing.
+- **Job scripts are emitted once, at create time, for every cycle.** They are header carriers,
+  not generated code: the body is one call back into ACKBAR, so a task is python that can be
+  tested with no scheduler. `--array` and `--dependency` are deliberately absent from the
+  script and passed on the `sbatch` command line, because they are the two values that differ
+  between a first attempt and a healed one.
 - **Every member is `mem###`, including the control, which is `mem000`.** No `ctrl` versus `ens`
   split anywhere in the tree. v2's `ana/{ctrl,ens}` split is precisely what made every ensemble
   loop carry a special case, and an array index that maps directly to a path is what keeps
@@ -575,6 +589,14 @@ honest end-to-end test of the DA path.
 `stub` is what makes the *workflow* testable (see Build order), and it is not a scientific
 configuration at all. The two are distinct on purpose: `persistence` produces a state you can
 score, `stub` produces bytes of the right shape.
+
+The stub also carries **deterministic fault injection**, under `model.stub.fail`. Each entry
+selects jobs by `<cycle>.<task>[.<member>]`, every field a shell glob, and names the way they
+should fail: nonzero exit, run past the time limit, blow the memory request, exit 0 having
+written nothing, requeue mid-task. Selecting *jobs* rather than a probability is the whole
+point: the same job fails the same way on a rerun, so a failure is reproducible configuration
+rather than an afternoon nobody can repeat, and a healed attempt reproduces the failure it is
+meant to fix rather than passing by luck.
 
 v2 had a seven-way case statement over `DA_MODE`. Most of those modes are the same code with
 different covariance or window settings. The real axes:

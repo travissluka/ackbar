@@ -1,0 +1,33 @@
+# The tier 2 workhorse: 20 members, 3 cycles, one core and a few seconds each.
+#
+# LETKF rather than a free run because it is the shape with the most edges. The
+# analysis is one job consuming every member, recentre and writeback are arrays
+# joined to it elementwise, and the forecast array feeds the next cycle. If
+# `aftercorr` is wrong anywhere, this experiment pends forever instead of
+# finishing.
+#
+# No observation layers are inherited. `da/letkf` still names the two observers
+# it localizes, which is enough to enable `stage.obs` and `post.obs` without
+# needing an observation archive on disk.
+inherit:
+  - domain/stub
+  - model/stub
+  - da/letkf
+experiment:
+  name: stub_letkf
+  description: tier 2 workflow test, no science
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 3
+ensemble:
+  size: 20
+  # No control: the LETKF does not use one, so the index set is 1..20 and
+  # nothing in the graph has to know that mem000 is missing.
+  control: false
+  source: offline
+  on_missing_member: fail_cycle
+model:
+  stub:
+    seconds: 3
+    bytes: 4096
