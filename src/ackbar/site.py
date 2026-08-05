@@ -7,6 +7,15 @@ machine assumes and one mechanism that applies it.
 """
 
 import os
+from pathlib import Path
+
+#: The checkout this module was imported from, and the default for `root`.
+#: `ACKBAR_ROOT` is what `site/activate.sh` exports and it wins where it is set.
+#: Where it is not, running out of a checkout should mean *that* checkout rather
+#: than an error, so that a layer naming an executable under `$(ackbar_root)`
+#: resolves either way. One definition, because two would eventually disagree
+#: about which build a job ran.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Site settings the configuration core needs. Scheduler settings join this as
 #: the phases that submit jobs arrive.
@@ -19,6 +28,7 @@ OPTIONAL = (
     "account",
     "launcher",
     "datasets_root",
+    "static_root",
     # Queue limits. Validation projects the in-flight job count against these
     # rather than discovering the cap three cycles in, where a rejected sbatch
     # inside the submitter stops the experiment silently.
@@ -50,4 +60,5 @@ def load_site(env=None):
         value = env.get(f"ACKBAR_{name.upper()}")
         if value:
             site[name] = value
+    site.setdefault("root", str(REPO_ROOT))
     return site

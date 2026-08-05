@@ -124,6 +124,16 @@ it is eligible again. `ACKBAR_TIER2_FAST=1` skips the requeue case for iterating
 wrong thing to run before a commit, since requeue is the one fault the scheduler inflicts on
 its own without being asked.
 
+Tier 3 runs the real model. It cycles `OM_1deg` for three cycles, then does it again killing a
+forecast mid-integration, and asserts the healed restarts are bit-identical to the ones the
+undisturbed run wrote. About fifteen minutes and two gigabytes, so it is opt-in, and it needs a
+built `coupler_main` and the offline initial condition the experiment names.
+
+```bash
+source site/activate.sh
+ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3.py
+```
+
 Anything that resolves a configuration needs the site layer, because that is where the scratch
 and output roots come from:
 
@@ -158,6 +168,13 @@ There is no daemon. Cycle *n*'s graph contains a job that submits cycle *n+1*, g
 on that cycle's forecast, so a failed cycle stops the chain rather than producing cycles of
 garbage off a bad background. `ackbar run` is what those job scripts call; it is not meant to
 be typed.
+
+**Experiments never generate their own inputs.** An experiment with a real model names an
+initial condition that an offline stage already produced, and creation materializes it into the
+experiment's own cycle-0 restart location as symlinks. That one step is what makes cycle 1 an
+ordinary cycle: `forecast(1)` finds its background exactly where `forecast(50)` does, and
+nothing in the graph, the model, or healing carries a notion of a first cycle.
+`tests/experiments/tier3_free.yaml` is the smallest complete example.
 
 When something breaks, three commands cover it and none of them needs `squeue` or `scancel` by
 hand:

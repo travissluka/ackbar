@@ -109,10 +109,22 @@ def harvest_cycle(paths, cycle, launcher=""):
 
 
 def _totals(jobs):
-    """Enough to answer "what did this cycle cost" without reopening the file."""
+    """Enough to answer "what did this cycle cost" without reopening the file.
+
+    `failed` and `unfinished` are separate because this task runs *inside* the
+    cycle it is describing: it is an `afterany` leaf off the forecast, so most
+    of its own cycle is still running when it reads the accounting, and every
+    one of those rows is `RUNNING`. Folding them into `failed` on the usual
+    "anything that is not COMPLETED" rule makes a perfectly healthy cycle report
+    that four jobs out of five failed. The rule is right when a job has stopped
+    and wrong before then, which is the whole difference.
+    """
     return {
         "jobs": len(jobs),
-        "failed": sum(1 for j in jobs if j["state"] not in slurm.SUCCESS),
+        "failed": sum(1 for j in jobs
+                      if j["state"] not in slurm.SUCCESS
+                      and j["state"] not in slurm.ACTIVE),
+        "unfinished": sum(1 for j in jobs if j["state"] in slurm.ACTIVE),
         "max_rss_kb": max((j["max_rss_kb"] or 0 for j in jobs), default=0),
         "core_seconds": round(sum(
             (j["alloc_cpus"] or 0) * _seconds(j["elapsed"]) for j in jobs

@@ -164,6 +164,39 @@ rebuild and no PMIx; what it needed was knowing that `--mpi=none` silently gives
 own `MPI_COMM_WORLD` instead of failing. See "srun and PMI" in `docs/slurm.md`, which also
 carries the measured `MaxRSS` difference between the two launchers.
 
+Four things this phase settled.
+
+**`INPUT/coupler.res` is a hardcoded string inside `coupler_main`.** `restart_input_dir` in
+`MOM_input_nml` and `SIS_input_nml` moves MOM's and SIS's own restarts, and the coupler does not
+follow it: it reads the date it resumes from out of that literal path and writes
+`RESTART/coupler.res`. A run directory that symlinks `INPUT` at the shared static archive has
+nowhere to put the one file that says what time it is, and pointing `restart_input_dir` at the
+previous cycle does not move the coupler with it. The model then integrates the right state from
+the wrong time and says nothing. So the run directory owns its own `INPUT`, built fresh every
+attempt out of symlinks: the static archive first, this cycle's restart set over the top. That
+rebuild is load-bearing rather than tidiness, since a stale `coupler.res` left by a failed
+attempt is precisely the wrong-time case.
+
+**The date lives in the restart, not in the configuration.** Once `INPUT/coupler.res` exists it
+overrides `coupler_nml`'s `current_date`, and what the namelist still controls is the *length* of
+the integration. Since setup materializes an initial condition into `rst/0`, every cycle
+including the first resumes, and `current_date` is a fallback a correct experiment never reaches.
+It gets written to match the cycle anyway, because the one case that reads it is a misconfigured
+cold start, and starting at the right date beats starting in 1958.
+
+**"Which file proves a restart set is whole" is model-specific, and getting it wrong is
+silent.** `cleanup` refuses when the cycle it is keeping looks incomplete, and a refusal is a log
+line, not a failure. Keyed off the stub's file name under a real model it refuses on every cycle
+of every experiment, and the only symptom is a disk filling up over days.
+
+**A leaf with no implementation yet should run and do nothing; a task in the data path should
+not.** `post.state` and `verify` produce diagnostics nothing else reads, so a real-model
+experiment that skips them loses a diagnostic and can be told it did, from the sentinel.
+`writeback` doing nothing quietly means every later cycle forecasts from an unanalysed state
+while the experiment looks healthy throughout. The list is `DEFERRED` in `run.py` and shrinks as
+the science phases land. They stay in the graph rather than being cut from it, so that the phase
+which adds a body is not also the phase that first discovers its edges were wrong.
+
 ## Phase 5. hofx
 
 Exercises the whole observation pipeline with no analysis entangled in it, and doubles as the

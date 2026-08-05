@@ -21,7 +21,8 @@ LAYERS = REPO / "config" / "layers"
 EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 
 #: A fixed site, so the tests do not depend on which machine they run on.
-SITE = {"scratch_root": "/scratch", "output_root": "/out"}
+SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "root": str(REPO)}
 
 
 @pytest.fixture(scope="module")

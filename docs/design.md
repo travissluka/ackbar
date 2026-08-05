@@ -112,8 +112,18 @@ What it carries:
 |---|---|
 | environment | how to activate spack-stack (its path is machine dependent, and on rancor it currently lives in a personal `env.sh` outside the repo) |
 | build | `NJOBS`, build type, and the CMake generator |
-| data roots | dataset root, `scratch_root`, `output_root` |
+| data roots | dataset root, `static_root` (what the offline stages produce), `scratch_root`, `output_root` |
 | scheduler | partition, account, MPI launcher, `max_submit_jobs`, `max_array_size`, `can_submit_from_compute` |
+
+The roots reach configuration layers as the experiment-time symbols `$(ackbar_root)`,
+`$(datasets_root)` and `$(static_root)`, which is how a model layer names a grid file or an
+executable without becoming machine-specific itself. A symbol the site does not define is absent
+from the table rather than empty, so a layer that needs one fails with "unknown symbol" instead
+of resolving to a path that begins at the root of the disk.
+
+The MPI launcher is the whole command, `srun --mpi=pmi2` rather than `srun`. Which PMI plugin a
+site defaults to is a site's business and getting it wrong does not fail: `--mpi=none` runs every
+rank as its own `MPI_COMM_WORLD` of size 1 and exits zero (`docs/slurm.md`, srun and PMI).
 
 **Make is the default generator.** Ninja is faster and is what rancor happens to have, but it
 is not reliably present on HPC, and a build that only works where Ninja is installed is a
@@ -337,6 +347,18 @@ Tasks that need specific care, in order of how badly they fail:
   produces a different ensemble than the original run.
 - **Forecast and analysis.** Safe with temp-then-rename, provided the completion check is a
   complete artifact set including `coupler.res` at the expected date, not directory existence.
+  Which file carries that proof is model-specific, so it is asked of the model rather than
+  spelled out at each of the two places that need it (the skip rule, and cleanup). Hardcoding one
+  model's answer breaks cleanup under the other, and cleanup declining is a log line rather than
+  a failure, so the symptom is a disk filling over days.
+
+**Tasks whose bodies have not been written yet** run and do nothing, but only where that is
+safe, and the sentinel records that it happened. The line is not "unimplemented", it is
+*produces nothing anything else reads*: a leaf whose absence shows up as a missing diagnostic can
+be skipped and reported, while a task in the data path cannot, because a `writeback` that
+quietly did nothing means every later cycle forecasts from an unanalysed state and the
+experiment looks healthy throughout. They stay in the graph rather than being cut from it, so
+that the phase which adds a body is not also the phase that discovers its edges were wrong.
 
 ## Cross-cycle overlap
 
@@ -624,6 +646,29 @@ written nothing, requeue mid-task. Selecting *jobs* rather than a probability is
 point: the same job fails the same way on a rerun, so a failure is reproducible configuration
 rather than an afternoon nobody can repeat, and a healed attempt reproduces the failure it is
 meant to fix rather than passing by luck.
+
+**A MOM6-SIS2 forecast is a run directory and nothing else.** The model is configured entirely
+by the contents of the directory it starts in, so the model layer names a stock MOM6-examples
+case and the forecast task links every file in it through untouched except the handful ACKBAR
+owns: `input.nml`, `MOM_layout`, `SIS_layout`, `diag_table`. That keeps the case's physics
+coming from the model submodule instead of from a fork of it in this repository, and it makes
+"what did ACKBAR change" a four-item list rather than a diff.
+
+Three of those four are worth saying why:
+
+- **The layout comes from the domain layer**, never from the case. MOM6-examples ships
+  `LAYOUT = 12,10` for MOM and `32,18` for SIS with a comment saying not to use them, and a
+  layout whose product is not the task's `ntasks` fails inside FMS with a message about domain
+  decomposition rather than about configuration. ACKBAR checks the product against `ntasks`
+  before a job is even submitted.
+- **The `diag_table` is chosen by what the forecast is for**, which is the one thing that
+  genuinely differs between the two forecast tasks. A cycling forecast's product is the restart
+  set the next cycle reads, and it writes no history at all; writing it every cycle of an
+  ensemble is how a free run fills a disk. An extended forecast exists to be scored and writes
+  intervals. Same executable, same code path, different file, which is what makes this
+  configuration rather than a branch.
+- **`input.nml` is patched, not regenerated.** ACKBAR sets the run length and the fallback date
+  in `coupler_nml` and leaves the couple of dozen groups of model physics alone.
 
 v2 had a seven-way case statement over `DA_MODE`. Most of those modes are the same code with
 different covariance or window settings. The real axes:

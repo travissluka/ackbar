@@ -24,7 +24,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 
-from . import ledger
+from . import ledger, mom6sis2
 from .graph.build import member_set
 
 #: Faults the stub can inject, each named for the terminal state it produces.
@@ -47,10 +47,23 @@ class TaskError(Exception):
 # task does. What the stub needs is the *shape*: one file per member per cycle,
 # so that restart continuity across a heal is a thing a test can assert.
 
+def restart_source(config, paths, cycle, member):
+    """The directory cycle *n*'s forecast starts from.
+
+    One definition, used by the stub and by the real model, because the two
+    disagreeing is a bug that shows up as a forecast quietly starting from the
+    background it was supposed to have corrected. With an analysis the forecast
+    starts from the writeback's product; without one it is the previous cycle's
+    restart set handed straight across.
+    """
+    if config.get("solver", {}).get("name", "none") != "none":
+        return paths.member_out("ana", cycle, member)
+    return paths.member_out("rst", cycle - 1, member)
+
+
 def stub_io(config, paths, task, cycle, member):
     """(inputs, outputs) for one stub job, as absolute paths."""
     members = member_set(config)
-    analysis = config.get("solver", {}).get("name", "none") != "none"
     recentres = config.get("solver", {}).get("name") == "letkf" and config.get("ensemble")
 
     def rst(c, m):
@@ -76,10 +89,10 @@ def stub_io(config, paths, task, cycle, member):
         return [ana(cycle, member, source), rst(cycle - 1, member)], \
                [ana(cycle, member, "restart.stub")]
     if task == "forecast":
-        start = ana(cycle, member, "restart.stub") if analysis else rst(cycle - 1, member)
+        start = restart_source(config, paths, cycle, member) / "restart.stub"
         return [start], [rst(cycle, member)]
     if task == "forecast.ext":
-        start = ana(cycle, member, "restart.stub") if analysis else rst(cycle - 1, member)
+        start = restart_source(config, paths, cycle, member) / "restart.stub"
         # Where a long forecast's output really belongs is a phase 4 question.
         # The stub needs only a file that no other task writes.
         return [start], [paths.member_out("rst", cycle, member) / "extended.stub"]
@@ -105,10 +118,68 @@ def stub_io(config, paths, task, cycle, member):
 RERUN_ALWAYS = ("stats", "cleanup")
 
 
+#: Tasks whose bodies arrive with a later phase and which, until then, do
+#: nothing at all under a real model. Delete an entry when its body lands.
+#:
+#: The line is not "unimplemented", it is **produces nothing anything else
+#: reads**. Each of these is a leaf or a stage whose absence is visible in what
+#: it did not write, so skipping it costs a diagnostic and cannot corrupt a
+#: forecast. A task in the data path with no body is the opposite case and stays
+#: an error: `writeback` quietly doing nothing means every cycle after it
+#: forecasts from an unanalysed state and the experiment looks fine throughout.
+#:
+#: They run rather than being cut from the graph on purpose. The edges are the
+#: part that is hard to get right, and a phase that adds a body should not also
+#: be the phase that first discovers its dependencies were wrong.
+DEFERRED = ("stage.obs", "post.obs", "post.state", "verify")
+
+
+def deferred_task(config, task):
+    """Whether this job is one of the bodies that has not been written yet.
+
+    Only under a real model. Under the stub every task has a body, because the
+    stub *is* the body, and taking this path there would remove the fan-out that
+    tier 2 exists to exercise.
+    """
+    return config["model"]["name"] != "stub" and task in DEFERRED
+
+
+def real_model(config, task):
+    """Whether this exact job runs a model binary rather than the stub.
+
+    Only `forecast` so far. `forecast.ext` is the same executable with a
+    different diag_table and a different product (diagnostics to score, not a
+    restart set anything reads), and it arrives with the phase that scores
+    them; until then it falls through to the stub's "no implementation yet",
+    which says so.
+    """
+    return config["model"]["name"] == "mom6sis2" and task == "forecast"
+
+
+def restart_stamp(config):
+    """The one file whose presence means a member's restart set is whole.
+
+    Asked by `cleanup`, which deletes restarts and therefore has to be right
+    about which ones still exist, and by the skip rule. The stub's answer and
+    the model's are different files, and hardcoding either is a cleanup that
+    silently refuses forever under the other one.
+    """
+    return mom6sis2.STAMP if config["model"]["name"] == "mom6sis2" else "restart.stub"
+
+
+def task_io(config, paths, task, cycle, member):
+    """(inputs, outputs) for one job, whatever is running it."""
+    if real_model(config, task):
+        stamp = restart_stamp(config)
+        source = restart_source(config, paths, cycle, member)
+        return [source / stamp], [paths.member_out("rst", cycle, member) / stamp]
+    return stub_io(config, paths, task, cycle, member)
+
+
 def run_task(config, site, paths, cycle, task, member=None):
     """Run one job to completion. Raises TaskError on anything unrecoverable."""
     sentinel = paths.sentinel(cycle, task, member)
-    inputs, outputs = stub_io(config, paths, task, cycle, member)
+    inputs, outputs = task_io(config, paths, task, cycle, member)
 
     if task not in RERUN_ALWAYS and sentinel.exists() and all(p.exists() for p in outputs):
         # The only safe skip. Output-exists alone is what v2 had, and a job
@@ -127,10 +198,16 @@ def run_task(config, site, paths, cycle, task, member=None):
         _cleanup(config, paths, cycle)
     elif task == "stats":
         _stats(site, paths, cycle)
+    elif real_model(config, task):
+        _forecast(config, site, paths, cycle, task, member)
+    elif deferred_task(config, task):
+        print(f"ackbar: {cycle}.{task} has no body yet and writes nothing that "
+              f"anything reads; see DEFERRED in ackbar/run.py")
     else:
         _stub(config, paths, cycle, task, member, inputs, outputs)
 
-    _write_sentinel(sentinel, cycle, task, member, started)
+    _write_sentinel(sentinel, cycle, task, member, started,
+                    deferred=deferred_task(config, task))
 
     # Scratch is deleted by the task itself on success and kept on failure, so
     # a failed cycle leaves everything needed to debug it and a successful one
@@ -139,12 +216,15 @@ def run_task(config, site, paths, cycle, task, member=None):
     return 0
 
 
-def _write_sentinel(sentinel, cycle, task, member, started):
+def _write_sentinel(sentinel, cycle, task, member, started, deferred=False):
     sentinel.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "cycle": cycle,
         "task": task,
         "member": member,
+        # Recorded, because a run whose diagnostics were never computed looks
+        # exactly like one whose diagnostics were computed and came out empty.
+        "deferred": deferred,
         "job_id": os.environ.get("SLURM_JOB_ID", ""),
         "array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID", ""),
         "restarts": int(os.environ.get("SLURM_RESTART_COUNT", "0") or 0),
@@ -317,6 +397,26 @@ def _requeue(cycle, task):
     raise TaskError("requeue did not take effect")
 
 
+# --- the real model ----------------------------------------------------------
+
+def _forecast(config, site, paths, cycle, task, member):
+    """One MOM6-SIS2 integration.
+
+    The input check the stub does is inside the model module instead, because a
+    restart *set* is complete or not, which is a different question from whether
+    a list of files exists, and the model has to answer it before it builds a
+    run directory around them.
+    """
+    try:
+        mom6sis2.forecast(
+            config, site, paths, cycle, task, member,
+            source=restart_source(config, paths, cycle, member),
+            target=paths.member_out("rst", cycle, member),
+        )
+    except mom6sis2.ModelError as error:
+        raise TaskError(f"{cycle}.{task} member {member}: {error}") from error
+
+
 # --- the tasks that are real from day one ------------------------------------
 
 def _submit_next(config, site, paths, cycle):
@@ -368,7 +468,8 @@ def _cleanup(config, paths, cycle):
     if drop < 0:
         return
 
-    proof = [paths.member_out("rst", keep, m) / "restart.stub" for m in members]
+    stamp = restart_stamp(config)
+    proof = [paths.member_out("rst", keep, m) / stamp for m in members]
     absent = [str(p) for p in proof if not p.exists()]
     if absent:
         print(f"ackbar: not cleaning cycle {drop}, cycle {keep} is incomplete "

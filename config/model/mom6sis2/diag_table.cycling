@@ -1,0 +1,14 @@
+ackbar cycling forecast: no diagnostics, the restart set is the product
+1900 1 1 0 0 0
+#
+# Line 2 is the FMS base date and ACKBAR rewrites it to the cycle's own start
+# time, so the value committed here is never the one the model reads. It has to
+# be a parseable date all the same, because this file is also what somebody
+# reads to see what a cycling forecast writes.
+#
+# Nothing below it on purpose. A cycling forecast exists to hand a state to the
+# next cycle, and at one degree with an ensemble the history it would otherwise
+# write every cycle is larger than the restarts and is read by nothing. Anything
+# that wants fields off the background reads the restart set, and an experiment
+# that wants model history configures an extended forecast, whose whole reason
+# for existing is to be scored.

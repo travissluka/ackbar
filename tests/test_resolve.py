@@ -6,7 +6,8 @@ from ackbar.config.resolve import (
     ResolveError, builtin_symbols, resolve, symbol_table, unresolved,
 )
 
-SITE = {"scratch_root": "/scratch", "output_root": "/out"}
+SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "root": "/ackbar"}
 
 
 def config(**extra):

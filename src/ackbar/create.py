@@ -14,6 +14,7 @@ import json
 import shutil
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 
 import yaml
 
@@ -59,6 +60,8 @@ def create(config, site, schema, layers, *, root, force=False, python=None):
 
     if config["model"]["name"] == "stub":
         _stub_initial_condition(config, paths)
+    elif config["model"].get("initial_condition"):
+        _initial_condition(config, paths)
     return paths, graph, scripts
 
 
@@ -110,6 +113,37 @@ def _git_describe(root):
         capture_output=True, text=True,
     )
     return result.stdout.strip() + ("-dirty" if dirty.stdout.strip() else "")
+
+
+def _initial_condition(config, paths):
+    """Cycle 0's restart set, symlinked from the offline initial condition.
+
+    This is the one step that makes cycle 1 an ordinary cycle: `forecast(1)`
+    reads `rst/0` by the same rule `forecast(50)` reads `rst/49`, so nothing in
+    the graph, the model, or healing needs a notion of a first cycle.
+
+    Links rather than copies. The initial condition is a read-only offline
+    product of gigabytes, and copying it per member would multiply it by the
+    ensemble size to no end: every member starts from the same state, and what
+    makes them differ is perturbation or an ensemble source, neither of which is
+    a property of this directory.
+    """
+    source = Path(config["model"]["initial_condition"])
+    entries = sorted(source.iterdir()) if source.is_dir() else []
+    if not entries:
+        raise CreateError(
+            f"model.initial_condition {source} is empty or not a directory. "
+            f"Experiments never generate their own inputs, so this has to be a "
+            f"restart set an offline stage already produced."
+        )
+    for member in member_set(config):
+        target = paths.member_out("rst", 0, member)
+        target.mkdir(parents=True, exist_ok=True)
+        for entry in entries:
+            link = target / entry.name
+            if link.is_symlink() or link.exists():
+                link.unlink()
+            link.symlink_to(entry)
 
 
 def _stub_initial_condition(config, paths):

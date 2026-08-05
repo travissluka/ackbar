@@ -77,7 +77,7 @@ def _frozen(name):
 def cmd_create(args):
     layers, _, schema, config = _resolved(args)
     site = load_site()
-    root = site.get("root", str(REPO_ROOT))
+    root = site["root"]
     paths, graph, scripts = create(
         config, site, schema, layers, root=root, force=args.force,
     )
@@ -358,7 +358,7 @@ def cmd_graph(args):
 def cmd_validate(args):
     layers, keys, schema, config = _resolved(args)
     site = load_site()
-    root = site.get("root", str(REPO_ROOT))
+    root = site["root"]
     findings, _, ran = validate_experiment(
         config, schema, site, root, offline=args.offline
     )

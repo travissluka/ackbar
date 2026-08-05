@@ -61,6 +61,22 @@ def builtin_symbols(config, site):
     for sub in ("cfg", "ledger", "stats", "log", "rst", "bkg", "ana", "obs_out",
                 "done"):
         symbols[f"{sub}_dir"] = f"{experiment_dir}/{sub}"
+
+    # The roots a layer needs in order to name a file that is not the
+    # experiment's own: the checkout (executables, config templates), the model
+    # dataset mirror, and what the offline stages produce. All three come from
+    # the site file, which is the only place allowed to know a machine-specific
+    # path, so a model layer can point at a grid file without becoming
+    # machine-specific itself.
+    #
+    # Absent from the table rather than empty when the site does not set them,
+    # so a layer that needs one fails with "unknown symbol" instead of resolving
+    # to a path that begins at the root of the disk.
+    for name, key in (("ackbar_root", "root"),
+                      ("datasets_root", "datasets_root"),
+                      ("static_root", "static_root")):
+        if site.get(key):
+            symbols[name] = site[key]
     return symbols
 
 

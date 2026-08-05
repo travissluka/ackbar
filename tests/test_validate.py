@@ -28,6 +28,7 @@ SITE = {
     "output_root": "/out",
     "max_submit_jobs": "10000",
     "max_array_size": "1000",
+    "root": str(REPO),
 }
 
 FIXTURES = [

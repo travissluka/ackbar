@@ -165,12 +165,14 @@ def test_scratch_is_removed_on_success_and_kept_on_failure(env):
     assert paths.scratch(3, "da").exists()
 
 
-def test_a_real_model_with_no_task_body_says_so_plainly(env):
+def test_a_task_with_no_body_yet_says_so_plainly(env):
+    # `forecast` is real for mom6sis2 now; `writeback` is not, and a stub body
+    # standing in for it silently would be worse than the error.
     config, site, paths = env
     config = json.loads(json.dumps(config))
     config["model"] = {"name": "mom6sis2"}
     with pytest.raises(run.TaskError, match="phase"):
-        run.run_task(config, site, paths, 1, "forecast", 1)
+        run.run_task(config, site, paths, 1, "writeback", 1)
 
 
 # --- cleanup -----------------------------------------------------------------

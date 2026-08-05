@@ -5,6 +5,12 @@
 # layer supplies partition, account, launcher, roots and limits, and nothing
 # that depends on the size of the problem.
 
+vars:
+  # Which MOM6-examples case directory this domain is. A var rather than a key
+  # under `domain` because the model layer is what consumes it, and a model that
+  # is not MOM6 has no use for the concept.
+  mom6_case: OM_1deg
+
 domain:
   name: om_1deg
   resources:

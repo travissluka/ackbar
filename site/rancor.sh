@@ -22,6 +22,11 @@ ACKBAR_CMAKE_GENERATOR=Ninja
 
 # --- data roots --------------------------------------------------------------
 ACKBAR_DATASETS_ROOT=/data/mom6-datasets
+# What the offline stages produce: static/<domain>, initial conditions,
+# observation archives. Read-only to every experiment, and shared between them,
+# which is what makes two experiments on the same domain comparable rather than
+# merely similar. See "Offline stages" in docs/design.md.
+ACKBAR_STATIC_ROOT=/data/ackbar/static
 ACKBAR_SCRATCH_ROOT=/data/ackbar/scratch
 ACKBAR_OUTPUT_ROOT=/data/ackbar/exp
 ACKBAR_TEST_ROOT=/data/ackbar/test

@@ -157,8 +157,31 @@ def test_totals_answer_what_the_cycle_cost(env):
     ]
 
     totals = harvest.harvest_cycle(env.paths, 1)["totals"]
-    assert totals == {"jobs": 2, "failed": 0, "max_rss_kb": 1500,
-                      "core_seconds": 720.0}
+    assert totals == {"jobs": 2, "failed": 0, "unfinished": 0,
+                      "max_rss_kb": 1500, "core_seconds": 720.0}
+
+
+def test_the_cycle_this_runs_inside_is_unfinished_rather_than_failed(env):
+    """This task is an `afterany` leaf off its own cycle's forecast.
+
+    So it reads the accounting while its siblings are still running, every time.
+    Counting a RUNNING row as failed on the usual not-COMPLETED rule would make
+    every healthy cycle report most of itself as a failure.
+    """
+    ledger.append(env.paths, cycle=1, task="forecast", members=(), attempt=1,
+                  job_id=70, dependency="")
+    ledger.append(env.paths, cycle=1, task="verify", members=(), attempt=1,
+                  job_id=71, dependency="")
+    ledger.append(env.paths, cycle=1, task="submit", members=(), attempt=1,
+                  job_id=72, dependency="")
+    env.lines += [
+        row("70", name="e.1.forecast", state="COMPLETED"),
+        row("71", name="e.1.verify", state="RUNNING"),
+        row("72", name="e.1.submit", state="FAILED"),
+    ]
+
+    totals = harvest.harvest_cycle(env.paths, 1)["totals"]
+    assert (totals["jobs"], totals["failed"], totals["unfinished"]) == (3, 1, 1)
 
 
 def test_the_launcher_is_recorded_next_to_the_numbers(env):

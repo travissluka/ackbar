@@ -26,12 +26,16 @@ def pytest_configure(config):
         "markers",
         "tier2: needs a real Slurm and the real site; see docs/build-order.md",
     )
+    config.addinivalue_line(
+        "markers",
+        "tier3: needs the built model and ACKBAR_TIER3=1; takes a quarter hour",
+    )
 
 
 @pytest.fixture(autouse=True)
 def fixed_site(request, monkeypatch):
-    if request.node.get_closest_marker("tier2"):
-        # Tier 2 submits to a real scheduler, and the jobs it submits read the
+    if any(request.node.get_closest_marker(t) for t in ("tier2", "tier3")):
+        # These submit to a real scheduler, and the jobs they submit read the
         # site the same way any other job does. Pinning a fake site here would
         # give the test one set of roots and its own jobs another.
         return

@@ -1,4 +1,26 @@
+# The real forecast model: MOM6-SIS2, run as `coupler_main`.
+#
+# `base` is a stock MOM6-examples case directory, used as it ships. Everything in
+# it is linked into the run directory untouched except the few files ACKBAR owns
+# (`input.nml`, `MOM_layout`, `SIS_layout`, `diag_table`), so updating the model
+# submodule brings the case's physics with it instead of leaving a fork of those
+# files in this repository to drift against it.
+#
+# `$(mom6_case)` comes from the domain layer, because which case directory this
+# is *is* the domain.
+
 model:
   name: mom6sis2
   namelist: mom_input.nml
   fields metadata: fields_metadata.yaml
+
+  executable: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main
+  base: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/$(mom6_case)
+
+  # Diagnostics chosen by what the forecast is for, which is the one thing that
+  # genuinely differs between the two forecast tasks. A cycling forecast's
+  # product is the restart set the next cycle reads; writing model history
+  # alongside it every cycle is how a free run fills a disk. Scoring output comes
+  # from `post.state` off the restarts, or from an extended forecast.
+  diag_table:
+    forecast: $(ackbar_root)/config/model/mom6sis2/diag_table.cycling
