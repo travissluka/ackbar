@@ -795,6 +795,20 @@ regional last.
   this from the critical path for testing the workflow, but a small real configuration running
   four concurrent members at 2 PEs is still worth having as a correctness check.
 - **Divergence policy** for a missing or bad member, per experiment. See Task graph.
+- **Whether there is a control member, per DA method.** LETKF does not use one. Hybrid EnVar
+  has a deterministic member, which is a different thing wearing the same index. The graph
+  carries this as `ensemble.control`, defaulting to true, so both shapes already generate; what
+  is undecided is which methods set it, and that is settled when each method is implemented
+  rather than guessed now.
+- **Where the analysis time sits in the window.** Centred is the current assumption, and it is
+  what soca-science did, but it is not the only valid position: 4DVar requires the window to
+  begin at the analysis time, and 4DEnVar allows either. So window placement becomes a
+  configured property of the solver when the 4D window work lands, not a constant.
+- **Which application calibrates vertical B per cycle**, if a separate one does at all. The
+  task exists in the graph with no executable named. `soca_sqrtvertloc.x` is not it: that is
+  vertical *localization* for an ensemble covariance, a different quantity from the vertical
+  correlation scales of the static B. Settled in the variational phase, where the DA task
+  itself is built and it becomes clear whether this is a task or a saber block inside one.
 
 ## Not carried forward
 

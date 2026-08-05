@@ -186,7 +186,6 @@ class TestStep4Executables:
         assert steps(found) == [3, 4]
         missing = sorted(f.where for f in found if f.step == 4)
         assert missing == [
-            "pkg/jedi/build/bin/soca_sqrtvertloc.x",
             "pkg/jedi/build/bin/soca_var.x",
             "pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main",
         ]
@@ -194,7 +193,6 @@ class TestStep4Executables:
     def test_a_file_that_is_not_runnable_is_rejected(self, tmp_path, keys, schema):
         for relative in (
             "pkg/jedi/build/bin/soca_var.x",
-            "pkg/jedi/build/bin/soca_sqrtvertloc.x",
             "pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main",
         ):
             path = tmp_path / relative
@@ -202,7 +200,7 @@ class TestStep4Executables:
             path.touch(mode=0o644)
         found = [f for f in full(load("var_om1deg", keys), schema, root=str(tmp_path))
                  if f.step == 4]
-        assert len(found) == 3
+        assert len(found) == 2
         assert all("not runnable" in f.message for f in found)
 
     def test_the_real_tree_has_the_executables_the_graph_names(self, keys, schema):

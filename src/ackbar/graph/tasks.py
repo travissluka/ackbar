@@ -69,7 +69,12 @@ TASKS = (
     TaskDef(
         name="b.vt",
         when=lambda config: _solver(config) == "variational",
-        exe=lambda config: f"{SOCA_BIN}/soca_sqrtvertloc.x",
+        # No executable named on purpose. Which application does this, or
+        # whether it is a saber block inside the analysis rather than a task at
+        # all, is settled in the variational phase. It is not
+        # soca_sqrtvertloc.x, which computes vertical localization for an
+        # ensemble covariance: a different quantity from the vertical
+        # correlation scales of the static B.
         description=(
             "per-cycle vertical B calibration: vertical scales track the mixed "
             "layer, so unlike horizontal and localization scales they cannot be "
