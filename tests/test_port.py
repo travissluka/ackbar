@@ -12,12 +12,16 @@ import yaml
 
 from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.lint import ambiguous_numbers
+from ackbar.config.resolve import resolve, unresolved
 from ackbar.config.schema import load_schema, merge_keys, validate
 from ackbar.config.why import responsible_layer, why
 
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
 EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
+
+#: A fixed site, so the tests do not depend on which machine they run on.
+SITE = {"scratch_root": "/scratch", "output_root": "/out"}
 
 
 @pytest.fixture(scope="module")
@@ -153,9 +157,48 @@ class TestPortedFilesAreClean:
             assert found == [], f"{path}: {found}"
 
 
+class TestResolvedPort:
+    """The ported observers after substitution, which is what JEDI would see."""
+
+    @pytest.fixture
+    def resolved(self, letkf):
+        _, config = letkf
+        return resolve(config, SITE)
+
+    def test_the_land_mask_threshold_becomes_a_number(self, resolved):
+        mask = observer(resolved, "adt_3a")["obs filters"][0]
+        value = mask["where"][0]["minvalue"]
+        assert value == 0.5
+        assert isinstance(value, float), "a string here is rejected by UFO"
+
+    def test_the_distribution_resolves_from_the_solver_layer(self, resolved):
+        space = observer(resolved, "sst_noaa19")["obs space"]
+        assert space["distribution"]["name"] == "Halo"
+        assert space["distribution"]["options"] == {"halo size": 500000}
+
+    def test_input_paths_come_from_the_archive_and_output_from_the_layout(self, resolved):
+        space = observer(resolved, "adt_3a")["obs space"]
+        assert space["obsdatain"]["engine"]["obsfile"].startswith(
+            "/archive/obs/osse_2018/"
+        )
+        assert space["obsdataout"]["engine"]["obsfile"].startswith(
+            "/out/letkf_om1deg/obs_out/"
+        )
+
+    def test_job_time_tokens_survive_the_experiment_time_pass(self, resolved):
+        space = observer(resolved, "adt_3a")["obs space"]
+        assert "{{current_cycle}}" in space["obsdatain"]["engine"]["obsfile"]
+        assert "{{window_begin}}" in space["obsdatain"]["engine"]["obsfile"]
+        assert space["obs perturbations seed"] == "{{seed}}"
+
+    def test_nothing_is_left_unsubstituted(self, resolved):
+        assert unresolved(resolved) == []
+
+
 class TestSchema:
     def test_the_fixture_experiments_validate(self, keys):
         schema = load_schema()
         for name in ("letkf_om1deg.yaml", "var_om1deg.yaml"):
             layers = resolve_layers(EXPERIMENTS / name, LAYERS)
-            assert validate(merge_layers(layers, keys), schema) == [], name
+            config = resolve(merge_layers(layers, keys), SITE)
+            assert validate(config, schema) == [], name

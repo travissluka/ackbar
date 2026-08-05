@@ -10,3 +10,6 @@ cycle:
   start: '2018-04-15T00:00:00Z'
   length: PT24H
   count: 30
+vars:
+  # The observation archive: an offline stage, keyed on period.
+  obs_dir: /archive/obs/osse_2018

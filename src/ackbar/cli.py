@@ -15,29 +15,42 @@ import yaml
 from .config.layers import LayerError, merge_layers, resolve_layers
 from .config.lint import ambiguous_numbers
 from .config.merge import MergeError
+from .config.resolve import ResolveError, resolve, unresolved
 from .config.schema import load_schema, merge_keys, validate
 from .config.why import why
+from .site import SiteError, load_site
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LAYERS = REPO_ROOT / "config" / "layers"
 
 
-def _resolved(args):
-    """Layers, merge keys, and the merged config for one experiment."""
+def _resolved(args, substitute=True):
+    """Layers, merge keys, schema, and the config for one experiment.
+
+    The order is merge, then substitute, then validate. Merging last would stop
+    a layer from overriding a value another layer interpolated, and validating
+    before substitution would check `$(ntasks)` rather than the integer it
+    stands for.
+    """
     schema = load_schema(args.schema)
     keys = merge_keys(schema)
     layers = resolve_layers(args.experiment, args.layers)
-    return layers, keys, schema, merge_layers(layers, keys)
+    config = merge_layers(layers, keys)
+    if substitute:
+        config = resolve(config, load_site())
+    return layers, keys, schema, config
 
 
 def cmd_resolve(args):
-    _, _, _, config = _resolved(args)
+    _, _, _, config = _resolved(args, substitute=not args.raw)
     yaml.safe_dump(config, sys.stdout, sort_keys=False, default_flow_style=False)
     return 0
 
 
 def cmd_why(args):
-    layers, keys, _, _ = _resolved(args)
+    # Blame is about which layer set a value, so it works on the merged config
+    # before substitution and needs no site.
+    layers, keys, _, _ = _resolved(args, substitute=False)
     history = why(layers, args.key, keys)
     if not history:
         print(f"{args.key}: never set by any layer")
@@ -71,6 +84,11 @@ def cmd_validate(args):
             f"YAML 1.1, where an exponent needs an explicit sign; eckit reads "
             f"YAML 1.2, where it does not. Write it as a plain number.",
         ))
+
+    # Belt and braces: resolve() raises on an unknown symbol, so anything left
+    # here means the substitution pass has a hole in it.
+    for path, value in unresolved(config):
+        errors.append((path, f"unsubstituted token remains: {value!r}"))
 
     if not errors:
         print(f"ok: {len(layers)} layers, {len(config)} top-level keys")
@@ -118,7 +136,11 @@ def main(argv=None):
     config = sub.add_parser("config", help="inspect resolved configuration")
     config_sub = config.add_subparsers(dest="config_command", required=True)
 
-    p = config_sub.add_parser("resolve", help="print the merged configuration")
+    p = config_sub.add_parser("resolve", help="print the resolved configuration")
+    p.add_argument(
+        "--raw", action="store_true",
+        help="stop after the merge, leaving $(...) unsubstituted",
+    )
     p.add_argument("experiment", type=Path)
     p.set_defaults(func=cmd_resolve)
 
@@ -130,7 +152,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (LayerError, MergeError) as error:
+    except (LayerError, MergeError, ResolveError, SiteError) as error:
         print(f"ackbar: {error}", file=sys.stderr)
         return 2
 

@@ -5,7 +5,9 @@
 A workflow for running cycling ocean data assimilation experiments with
 [SOCA](https://github.com/JCSDA-internal/soca), driving MOM6-SIS2 as the forecast model.
 
-Status: **design stage.** The model side works; no workflow code is written yet.
+Status: **early implementation.** The model and JEDI builds work. The configuration core
+(layer merge, schema validation, substitution, and blame) is the first piece of workflow code;
+nothing is submitted to a scheduler yet. See [`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
 
@@ -62,10 +64,14 @@ to be cheap to define, reproducible, and directly comparable to one another.
 ```
 build-model.sh     build MOM6-SIS2
 build-jedi.sh      build the JEDI bundle
+config/layers/     configuration layers experiments inherit from
+config/schema/     ackbar's own schema, which also declares how lists merge
 docs/              design and reference documentation
 pkg/jedi/          the JEDI bundle: CMakeLists plus one submodule per repo
 pkg/mom6sis2/      submodule: NOAA-GFDL/MOM6-examples, branch dev/gfdl
 site/              one file per machine, the only place machine paths may appear
+src/ackbar/        the workflow itself
+tests/             tiers 0 and 1: no scheduler, no JEDI, no model
 tools/slurm/       local single-node Slurm configuration
 ```
 
@@ -86,6 +92,32 @@ git submodule update --init pkg/mom6sis2
 
 See [`docs/model-build.md`](docs/model-build.md) for the nested submodules, the input data
 wiring, and the build itself.
+
+## Working on the workflow
+
+The workflow is a Python package. It needs no scheduler, no JEDI and no model to develop
+against, which is the point of the phase ordering.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest          # tiers 0 and 1, under a second
+```
+
+Anything that resolves a configuration needs the site layer, because that is where the scratch
+and output roots come from:
+
+```bash
+source site/activate.sh
+ackbar validate      tests/experiments/letkf_om1deg.yaml
+ackbar config resolve tests/experiments/letkf_om1deg.yaml
+ackbar config why    tests/experiments/letkf_om1deg.yaml 'vars.obs_land_mask_min'
+```
+
+Configuration resolves in a fixed order: **merge, then substitute, then validate.** Merging
+last would stop a layer overriding a value another layer interpolated; validating before
+substitution would check `$(ntasks)` rather than the integer it stands for. `$(...)` is
+experiment time and is frozen once; `{{...}}` is job time and survives this pass untouched.
 
 ## Prior art
 

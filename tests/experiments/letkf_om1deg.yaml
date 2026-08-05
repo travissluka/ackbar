@@ -14,3 +14,6 @@ ensemble:
   size: 20
   source: offline
   on_missing_member: run_degraded
+vars:
+  # The observation archive: an offline stage, keyed on period.
+  obs_dir: /archive/obs/osse_2018
