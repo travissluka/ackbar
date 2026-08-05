@@ -84,20 +84,98 @@ def build(tmp_path, name, *, cycles=2, members=4, seconds=2, fail=None,
     return target
 
 
+#: Every experiment tier 2 needs, started together. They are independent, and
+#: the scheduler is what this test is exercising, so running them one at a time
+#: means the wall clock is the sum of their scheduling latencies rather than the
+#: longest of them. The slowest single case is the fault matrix, which has to
+#: sit through a Slurm-enforced one minute timeout.
+FAULTS = {
+    "exit_nonzero": ["1.forecast.1"],
+    "overrun_memory": ["1.forecast.2"],
+    "requeue": ["1.forecast.3"],
+}
+
+#: A one minute limit, because Slurm stores a time limit in whole minutes and
+#: this is the floor. The stub domain's two minutes would double the wait.
+SHORT = {"default": {"ntasks": 1, "time": "00:01:00", "mem": "500M"}}
+
+#: Sized against 8 cores. What costs wall clock is the number of *stages*, not
+#: the number of members: each dependency release is a few seconds of Slurm
+#: scheduling latency and a cycle is nine stages deep, while twenty members at
+#: one core each cost one wave. So the cycle counts are the minimum that still
+#: says something (two, because one cycle cannot show cycling or cleanup) and
+#: the member counts are the minimum that still makes an array an array, plus
+#: the four the fault matrix needs to carry one fault each.
+EXPERIMENTS = {
+    "t2_clean": dict(cycles=2, members=2, seconds=1),
+    "t2_matrix": dict(cycles=2, members=3, seconds=1, fail=FAULTS,
+                      resources=SHORT),
+    "t2_silent": dict(cycles=1, members=2, seconds=1,
+                      fail={"write_nothing": ["1.recenter.*"]}),
+    # Its own experiment, and not part of the matrix, purely for wall clock.
+    # A Slurm-enforced timeout costs a whole minute, and in the matrix that
+    # minute would land *after* the dependency deferral above rather than
+    # alongside it.
+    "t2_timeout": dict(cycles=1, members=2, seconds=1, resources=SHORT,
+                       fail={"overrun_time": ["1.da.*"]}),
+}
+
+
+class Run:
+    """One finished experiment: where it is, how it ended, and what Slurm said."""
+
+    def __init__(self, paths, quiet, states):
+        self.paths = paths
+        self.quiet = quiet
+        self.states = states
+
+    def __getitem__(self, key):
+        return self.states[key]
+
+    def get(self, key, default=None):
+        return self.states.get(key, default)
+
+
+def _paths_for(name):
+    site = load_site()
+    return Paths(experiment=name,
+                 output_root=Path(site["output_root"]),
+                 scratch_root=Path(site["scratch_root"]))
+
+
+@pytest.fixture(scope="module")
+def runs(tmp_path_factory):
+    """Create and start every experiment, then wait for all of them."""
+    tmp_path = tmp_path_factory.mktemp("tier2")
+    started = {}
+    for name, options in EXPERIMENTS.items():
+        paths = _paths_for(name)
+        _purge(paths)
+        assert main(["create", str(build(tmp_path, name, **options))]) == 0
+        assert main(["start", name]) == 0
+        started[name] = paths
+
+    finished = {}
+    for name, paths in started.items():
+        quiet = wait_for_quiet(name)
+        finished[name] = Run(paths, quiet, outcomes(paths))
+
+    yield finished
+
+    for paths in started.values():
+        _purge(paths)
+
+
 @pytest.fixture
 def experiment(tmp_path):
-    """Create, run, and clean up. Yields a factory."""
+    """A one-off experiment, for the cases that must not share the fixture."""
     created = []
 
     def factory(name, **kwargs):
-        site = load_site()
-        paths = Paths(experiment=name,
-                      output_root=Path(site["output_root"]),
-                      scratch_root=Path(site["scratch_root"]))
+        paths = _paths_for(name)
         _purge(paths)
         created.append(paths)
-        source = build(tmp_path, name, **kwargs)
-        assert main(["create", str(source)]) == 0
+        assert main(["create", str(build(tmp_path, name, **kwargs))]) == 0
         return paths
 
     yield factory
@@ -123,31 +201,27 @@ def wait_for_quiet(name, timeout=QUIET_TIMEOUT):
 
     Only the *direct* dependent of a failed job reads `DependencyNeverSatisfied`.
     A job further down the chain reads plain `Dependency`, indistinguishable
-    from one whose parent is merely queued, so "stuck" is the combination: not
-    one job running, and every pending job waiting on a dependency. That is the
-    same reasoning `status` will need, and it is why the queue reason cannot be
-    read one row at a time.
+    from one whose parent is merely queued, so no single row settles the
+    question. What does settle it is that at least one row is definitively dead
+    while nothing at all is running: a healthy experiment never produces a
+    `DependencyNeverSatisfied` row, so its presence is the evidence, and waiting
+    for the queue to stop changing is not needed on top of it.
     """
     deadline = time.time() + timeout
-    quiet, previous = 0, None
+    quiet = 0
     while time.time() < deadline:
         rows = _rows(name)
         if not rows:
             return "drained"
-        moving = any(state != "PENDING" for _, state, _ in rows)
+        running = any(state != "PENDING" for _, state, _ in rows)
         blocked = all(reason.startswith("Dependency") for _, _, reason in rows)
-        # Three conditions, all needed. Slurm's own scheduling loop leaves gaps
-        # of tens of seconds during which every job of a perfectly healthy
-        # experiment is pending on a dependency that has in fact been
-        # satisfied, so neither "nothing running" nor "everything blocked" is
-        # evidence on its own. What distinguishes a stalled experiment is that
-        # the queue stops *changing*: a healthy one loses rows as jobs finish.
-        unchanged = rows == previous
-        previous = rows
-        quiet = quiet + 1 if (blocked and not moving and unchanged) else 0
-        if quiet >= 20:
+        dead = any(reason == slurm.NEVER_SATISFIED for _, _, reason in rows)
+        # Two polls rather than one, only because squeue and the scheduler are
+        # not sampled at the same instant.
+        quiet = quiet + 1 if (dead and blocked and not running) else 0
+        if quiet >= 2:
             return "stuck"
-        time.sleep(3)
+        time.sleep(2)
     pytest.fail(f"{name} was still moving after {timeout}s: {_rows(name)}")
 
 
@@ -163,18 +237,23 @@ def _rows(name):
     return out
 
 
-def outcomes(paths, settle=60):
+def outcomes(paths, settle=30):
     """{(cycle, task, member or None): state}, from sacct via the ledger.
 
-    Polled until nothing is still moving, because `sacct` lags the queue: the
+    Polled while anything is still running, because `sacct` lags the queue: the
     accounting database is written asynchronously, so for a few seconds after a
     job leaves `squeue` its final state has not landed and it still reads
     RUNNING. Reading once is how this test flakes.
+
+    PENDING is deliberately not waited on. A stranded job pends forever by
+    design on a permissive Slurm, so treating it as "not settled yet" would
+    spend the whole timeout on every fault case.
     """
+    moving = ("RUNNING", "COMPLETING", "REQUEUED", "RESIZING", "SUSPENDED")
     deadline = time.time() + settle
     while True:
         states = _outcomes_now(paths)
-        if not any(s in slurm.ACTIVE for s in states.values()):
+        if not any(s in moving for s in states.values()):
             return states
         if time.time() > deadline:
             return states
@@ -212,88 +291,65 @@ def _outcomes_now(paths):
 
 
 # --- the clean run -----------------------------------------------------------
+#
+# One experiment, several questions. Cycling, cleanup and the ledger are all
+# properties of the same clean run, and asking each of them its own 40 second
+# run would triple the wall clock to learn nothing extra.
 
-def test_a_clean_run_cycles_without_a_daemon(experiment):
-    paths = experiment("t2_clean", cycles=2, members=4, seconds=2)
-    assert main(["start", "t2_clean"]) == 0
-    assert wait_for_quiet("t2_clean") == "drained"
+@pytest.fixture(scope="module")
+def clean(runs):
+    return runs["t2_clean"]
 
-    states = outcomes(paths)
-    assert states, "nothing ran"
-    assert set(states.values()) == {"COMPLETED"}, \
-        f"not every job completed: {sorted(states.items())}"
+
+def test_a_clean_run_cycles_without_a_daemon(clean):
+    assert clean.quiet == "drained"
+    assert clean.states, "nothing ran"
+    assert set(clean.states.values()) == {"COMPLETED"}, \
+        f"not every job completed: {sorted(clean.states.items())}"
 
     # Cycle 2 exists at all only because cycle 1's submitter put it there.
-    assert ledger.submitted_cycles(paths) == [1, 2]
-    for member in (1, 2, 3, 4):
-        assert (paths.member_out("rst", 2, member) / "restart.stub").exists()
+    assert ledger.submitted_cycles(clean.paths) == [1, 2]
+    for member in (1, 2):
+        assert (clean.paths.member_out("rst", 2, member) / "restart.stub").exists()
 
 
-def test_cleanup_removes_only_what_nothing_can_still_need(experiment):
-    paths = experiment("t2_cleanup", cycles=2, members=2, seconds=1)
-    assert main(["start", "t2_cleanup"]) == 0
-    wait_for_quiet("t2_cleanup")
+def test_cleanup_removes_only_what_nothing_can_still_need(clean):
     # cleanup(2) drops cycle 0, gated on cycle 1 being complete for every
     # member. Cycle 1 is what cycle 2's writeback reads, so it stays.
-    assert not paths.cycle_out("rst", 0).exists()
-    assert paths.cycle_out("rst", 1).exists()
+    assert not clean.paths.cycle_out("rst", 0).exists()
+    assert clean.paths.cycle_out("rst", 1).exists()
 
 
-def test_every_cycle_leaves_a_ledger_record_per_node(experiment):
-    paths = experiment("t2_ledger", cycles=2, members=2, seconds=1)
-    main(["start", "t2_ledger"])
-    wait_for_quiet("t2_ledger")
-    records = ledger.read(paths)
+def test_every_cycle_leaves_a_ledger_record_per_node(clean):
+    records = ledger.read(clean.paths)
     assert {r["cycle"] for r in records} == {1, 2}
     assert all(r["attempt"] == 1 for r in records)
 
 
+def test_every_cycle_leaves_a_stats_file(clean):
+    # An afterany leaf, so it runs whatever happened. Here nothing did.
+    for cycle in (1, 2):
+        assert clean.paths.stats_file(cycle).exists()
+
+
 # --- the fault matrix --------------------------------------------------------
-
-FAULTS = {
-    "exit_nonzero": ["1.forecast.1"],
-    "overrun_time": ["1.forecast.2"],
-    "overrun_memory": ["1.forecast.3"],
-    "requeue": ["1.forecast.4"],
-}
-
-#: One minute, so a Slurm-enforced timeout costs a minute rather than the two
-#: the stub domain declares.
-SHORT = {"default": {"ntasks": 1, "time": "00:01:00", "mem": "500M"}}
-
+#
+# One run carrying four independent faults, one per array element. Independent
+# on purpose: each lands on a different member of the same forecast array, so
+# one run answers four questions instead of four runs answering one each, and
+# the elementwise `aftercorr` edges are what keep them from masking each other.
 
 @pytest.fixture(scope="module")
-def matrix(tmp_path_factory):
-    """One run carrying four independent faults, one per array element.
-
-    Independent on purpose: each fault lands on a different member of the same
-    forecast array, so one run answers four questions instead of four runs
-    answering one each, and the elementwise `aftercorr` edges are what keep them
-    from masking each other.
-    """
-    name = "t2_matrix"
-    site = load_site()
-    paths = Paths(experiment=name,
-                  output_root=Path(site["output_root"]),
-                  scratch_root=Path(site["scratch_root"]))
-    _purge(paths)
-    source = build(tmp_path_factory.mktemp("matrix"), name, cycles=2, members=4,
-                   seconds=2, fail=FAULTS, resources=SHORT)
-    assert main(["create", str(source)]) == 0
-    assert main(["start", name]) == 0
-    state = wait_for_quiet(name)
-    yield paths, outcomes(paths), state
-    _purge(paths)
+def matrix(runs):
+    return runs["t2_matrix"]
 
 
 def test_a_nonzero_exit_is_reported_as_failed(matrix):
-    _, states, _ = matrix
-    assert states[(1, "forecast", 1)] == "FAILED"
+    assert matrix[(1, "forecast", 1)] == "FAILED"
 
 
-def test_running_past_the_time_limit_is_reported_as_timeout(matrix):
-    _, states, _ = matrix
-    assert states[(1, "forecast", 2)] == "TIMEOUT"
+def test_running_past_the_time_limit_is_reported_as_timeout(runs):
+    assert runs["t2_timeout"][(1, "da", None)] == "TIMEOUT"
 
 
 def test_blowing_the_memory_request_is_reported_as_out_of_memory(matrix):
@@ -309,8 +365,7 @@ def test_blowing_the_memory_request_is_reported_as_out_of_memory(matrix):
             "ConstrainSwapSpace=yes in tools/slurm/cgroup.conf and run "
             "`sudo tools/slurm/install.sh config svc`"
         )
-    _, states, _ = matrix
-    assert states[(1, "forecast", 3)] in ("OUT_OF_MEMORY", "FAILED")
+    assert matrix[(1, "forecast", 2)] in ("OUT_OF_MEMORY", "FAILED")
 
 
 def _enforces_memory():
@@ -326,10 +381,7 @@ def _enforces_memory():
     if settings.get("ConstrainSwapSpace", "").lower() == "yes":
         return True
     # Unlimited swap saves the job unless there is no swap to use.
-    return "0B" in subprocess.run(
-        ["swapon", "--show=SIZE", "--noheadings", "--bytes"],
-        capture_output=True, text=True,
-    ).stdout or not subprocess.run(
+    return not subprocess.run(
         ["swapon", "--show"], capture_output=True, text=True,
     ).stdout.strip()
 
@@ -337,23 +389,20 @@ def _enforces_memory():
 def test_a_requeued_member_reruns_from_the_top_and_still_finishes(matrix):
     # Requeue on node failure is on by default and reruns the batch script from
     # its beginning, so every task has to be safe to run twice.
-    paths, states, _ = matrix
-    assert states[(1, "forecast", 4)] == "COMPLETED"
-    sentinel = json.loads(paths.sentinel(1, "forecast", 4).read_text())
+    assert matrix[(1, "forecast", 3)] == "COMPLETED"
+    sentinel = json.loads(matrix.paths.sentinel(1, "forecast", 3).read_text())
     assert sentinel["restarts"] >= 1
-    assert (paths.member_out("rst", 1, 4) / "restart.stub").exists()
+    assert (matrix.paths.member_out("rst", 1, 3) / "restart.stub").exists()
 
 
 def test_a_healthy_member_is_untouched_by_the_others(matrix):
-    # aftercorr, elementwise: member 4 proceeds without waiting for member 1,
+    # aftercorr, elementwise: member 3 proceeds without waiting for member 1,
     # and member 1's failure does not cancel it.
-    paths, states, _ = matrix
-    assert states[(1, "post.state", 4)] == "COMPLETED"
+    assert matrix[(1, "post.state", 3)] == "COMPLETED"
 
 
 def test_a_failed_member_strands_exactly_its_own_successor(matrix, profile):
-    paths, states, _ = matrix
-    stranded = states.get((1, "post.state", 1))
+    stranded = matrix.get((1, "post.state", 1))
     if profile == "strict":
         assert stranded == "CANCELLED"
     else:
@@ -366,51 +415,44 @@ def test_a_failed_member_strands_exactly_its_own_successor(matrix, profile):
 def test_the_leaves_still_run_when_members_have_failed(matrix):
     # afterany, and the whole reason for it: the harvest and the observation
     # statistics are exactly what is most wanted when something failed.
-    _, states, _ = matrix
-    assert states[(1, "stats", None)] == "COMPLETED"
-    assert states[(1, "verify", None)] == "COMPLETED"
+    assert matrix[(1, "stats", None)] == "COMPLETED"
+    assert matrix[(1, "verify", None)] == "COMPLETED"
 
 
 def test_a_failed_cycle_stops_the_chain_rather_than_outrunning_it(matrix):
     # Fail-stop is the right default for science: one transient node failure
     # needs a heal, which is much better than cycling off a bad background.
-    paths, states, _ = matrix
-    assert ledger.submitted_cycles(paths) == [1]
-    assert states.get((1, "submit", None)) in (None, "PENDING", "CANCELLED")
+    assert ledger.submitted_cycles(matrix.paths) == [1]
+    assert matrix.get((1, "submit", None)) in (None, "PENDING", "CANCELLED")
 
 
 def test_nothing_is_left_pending_and_undiagnosed(matrix, profile):
-    _, _, state = matrix
-    assert state == ("drained" if profile == "strict" else "stuck")
+    assert matrix.quiet == ("drained" if profile == "strict" else "stuck")
 
 
 # --- faults that are not job states ------------------------------------------
 
-def test_exit_zero_having_written_nothing_is_caught_by_the_consumer(experiment):
+def test_exit_zero_having_written_nothing_is_caught_by_the_consumer(runs):
     """The fault Slurm cannot see, so ACKBAR has to.
 
     The producer reports success and writes no output. Nothing in the scheduler
     notices; the consumer's input check is the only thing that can.
     """
-    paths = experiment("t2_silent", cycles=1, members=2, seconds=1,
-                       fail={"write_nothing": ["1.recenter.*"]})
-    main(["start", "t2_silent"])
-    wait_for_quiet("t2_silent")
+    silent = runs["t2_silent"]
+    assert silent[(1, "recenter", 1)] == "COMPLETED"
+    assert silent[(1, "writeback", 1)] == "FAILED"
 
-    states = outcomes(paths)
-    assert states[(1, "recenter", 1)] == "COMPLETED"
-    assert states[(1, "writeback", 1)] == "FAILED"
-
-    log = next(paths.sub("log").joinpath("1").glob("writeback.*_1.out"))
+    log = next(silent.paths.sub("log").joinpath("1").glob("writeback.*_1.out"))
     assert "missing" in log.read_text()
 
 
 def test_an_impossible_request_is_refused_before_anything_is_submitted(
-        experiment, tmp_path):
+        experiment):
     """Not a fault injector: a resources value the partition cannot satisfy.
 
     `sbatch` rejects it outright, and the point of the test is that the
-    rejection propagates instead of leaving half a cycle in the queue.
+    rejection propagates instead of leaving half a cycle in the queue. Its own
+    experiment rather than the shared fixture, because it never starts.
     """
     experiment(
         "t2_toobig", cycles=1, members=2, seconds=1,

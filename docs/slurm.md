@@ -91,6 +91,32 @@ further down the chain reads plain `Dependency`, which is indistinguishable from
 parent is merely queued. "Nothing can make progress" is therefore a property of the whole
 queue, never of one row.
 
+## The two-minute dependency deferral
+
+A job whose dependency has just been satisfied can sit in `PENDING` with reason `BeginTime` for
+**two minutes** on a completely idle cluster:
+
+```
+JobState=PENDING Reason=BeginTime Dependency=(null)
+SubmitTime=...T11:48:05  EligibleTime=...T11:50:06
+```
+
+`Dependency=(null)` means it is ready; `EligibleTime` is stamped 121 seconds after submission.
+Slurm backs off re-testing an unsatisfied dependency, and the back-off is not always cleared
+when the dependency clears. It does not happen on every transition, which is worse than if it
+did: a cycle usually advances a stage in about three seconds, and occasionally takes two
+minutes for no visible reason.
+
+Two consequences. Do not read a stalled-looking cycle as a fault until it has been that way for
+longer than this. And when timing anything, remember the deferral is per *transition*, so it is
+paid by the depth of a cycle rather than by its width.
+
+Suspected aggravator, unconfirmed: `MinJobAge=300` keeps finished jobs in the controller for
+five minutes, and with `default_queue_depth` at its default the scheduler stops examining the
+queue after a fixed number of jobs. A long test session accumulates hundreds of lingering
+records. If that is the cause, `SchedulerParameters=default_queue_depth=1000` and a shorter
+`MinJobAge` would reduce it. Worth measuring before believing.
+
 Accounting goes through slurmdbd into MySQL, so **`sacct` works for completed jobs**. That
 matters: the workflow engine should learn a job's fate from `sacct`, not from parsing
 logs, because that is the only thing that still knows about a job after it leaves the
