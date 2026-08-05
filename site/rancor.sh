@@ -29,8 +29,9 @@ ACKBAR_TEST_ROOT=/data/ackbar/test
 # --- scheduler ---------------------------------------------------------------
 ACKBAR_PARTITION=compute
 ACKBAR_ACCOUNT=ackbar
-ACKBAR_LAUNCHER=mpiexec               # no PMI plugin yet, so srun cannot launch
-                                      # MPI here. See docs/design.md, Build order.
+ACKBAR_LAUNCHER="srun --mpi=pmi2"     # spelled out rather than relying on
+                                      # MpiDefault, which differs per site and
+                                      # fails silently. See docs/slurm.md.
 ACKBAR_MAX_SUBMIT_JOBS=10000          # query: scontrol show config | grep MaxJobCount
 ACKBAR_MAX_ARRAY_SIZE=1000            # query: scontrol show config | grep MaxArraySize
 ACKBAR_CAN_SUBMIT_FROM_COMPUTE=yes    # single node, submit host is the compute host

@@ -164,10 +164,17 @@ ln -s $PWD/INPUT $RD/INPUT          # symlink, do NOT cp -rL (dereferences ~1GB 
 printf 'LAYOUT = 4,2\nIO_LAYOUT = 1,1\n' > $RD/MOM_layout
 printf 'LAYOUT = 4,2\nIO_LAYOUT = 1,1\n' > $RD/SIS_layout
 ln -sf ~/work/ackbar/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main $RD/coupler_main
-cd $RD && source ~/work/ackbar/site/activate.sh && mpiexec -n 8 ./coupler_main > run.log 2>&1
+cd $RD && source ~/work/ackbar/site/activate.sh
+srun --mpi=pmi2 -p compute -n 8 -t 30 ./coupler_main > run.log 2>&1
 ```
 
 Gotchas:
+
+- `srun --mpi=pmi2` because that is what the workflow launches with (`docs/slurm.md`, srun and
+  PMI). If Slurm is down and the question is only whether the executable links and runs,
+  `mpiexec -n 8 ./coupler_main` gives bit-identical restarts. Dropping the `--mpi` flag does
+  not: eight rank-0s each write the whole domain over each other and the job still says
+  `COMPLETED`.
 
 - The committed `MOM_layout` / `SIS_layout` are placeholders with huge PE counts
   (`12,10` and `32,18`) and carry a "should not be used in production" comment. Always

@@ -157,9 +157,12 @@ the OSSE truth run.
 - **Test:** tier 3, a few cycles at `OM_1deg`. Tiers 0 through 2 keep passing.
 - **Done when:** N cycles are restart continuous, and a killed cycle resumes and reproduces.
 
-Also here: **get `srun` launching MOM6 on rancor**, which needs a PMI plugin Slurm can talk to.
-Without it, job steps, per-task binding, and per-step accounting all differ between rancor and
-production, exactly where the interesting behavior lives.
+Also here, and the prerequisite for the rest of it: **`srun` launching MOM6 on rancor**, so that
+job steps, per-task binding and per-step accounting are the same thing here as in production
+rather than two regimes to reason about. `srun --mpi=pmi2` against spack-stack's MPICH needed no
+rebuild and no PMIx; what it needed was knowing that `--mpi=none` silently gives every rank its
+own `MPI_COMM_WORLD` instead of failing. See "srun and PMI" in `docs/slurm.md`, which also
+carries the measured `MaxRSS` difference between the two launchers.
 
 ## Phase 5. hofx
 

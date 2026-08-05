@@ -68,6 +68,41 @@ exceeds its request swaps past the limit and finishes `COMPLETED` instead of `OU
 The workflow's memory fault test skips itself, with that explanation, on a cluster configured
 the other way.
 
+## srun and PMI
+
+MPI is launched with `srun --mpi=pmi2`. spack-stack's MPICH speaks Slurm's PMI2 wire protocol
+with no build flag on either side, even though it is configured `--with-slurm=no` and ships
+hydra as its own process manager, so nothing had to be rebuilt to get this. `MpiDefault=pmi2`
+in `slurm.conf` makes a bare `srun` work for interactive debugging; the workflow does not rely
+on it, because `ACKBAR_LAUNCHER` in the site file spells the flag out and `MpiDefault` is a
+per-site setting the workflow should never be at the mercy of.
+
+Which plugins this Slurm actually has: `srun --mpi=list`. It reports `pmi2` and `pmix_v5`;
+pmix is not usable here, since this MPICH was built without a PMIx client.
+
+**`--mpi=none` does not fail, it lies.** `srun -n 8` still starts eight processes and every one
+of them runs to completion, each in its own `MPI_COMM_WORLD` of size 1. A model launched that
+way writes eight sets of output over each other rather than decomposing anything. There is no
+error anywhere and Slurm records the job `COMPLETED`. Verify with a hello-world that prints
+`MPI_Comm_size` and an `MPI_Allreduce`, not with an exit code.
+
+**Which launcher you use changes what `MaxRSS` means**, which is why `ackbar` records the
+launcher next to the numbers it harvests. The same 8-PE `OM_1deg` run under each:
+
+| | step row | `MaxRSS` | what the number is |
+|---|---|---|---|
+| `srun --mpi=pmi2` | `<job>.0`, named for the executable | ~1.4 G | one rank |
+| `mpiexec` | `<job>.batch` only | ~10.7 G | all 8 ranks on the node |
+
+Roughly a factor of ranks-per-node between them, so sizing `--mem` from one regime with numbers
+from the other is wrong by that factor in whichever direction hurts. srun also gets you a named
+step row per launch, which is the only way per-launch accounting exists at all; under mpiexec
+everything the script does is one `.batch` row. Neither run was measurably faster than the
+other. Re-derive with `sacct -j <id> -P -o JobID,MaxRSS,MaxRSSTask,TotalCPU` on any two jobs.
+
+Restarts are bit-identical between the two launchers, which is how the switch was verified:
+same case, same layout, `cmp` on `RESTART/MOM.res.nc`.
+
 ## Two dependency profiles
 
 Slurm's default is that a job whose dependency failed **pends forever** with reason
@@ -164,15 +199,16 @@ each case. Rerun it after any config change; it is the regression test for the c
 
 ## Traps
 
-**mpiexec inside a Slurm allocation.** MPICH's hydra launcher detects Slurm and tries to
-launch through `srun`, which needs a PMI plugin Slurm was not configured with here
-(`MpiDefault=none`). If `mpiexec -n 8` hangs or errors inside a job, force local launching:
+**mpiexec inside a Slurm allocation.** Only relevant if you deliberately go around `srun`.
+MPICH's hydra launcher detects Slurm and tries to launch through `srun` itself, which fails
+unless the PMI plugin lines up. If `mpiexec -n 8` hangs or errors inside a job, force local
+launching:
 
 ```bash
 export HYDRA_LAUNCHER=fork      # or: mpiexec -launcher fork -n 8 ...
 ```
 
-Single node, so nothing is lost. Revisit only if the fake-node setup below is adopted.
+Single node, so nothing is lost, but you give up the per-launch step row (see srun and PMI).
 
 **`SLURM_CPUS_ON_NODE` counts threads, not cores.** With `ThreadsPerCore=2`, a job asking
 for one task gets one *core*, and reports `SLURM_CPUS_ON_NODE=2`. Sizing an MPI launch off
