@@ -498,8 +498,25 @@ catches missing observation files and stale paths at the only moment when fixing
 and it is a strong test that graph generation really is deterministic and side effect free.
 
 What it cannot catch is what JEDI itself will reject, since ackbar's schema describes ackbar's
-config rather than OOPS's. Whether a cheap parse-and-exit path exists in SOCA or OOPS is worth
-checking; if one does, a cycle-1 dry run through the real executables becomes a seventh step.
+config rather than OOPS's.
+
+**There is no seventh step, because JEDI no longer offers a reliable parse-and-exit.** Such a
+path existed at one point but not at the application level any more; some components validate
+their own configuration and others do not, and a check that covers an unpredictable subset is
+worse than none, because it reports success for configurations that will still fail. So a
+malformed JEDI config is discovered when the executable runs, and nowhere earlier.
+
+Two things carry the weight that step would have carried, and both are ackbar's own:
+
+- **Step 3 does most of the work in practice.** Malformed JEDI YAML is rare, because it is
+  generated from data structures rather than templated. Missing or misnamed *files* are the
+  common failure, and that is entirely checkable up front.
+- **The cycle throttle bounds the blast radius.** With a throttle of 1, a config error surfaces
+  in cycle 1 rather than after fifty cycles have been queued behind it.
+
+The residual risk is a JEDI-valid-looking config that the executable rejects on the first
+cycle. That is a one-cycle cost, paid once per experiment definition, and it is the reason
+milestone ordering brings each new solver up on a short run before a long one.
 
 ## Provenance
 

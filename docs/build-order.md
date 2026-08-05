@@ -55,6 +55,12 @@ Still no scheduler.
   and `validate` rejects a missing input path and a missing executable before anything is
   submitted.
 
+Steps 2 and 3 deserve more care here than their position in the list suggests. JEDI has no
+usable parse-and-exit, so nothing between `validate` and the running executable will catch a
+bad path, and the checks ackbar performs itself are the only ones there are. Generating every
+job's YAML for every cycle and stat-ing every file it references is cheap, and it is the whole
+of the early warning system.
+
 ## Phase 2. Emitter, ledger, submitter, and the stub model
 
 The first phase that touches Slurm. This is the milestone the project's premise rests on.
@@ -168,6 +174,6 @@ they would break rather than by when they are convenient.
 |---|---|---|
 | Symmetric memory: how SOCA's own MOM6 is compiled for regional | phase 4 | It is a build level decision. Discovering it late means rebuilding everything the workflow was validated against. |
 | MOM6 back-compat parameter pins (`EQN_OF_STATE = "WRIGHT"` and friends) | phase 4's offline IC | Dropping them invalidates any initial condition produced under the old physics. |
-| A cheap parse-and-exit path in SOCA or OOPS | phase 1 | If one exists, a cycle-1 dry run through the real executables becomes a seventh `validate` step, and that changes what phase 1 builds. |
+| ~~A cheap parse-and-exit path in SOCA or OOPS~~ | ~~phase 1~~ | **Answered: no.** It existed once but not at the application level any more, and only some components validate their own config. `validate` therefore has six steps, not seven, and a bad JEDI config is found when the executable runs. See Configuration validation in `design.md` for what carries that weight instead. |
 | IAU versus direct restart write | phase 6 | Decides what the writeback task is. Resolve by spike, not on paper. |
 | `srun` and PMI on rancor | with phase 4 | Job steps and per-step accounting differ between `mpiexec` and `srun`. |
