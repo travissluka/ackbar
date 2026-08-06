@@ -97,6 +97,41 @@ class TestRealSchema:
         config["model"]["stub"] = {"seconds": 30}
         assert validate(config, schema) == []
 
+    def test_a_variational_solver_must_state_its_b_and_its_minimizer(self, schema):
+        # An analysis with no background error and no minimizer is not an
+        # under-specified experiment, it is a different one: the application
+        # takes OOPS defaults for both and produces an analysis nobody chose.
+        config = _minimal()
+        config["solver"] = {"name": "variational"}
+        missing = {message for _, message in validate(config, schema)}
+        for key in ("analysis variables", "background variables",
+                    "background error", "variational"):
+            assert f"'{key}' is a required property" in missing
+
+        config["solver"].update({
+            "analysis variables": ["sea_water_potential_temperature"],
+            "background variables": ["sea_water_potential_temperature",
+                                     "sea_water_cell_thickness"],
+            "background error": {"covariance model": "SABER"},
+            "variational": {"minimizer": {"algorithm": "RPCG"}},
+        })
+        assert validate(config, schema) == []
+
+    def test_the_saber_config_below_the_solver_is_not_modelled(self, schema):
+        # Same rule as the body of an observer: ACKBAR names the block and does
+        # not describe its insides, because that is SABER's config and not ours.
+        config = _minimal()
+        config["solver"] = {
+            "name": "variational",
+            "analysis variables": ["sea_water_salinity"],
+            "background variables": ["sea_water_salinity"],
+            "background error": {
+                "saber central block": {"anything SABER accepts": [1, 2]},
+            },
+            "variational": {"iterations": [{"ninner": 5, "whatever": True}]},
+        }
+        assert validate(config, schema) == []
+
     def test_an_experiment_name_that_would_not_survive_sacct_is_rejected(self, schema):
         config = _minimal()
         config["experiment"]["name"] = "my experiment"
@@ -109,5 +144,9 @@ def _minimal():
         "domain": {"name": "om_1deg"},
         "cycle": {"start": "2018-04-15T00:00:00Z", "length": "PT24H", "count": 1},
         "model": {"name": "mom6sis2"},
-        "solver": {"name": "variational"},
+        # A free run, which is the only solver that needs nothing else stated.
+        # `variational` deliberately does not belong here: it requires a B and a
+        # minimizer, and `test_a_variational_solver_must_state_its_b_and_its_
+        # minimizer` is what says so.
+        "solver": {"name": "none"},
     }

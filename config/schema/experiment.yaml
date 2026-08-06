@@ -131,6 +131,21 @@ properties:
                     requeue: { type: array, items: { type: string } }
 
   solver:
+    # Three keys ACKBAR owns and validates strictly, because they are the DA
+    # axes: they decide which tasks exist and how they are wired. Everything
+    # else here is the analysis application's own config, and follows the same
+    # rule as `model` and the body of an observer: named, so a typo in an axis
+    # is still an error, and unvalidated inside, because this is SABER and OOPS
+    # config and ACKBAR's schema is not a model of either.
+    #
+    # `background error` and `variational` are the only two parts of the var
+    # document that are not derivable from something the experiment already
+    # states. Everything else soca_var.x reads, ACKBAR builds: the geometry
+    # from the model layer, the background from the previous cycle's restart
+    # set, the time window from the cycle, the observers from `observations`,
+    # and the departure diagnostics, which are not optional here because an
+    # analysis that writes no `ombg`/`oman` leaves `post.obs` with nothing and
+    # looks healthy the whole way through.
     type: object
     required: [name]
     additionalProperties: false
@@ -141,6 +156,49 @@ properties:
         enum: [static, ensemble, hybrid]
       window:
         enum: ['3d', fgat, '4d']
+      # What the analysis solves for. Deliberately not `model.state variables`:
+      # that list is what gets read out of the restart set and interpolated for
+      # the observers, and the background needs fields the analysis does not
+      # touch (cell thickness, mixed layer depth, depth) because the background
+      # error blocks read them. Conflating the two is what soca-science did
+      # through `__DA_VARIABLES__` and then patched around.
+      analysis variables:
+        type: array
+        items: { type: string }
+      # What the analysis reads out of the restart set, which is a superset of
+      # what it solves for: `SOCAParametricOceanStdDev` reads mixed layer
+      # thickness and depth to build the standard deviations, and never writes
+      # them. Stated rather than derived as `analysis variables` plus two names,
+      # because which extra fields are needed is a property of the background
+      # error blocks configured below, and hardcoding the two in the builder is
+      # a thing to get wrong the first time that block changes.
+      background variables:
+        type: array
+        items: { type: string }
+      # The B matrix, as a SABER block. Verbatim.
+      background error:
+        type: object
+        additionalProperties: true
+      # The minimizer and the outer/inner loop structure. Verbatim.
+      variational:
+        type: object
+        additionalProperties: true
+
+    allOf:
+      # A variational experiment with no B and no minimizer is not an
+      # under-specified experiment, it is a different experiment: the
+      # application would take OOPS defaults for both and produce an analysis
+      # nobody chose. Same shape as the stub's conditional above, and for the
+      # same reason.
+      - if:
+          properties: { name: { const: variational } }
+          required: [name]
+        then:
+          required:
+          - analysis variables
+          - background variables
+          - background error
+          - variational
 
   ensemble:
     type: object

@@ -516,6 +516,16 @@ Rules:
   which is what lets one file want the same date two ways: `{{window_begin}}` is the ISO
   instant JEDI parses, `{{current_cycle:%Y%m%d%H}}` is the archive directory that has no colons
   in it.
+
+  **The job-time pass is scoped to `observations`.** Not "the whole config, at job time":
+  `observations.py` renders each observer entry, and every other subtree reaches a job with its
+  `{{...}}` unrendered, because the values a job needs are computed in the job body from the
+  cycle it was given rather than substituted into config. That is the narrower promise and it
+  is the one that is kept. It matters because `ackbar validate` renders the *whole* config to
+  check it, so a `{{...}}` written anywhere else validates clean and arrives at the job
+  literally, which looks like a path that does not exist rather than like a substitution bug.
+  Widening the pass to the whole config is the fix if something outside `observations` ever
+  needs a job-time value; until then this paragraph is the specification.
 - **Cycle *n* is computable from *n* alone.** The analysis time is `cycle.start + (n-1) *
   cycle.length`, the window is centred on it and one cycle long so that consecutive windows
   tile without gap or overlap, and cycle 0 is where experiment setup materializes the offline
@@ -700,6 +710,24 @@ ensemble source.
 
 Two solvers, and the variational one is parameterized. The configuration layers carry the
 parameterization, so there is no mode dispatch in the code.
+
+That parameterization is four keys under `solver`, and they are exactly the parts of the analysis
+document ACKBAR cannot derive from something the experiment already states. `background error` is
+the B matrix as a SABER block; `variational` is the minimizer and its loop structure. Both are
+verbatim SABER and OOPS config, named by the schema and unvalidated inside, on the same rule as
+the body of an observer: ACKBAR's schema describes ACKBAR's config and is not a model of either.
+The other two are variable lists, and they are two rather than one because `background variables`
+is a superset of `analysis variables`: the background error blocks read cell thickness, mixed
+layer thickness and depth to build their standard deviations and never write them. Conflating the
+two is what soca-science did, through a single `__DA_VARIABLES__` anchor, and then patched around.
+
+Everything else the analysis reads, ACKBAR builds: the geometry from the model layer, the
+background from the previous cycle's restart set, the time window from the cycle, the observers
+from `observations`, and the departure diagnostics, which are not configurable because an analysis
+writing no `ombg`/`oman` leaves post-processing with nothing to read and looks healthy the whole
+way through. A `variational` solver that states none of the four is refused by the schema rather
+than run on whatever OOPS defaults to, since that is a different experiment and not an
+under-specified one.
 
 **`noda` is not a mode either.** Two independent properties: does the run produce an analysis,
 and does it evaluate observations. A free run does neither, hofx evaluates only. So a free run

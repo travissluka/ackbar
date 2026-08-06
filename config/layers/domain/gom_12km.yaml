@@ -35,10 +35,23 @@ vars:
   # every domain.
   mom6_override_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/12km
 
+  # Where this domain's offline stages land: the gridspec today, the
+  # background error parameters once they are built. A var as well as a
+  # `domain.static` key, because the da layer names files under it and
+  # cannot know which domain it is being merged with.
+  domain_static: $(static_root)/static/gom_12km
+
+  # Vertical levels the background error's diffusion parameters are
+  # calibrated on, which is this domain's NK. Here rather than in the da
+  # layer because a B built for the wrong number of levels is wrong
+  # whatever the solver says, and because the da layer is shared by every
+  # domain.
+  diffusion_levels: 36
+
 domain:
   name: gom_12km
 
-  static: $(static_root)/static/gom_12km
+  static: $(domain_static)
 
   resources:
     default:

@@ -33,6 +33,19 @@ vars:
   # than on the upstream name.
   mom6_override_dir: $(ackbar_root)/config/model/mom6sis2/domain/om_1deg
 
+  # Where this domain's offline stages land: the gridspec today, the
+  # background error parameters once they are built. A var as well as a
+  # `domain.static` key, because the da layer names files under it and
+  # cannot know which domain it is being merged with.
+  domain_static: $(static_root)/static/om_1deg
+
+  # Vertical levels the background error's diffusion parameters are
+  # calibrated on, which is this domain's NK. Here rather than in the da
+  # layer because a B built for the wrong number of levels is wrong
+  # whatever the solver says, and because the da layer is shared by every
+  # domain.
+  diffusion_levels: 75
+
 domain:
   name: om_1deg
 
@@ -43,7 +56,7 @@ domain:
   # and that sharing is what makes them comparable by construction rather than
   # by inspection. See Offline stages in docs/design.md, and
   # `tools/soca-gridspec.sh` for what writes it.
-  static: $(static_root)/static/om_1deg
+  static: $(domain_static)
 
   resources:
     # Everything that is bookkeeping: python, shell, a few file operations.

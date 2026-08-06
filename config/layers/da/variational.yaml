@@ -1,10 +1,147 @@
 # Variational solver. Carries the values that soca-science smuggled through the
-# YAML anchors defined at the top of soca_3dvar.yaml.
+# YAML anchors defined at the top of soca_3dvar.yaml, and the background error
+# description, which is the one part of the analysis document ACKBAR cannot
+# derive from something the experiment already states.
+#
+# Two sources, and they are used for different things on purpose:
+#
+#   the pinned bundle    `pkg/jedi/soca/test/testinput/3dvar.yml` supplies the
+#                        *schema*: which blocks exist, what they are called,
+#                        where they sit. It is CI-verified against this exact
+#                        SOCA, which soca-science's config is not.
+#   soca-science v2      `configs/soca/soca_3dvar.yaml` supplies the *science*
+#                        where the two agree on a parameter.
+#
+# They do not agree everywhere. v2's background error standard deviations came
+# from `BkgErrGODAS`, a linear variable change that no longer exists in SOCA:
+# there is no `godas` anywhere in the source tree and `LinearVariableChange/`
+# holds only `Balance` and `LinearModel2GeoVaLs`. Its replacement is the saber
+# outer block `SOCAParametricOceanStdDev`, which is not a rename. v2 tuned
+# t_min/t_max/t_dz/t_efold and s_min/s_max; the parametric block takes an SST
+# error field, defaults for unbalanced salinity and ssh, and a per-variable
+# min or fraction of background. Carrying v2's tuning across is a science
+# decision rather than a transcription, so what is here is the bundle's own
+# defaults, which are known to run against this SOCA and are not known to be
+# the right numbers for an ocean anyone cares about.
+
 solver:
   name: variational
   covariance: static
   window: '3d'
+
+  # Ocean only, matching the model layer's `state variables`. The ice fields in
+  # the bundle's example are absent for the same reason they are absent there:
+  # SIS2 writes `ice_model.res.nc` and the fields metadata's ice section is
+  # CICE's, so an ice variable here resolves to something that does not exist.
+  # The first ice observer is what makes that worth solving.
+  analysis variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+
+  # The three above plus what the background error blocks read and never write.
+  # `sea_water_cell_thickness` is what makes anything addressable by depth;
+  # `ocean_mixed_layer_thickness` and `sea_water_depth` are what
+  # SOCAParametricOceanStdDev builds its standard deviations from. All three are
+  # derived fields in `config/model/mom6sis2/fields_metadata.yaml` with no `io
+  # name`, so they cost nothing to ask for.
+  background variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+  - sea_water_cell_thickness
+  - ocean_mixed_layer_thickness
+  - sea_water_depth
+
+  background error:
+    covariance model: SABER
+
+    # Correlation, as a diffusion operator. The two filepaths are the product of
+    # an offline calibration stage that does not exist yet: they are what
+    # `soca_setcorscales.x` and `soca_error_covariance_toolbox.x` write, keyed
+    # on domain the way the gridspec is, and `ackbar validate` step 3 will name
+    # them as missing until that stage is built and run. That is the intended
+    # failure: a B calibrated on a different grid than the model integrates on
+    # is the thing this arrangement exists to make impossible.
+    #
+    # The vertical scales are fixed rather than recalibrated every cycle. v2 ran
+    # the vertical calibration per cycle from an `MLD` variable read out of
+    # `MOM.res.nc`; whether ACKBAR's restarts carry it is unverified, and it
+    # fails silently if they do not. The bundle's own calibration uses a fixed
+    # value and no MLD at all. Per-cycle calibration is a measured improvement
+    # to make later, not a prerequisite for a working analysis.
+    saber central block:
+      saber block name: diffusion
+      read:
+        groups:
+        - variables:
+          - sea_water_potential_temperature
+          - sea_water_salinity
+          horizontal:
+            filepath: $(domain_static)/diffusion/hz
+          vertical:
+            levels: $(diffusion_levels)
+            filepath: $(domain_static)/diffusion/vt
+        - variables: [sea_surface_height_above_geoid]
+          horizontal:
+            filepath: $(domain_static)/diffusion/hz
+
+    saber outer blocks:
+    # Taper the background error to zero in shallow water and with depth, so the
+    # analysis does not push a large increment into a coastal cell where the
+    # background is better than the observation network implies. v2 and the
+    # bundle agree on all three numbers, which is why they are here unchanged.
+    - saber block name: SOCABkgErrFilt
+      ocean_depth_min: 1000   # [m]
+      rescale_bkgerr: 1.0
+      efold_z: 2500.0         # [m]
+
+    # The standard deviations. Every value below is a bundle default: the SST
+    # error field is left at its `fixed value: 1.0` fallback because the GODAS
+    # file it would otherwise read is not staged, and unbalanced salinity and
+    # ssh take the block's own defaults. This is the part of the file that
+    # wants a decision before any result is believed, not the part that decides
+    # whether the analysis runs.
+    - saber block name: SOCAParametricOceanStdDev
+      temperature:
+        sst:
+          fixed value: 1.0
+      unbalanced salinity: {}
+      unbalanced ssh: {}
+
+    # The balance operator, which is what makes an increment in temperature
+    # imply one in salinity and in sea surface height rather than three
+    # independent analyses of the same water. `ksshts.nlayers` is v2's 2 rather
+    # than the bundle example's 10: the example is a 25 level toy and v2 is a
+    # real configuration. `kst` is left at the operator's defaults, commented
+    # out in v2 as well.
+    linear variable change:
+      linear variable changes:
+      - linear variable change name: BalanceSOCA
+        ksshts:
+          nlayers: 2
+
+  variational:
+    # RPCG in both sources. The iteration count and the reduction target are
+    # v2's, and they are the two knobs to turn first if the minimization is
+    # either not converging or spending wall clock after it has.
+    minimizer:
+      algorithm: RPCG
+    iterations:
+    - ninner: $(ninner)
+      # Written with the dot and the signed exponent, not `1e-10`: PyYAML reads
+      # YAML 1.1 and would hand eckit the string. See ackbar.config.lint, which
+      # rejects the other spelling.
+      gradient norm reduction: 1.0e-10
+
 vars:
   obs_distribution: RoundRobin
   obs_distribution_options: {}
   obs_land_mask_min: 0.9
+
+  # `diffusion_levels` is the domain's, declared in the domain layer, because it
+  # is that domain's NK.
+
+  # Inner iterations per outer loop. One outer loop, which is what `3d` means
+  # here; FGAT and 4D add loops rather than iterations.
+  ninner: 10
