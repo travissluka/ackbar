@@ -27,8 +27,9 @@ from pathlib import Path
 
 from . import (ensemble, ledger, mom6sis2, observations, persistence, post,
                soca, writeback)
-from .config.jobtime import (cycle_length, cycle_time, forecast_overshoot,
-                             handoff_time, slot_times)
+from .config.jobtime import (FOUR_D, cycle_length, cycle_time,
+                             forecast_overshoot, handoff_time, slot_times,
+                             window_bounds, window_type)
 from .duration import format_duration, format_instant, parse_duration
 from .graph.build import (extended_cycles, extended_lead_cycles, extended_leads,
                           extended_length, extended_members, extended_slots,
@@ -320,6 +321,60 @@ def analysis_background(paths, cycle, member=0):
     would make the analysis correct the analysis.
     """
     return paths.member_out("rst", cycle - 1, member)
+
+
+def analysis_trajectory(config, paths, cycle, member=0):
+    """The states a 4D window compares its observations against, or None.
+
+    Cycle *n-1*'s sub-window states, which `slot_times` computes to be exactly
+    cycle *n*'s window: the forecast overshoots by half a window so the far end
+    of this one exists, and writes at `forecast.slots` on the way. Nothing else
+    can produce them, because this cycle's own forecast starts from the analysis
+    these states are what compute.
+
+    Keyed by valid time rather than returned as a list, so the caller that needs
+    the state at the window's start can ask for it by name and not by position.
+
+    None for cycle 1 as well as for a 3D window, and it means the same thing in
+    both: there is no trajectory to read. Nothing ran before the first cycle, so
+    its background is the staged initial condition and its window holds one
+    state; `soca.cost_template` is what turns that into a 3D-Var, and it
+    distinguishes this None from an empty mapping, which would be a predecessor
+    that ran and wrote nothing.
+    """
+    if window_type(config) not in FOUR_D or cycle == 1:
+        return None
+    return {when: paths.slot_out(cycle - 1, member, when)
+            for when in slot_times(config, cycle - 1)}
+
+
+def analysis_first_guess(config, paths, cycle, member=0):
+    """Where the analysis reads its background from.
+
+    For a 3D window that is the previous cycle's restart set, which is valid at
+    this cycle's own time. For FGAT and 4D the window starts half a window
+    earlier, so the background is the slot at `window_begin` and the restart set
+    is where the trajectory *ends* rather than where it starts.
+
+    Cycle 1 takes the 3D answer whatever the window says, because `rst/0` is the
+    staged initial condition and there are no slots beside it. It is valid at
+    the cycle's own time rather than at the window's start, which is the other
+    half of why that cycle solves 3D-Var.
+    """
+    trajectory = analysis_trajectory(config, paths, cycle, member)
+    if trajectory is None:
+        return analysis_background(paths, cycle, member)
+
+    begin, _ = window_bounds(config, cycle)
+    if begin not in trajectory:
+        raise TaskError(
+            f"cycle {cycle}'s window begins at {begin:%Y-%m-%dT%H:%M:%SZ} and "
+            f"the previous forecast wrote no state there. `forecast.slots` has "
+            f"to divide the window, which `graph.build._check_window` refuses "
+            f"at build time; reaching here means the forecast did not write "
+            f"what it declared."
+        )
+    return trajectory[begin]
 
 
 def restart_stamp(config):
@@ -893,9 +948,10 @@ def _analysis(config, site, paths, cycle, task):
             member = member_set(config)[0]
             written = soca.analysis(
                 config, site, paths, cycle, task,
-                background=analysis_background(paths, cycle, member),
+                background=analysis_first_guess(config, paths, cycle, member),
                 observers=observers,
                 ensemble=_covariance_ensemble(config, paths, cycle),
+                trajectory=analysis_trajectory(config, paths, cycle, member),
                 target=analysis_dir(paths, cycle, member),
             )
     except (mom6sis2.ModelError, observations.ObservationError) as error:

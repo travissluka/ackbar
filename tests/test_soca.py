@@ -275,17 +275,138 @@ def test_a_declared_window_is_the_one_the_analysis_gets(var):
         "begin": "2018-04-15T21:00:00Z", "length": "P0DT6H0M0S"}
 
 
-def test_a_window_this_document_cannot_honour_is_refused_not_ignored(var):
+def test_a_window_no_document_builds_is_refused_not_ignored(var):
     """The forecast has already paid for it by the time this runs.
 
     A 4D window makes the cycling forecast run half a window longer and write a
-    state per sub-window. Building 3D-Var over that is a 50 per cent model bill
-    for a trajectory nothing reads and an analysis nobody chose, and neither
-    leaves a mark in the output.
+    state per sub-window. Building something else over that is a 50 per cent
+    model bill for a trajectory nothing reads and an analysis nobody chose, and
+    neither leaves a mark in the output.
+
+    `4d` rather than `fgat`, which is now built: 4D-Ens-Var takes its background
+    as a list of states and its ensemble as one trajectory per member, so it is
+    a different document and not a different `cost type` in this one.
     """
-    var["solver"]["window"] = {"type": "fgat"}
-    with pytest.raises(ModelError, match="3D-Var"):
+    var["solver"]["window"] = {"type": "4d"}
+    with pytest.raises(ModelError, match="4D-Ens-Var"):
         soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+
+
+# --- FGAT ---------------------------------------------------------------------
+
+def fgat(var, step="PT6H"):
+    """`var`, switched to a first-guess-at-appropriate-time window."""
+    var["solver"]["window"] = {"type": "fgat"}
+    var.setdefault("forecast", {})["slots"] = step
+    return var
+
+
+def trajectory(var, cycle=2):
+    """What `run.analysis_trajectory` hands the builder, computed the same way."""
+    from ackbar.config.jobtime import slot_times
+
+    return {when: Path(f"/out/e/run/{cycle - 1}/slot/mem000/{when:%Y%m%dT%H%M%SZ}")
+            for when in slot_times(var, cycle - 1)}
+
+
+def test_fgat_builds_the_fgat_cost_function_over_a_pseudo_model(var):
+    """The whole difference from 3D-Var, in the document.
+
+    `3D-FGAT` and a `model` block, and the model is a `PseudoModel`: the states
+    it hands out are the ones the previous cycle's forecast already wrote, so
+    the trajectory costs a read rather than a second integration.
+    """
+    var = fgat(var)
+    document = soca.var_config(var, 2, [observer()],
+                               background=Path("/out/e/run/1/slot/mem000/x"),
+                               trajectory=trajectory(var))
+    cost = document["cost function"]
+    assert cost["cost type"] == "3D-FGAT"
+    assert cost["model"]["name"] == "PseudoModel"
+    assert cost["model"]["tstep"] == "P0DT6H0M0S"
+
+
+def test_the_pseudo_models_states_start_one_step_into_the_window(var):
+    """A pseudo model's first state is one step in, not the window's start.
+
+    The state at `window_begin` is the *background*, and it is named there. A
+    list that repeated it would step the model off the end before the window
+    closed, which is the failure `hofx_4d_pseudo` is written to avoid and the
+    same one this shares.
+    """
+    var = fgat(var)
+    begin = "2018-04-15T12:00:00Z"
+    document = soca.var_config(var, 2, [observer()],
+                               background=Path("/out/e/run/1/slot/mem000/x"),
+                               trajectory=trajectory(var))
+    cost = document["cost function"]
+    assert cost["time window"]["begin"] == begin
+    assert cost["background"]["date"] == begin
+    dates = [state["date"] for state in cost["model"]["states"]]
+    assert begin not in dates
+    assert dates == ["2018-04-15T18:00:00Z", "2018-04-16T00:00:00Z",
+                     "2018-04-16T06:00:00Z", "2018-04-16T12:00:00Z"]
+
+
+def test_fgat_without_a_trajectory_says_so_rather_than_building_an_empty_model(var):
+    """An empty `states` list is a pseudo model with nothing to hand out.
+
+    Which SOCA constructs, and then steps off the end of on the first
+    observation. Refused here, where the message can name `forecast.slots`.
+
+    An empty mapping, not None: the two are different facts. This one is a
+    predecessor that ran and wrote nothing, which is a failure. None is cycle 1,
+    which has no predecessor at all and is the test below.
+    """
+    var = fgat(var)
+    with pytest.raises(ModelError, match="forecast.slots"):
+        soca.var_config(var, 2, [observer()],
+                        background=Path("/rst/1"), trajectory={})
+
+
+def test_the_first_cycle_of_an_fgat_experiment_solves_3dvar(var):
+    """Nothing ran before cycle 1, so there is no trajectory to compare against.
+
+    Its background is the staged initial condition and its window holds exactly
+    one state, which is what 3D-Var is. Building FGAT over a single-entry pseudo
+    model would step off the end of the list on the first observation, and
+    building it over a repeated initial condition would assert the ocean stood
+    still for half a window.
+
+    The document is named `var` rather than `varfgat`, so the trace kept beside
+    the log says which cost function each cycle actually solved rather than
+    which one the experiment is configured for.
+    """
+    var = fgat(var)
+    assert soca.cost_template(var, None) == "var"
+    document = soca.var_config(var, 1, [observer()], background=Path("/rst/0"),
+                               trajectory=None)
+    assert document["cost function"]["cost type"] == "3D-Var"
+    assert "model" not in document["cost function"]
+    # And valid at the cycle's own time, not at the window's start: `rst/0` is
+    # the initial condition and `cycle.start` has to equal its valid time.
+    assert document["cost function"]["background"]["date"] == "2018-04-15T00:00:00Z"
+
+
+def test_fgat_and_3dvar_differ_only_in_the_comparison(var):
+    """Same B, same minimizer, same increment, same output.
+
+    FGAT is a 3D analysis of 4D departures: one increment, solved once, at the
+    centre of the window. A document that also moved the covariance or the
+    minimizer would be a different analysis wearing the same name.
+    """
+    import copy
+
+    three_d = soca.var_config(copy.deepcopy(var), 2, [observer()],
+                              background=Path("/rst/1"))
+    four_d = soca.var_config(fgat(copy.deepcopy(var)), 2, [observer()],
+                             background=Path("/out/e/run/1/slot/mem000/x"),
+                             trajectory=trajectory(fgat(copy.deepcopy(var))))
+
+    for key in ("background error", "analysis variables", "geometry"):
+        assert four_d["cost function"][key] == three_d["cost function"][key]
+    for key in ("variational", "output", "final"):
+        assert four_d[key] == three_d[key]
 
 
 def test_a_solver_missing_a_value_says_so_rather_than_emitting_nothing(var):

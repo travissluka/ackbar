@@ -432,18 +432,19 @@ def _graph_step(config, graph):
                 "aftercorr between arrays with different index sets never fires"
             )))
 
-    # The analysis document a four-dimensional window needs does not exist yet,
-    # and `soca.var_config` refuses to build 3D-Var in its place. Asked here as
-    # well as there, because there is inside cycle 1's `da` job: without it,
-    # `create` and `start` both succeed, the cycling forecast pays 1.5x the
-    # model cost to write states nothing will read, and the experiment stops at
-    # the first analysis. That is the failure this command exists to move
-    # forward. Delete when phase 9 lands the document.
-    if window_type(config) in FOUR_D and _solver(config) not in ("none", "letkf"):
+    # 4D-Ens-Var does not exist yet, and `soca.var_config` refuses to build
+    # something else in its place. Asked here as well as there, because there is
+    # inside cycle 1's `da` job: without it, `create` and `start` both succeed,
+    # the cycling forecast pays 1.5x the model cost to write states nothing will
+    # read, and the experiment stops at the first analysis. That is the failure
+    # this command exists to move forward. `fgat` is built and is not refused.
+    # Delete the rest when 4D-Ens-Var lands.
+    if window_type(config) == "4d" and _solver(config) not in ("none", "letkf"):
         findings.append(Finding(6, "solver.window.type", (
-            f"is {window_type(config)!r} and config/soca/var.yaml builds 3D-Var. "
-            f"The sub-window states exist and the cost function that reads them "
-            f"does not yet; see phase 9 in docs/build-order.md"
+            "is '4d' and nothing builds 4D-Ens-Var yet. The sub-window states "
+            "exist and the cost function that reads them as an ensemble does "
+            "not; see phase 9 in docs/build-order.md. `fgat` is available and "
+            "reads the same states"
         )))
     return findings
 

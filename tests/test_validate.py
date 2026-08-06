@@ -37,17 +37,25 @@ SITE = {
 FIXTURES = [
     "free_om1deg",
     "var_om1deg",
+    # Here rather than deferred, since FGAT landed. What it pins is the
+    # four-dimensional *arithmetic*, the overshoot and the slot cadence, which
+    # `fgat` and `4d` share and which is computed from the window's length.
+    "fourd_om1deg",
     "letkf_om1deg",
     "envar_om1deg",
     "hybrid_om1deg",
 ]
 
 #: Not in `FIXTURES`, and this is the point rather than an oversight: a
-#: four-dimensional variational experiment is a configuration ACKBAR can build a
-#: graph for and cannot yet run, so `validate` is supposed to say so. Listing it
-#: as clean would assert the opposite. Move it back when phase 9 lands the FGAT
-#: analysis document.
-DEFERRED_FIXTURE = "fourd_om1deg"
+#: 4D-Ens-Var experiment is a configuration ACKBAR can build a graph for and
+#: cannot yet run, so `validate` is supposed to say so. Listing it as clean
+#: would assert the opposite. Move it in when 4D-Ens-Var lands, the way
+#: `fourd_om1deg` moved in when FGAT did.
+#:
+#: An ensemble covariance, because a static one with `type: '4d'` never reaches
+#: this gate: `graph.build._check_four_d_covariance` refuses it first, and
+#: permanently rather than pending an implementation.
+DEFERRED_FIXTURE = "fourdenvar_om1deg"
 
 
 @pytest.fixture(scope="module")

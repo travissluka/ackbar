@@ -31,7 +31,7 @@ TEMPLATES = REPO / "config" / "soca"
 #: Which template each task's builder fills. The builders are exercised against
 #: a real config elsewhere (`tests/test_soca.py`); what is pinned here is the
 #: correspondence itself.
-DOCUMENTS = ("hofx", "hofx4d", "var", "letkf", "recenter")
+DOCUMENTS = ("hofx", "hofx4d", "var", "varfgat", "letkf", "recenter")
 
 #: The slots each document is built with, spelled out rather than read back from
 #: the builder. A test that derived both sides from the same call would pass for
@@ -45,6 +45,13 @@ EXPECTED = {
     "var": {"GEOMETRY", "ANALYSIS_VARIABLES", "BACKGROUND_DIR", "RESTART_FILE",
             "BACKGROUND_VARIABLES", "BACKGROUND_ERROR", "OBSERVERS",
             "VARIATIONAL", "ANALYSIS_OUTPUT", "INCREMENT_OUTPUT"},
+    # `var` plus the pseudo model's two. Everything else is the same document
+    # solved against a trajectory instead of one state, which is why the two
+    # sets differ by exactly `TSTEP` and `STATES` and nothing else.
+    "varfgat": {"GEOMETRY", "ANALYSIS_VARIABLES", "BACKGROUND_DIR",
+                "RESTART_FILE", "BACKGROUND_VARIABLES", "BACKGROUND_ERROR",
+                "OBSERVERS", "VARIATIONAL", "ANALYSIS_OUTPUT",
+                "INCREMENT_OUTPUT", "TSTEP", "STATES"},
     "letkf": {"GEOMETRY", "MEMBER_BACKGROUNDS", "OBSERVERS", "LOCAL_ENSEMBLE_DA",
               "ANALYSIS_OUTPUT", "INCREMENT_OUTPUT", "SPREAD_PRIOR_OUTPUT",
               "SPREAD_POSTERIOR_OUTPUT"},

@@ -269,11 +269,48 @@ class TestConfigurationDrivesTheTaskSet:
         with pytest.raises(GraphError, match="local ensemble DA"):
             build_graph(config)
 
-    def test_four_d_changes_the_configuration_and_not_yet_the_graph(self, keys):
-        # Pinned so that phase 9's sub-window forecast slots show up as a
-        # golden diff rather than as a surprise.
+    def test_four_d_changes_the_configuration_and_not_the_graph(self, keys):
+        # The window type moves the arithmetic, not the task set: the overshoot
+        # and the slot cadence change what the forecast job *does*, and there is
+        # no task in one that is not in the other.
         three, four = graph_for("var_om1deg", keys), graph_for("fourd_om1deg", keys)
         assert [n.task for n in three.nodes] == [n.task for n in four.nodes]
+
+    def test_a_four_d_window_over_a_static_b_is_refused_permanently(self, keys):
+        """The one cell of the window by covariance table that cannot exist.
+
+        Unlike the phase gate in `validate`, which says 4D-Ens-Var is not built
+        yet, this one is not waiting on anything. `4d` *is* 4D-Ens-Var, whose
+        four dimensions are the ensemble's; a static B has no time dimension to
+        offer and carrying one across the window needs a linear model, which
+        SOCA does not have for the ocean.
+
+        Refused at graph build rather than at the first analysis, because by
+        then the forecast has run at 1.5x the model cost to write a trajectory
+        nothing can read.
+        """
+        config = load("var_om1deg", keys)
+        config["solver"]["window"] = {"type": "4d"}
+        config["forecast"] = {"slots": "PT6H"}
+        with pytest.raises(GraphError, match="4D-Ens-Var"):
+            build_graph(config)
+
+        # And the same window is fine the moment there is an ensemble to be
+        # four-dimensional with, which is what says the refusal is about the
+        # covariance and not about the window.
+        ensemble = load("envar_om1deg", keys)
+        ensemble["solver"]["window"] = {"type": "4d"}
+        ensemble["forecast"] = {"slots": "PT6H"}
+        build_graph(ensemble)
+
+    def test_fgat_takes_any_covariance(self, keys):
+        """FGAT is one increment solved at the window's centre, so a static B is
+        exactly as applicable as it is in 3D-Var. Only `4d` is restricted."""
+        for name in ("var_om1deg", "envar_om1deg", "hybrid_om1deg"):
+            config = load(name, keys)
+            config["solver"]["window"] = {"type": "fgat"}
+            config["forecast"] = {"slots": "PT6H"}
+            build_graph(config)
 
     def test_the_last_cycle_does_not_submit_another(self, keys):
         graph = graph_for("var_om1deg", keys)

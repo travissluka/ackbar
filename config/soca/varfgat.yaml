@@ -1,0 +1,74 @@
+# soca_var.x: solve for one cycle's analysis, comparing each observation
+# against the state nearest its own time.
+#
+# `config/soca/var.yaml`'s sibling, which is what that file says should happen
+# rather than a branch inside it. Everything below that is not commented is the
+# same as there and means the same thing; what follows is only the differences,
+# because a reader who wants the rest should read the file that owns it.
+#
+# Two of them, and the second is the one that costs.
+
+cost function:
+  # `3D-FGAT` rather than `3D-Var`. First Guess at Appropriate Time: one
+  # increment, solved once, at the centre of the window, but the departures that
+  # drive it are computed against a *trajectory* instead of against one state
+  # standing in for the whole window. It is a 3D analysis of 4D departures,
+  # which is why the increment and the minimizer below are unchanged from
+  # `var.yaml` and only the comparison moved.
+  #
+  # The analysis comes out at the window's midpoint, which is what makes a
+  # centred window mandatory rather than a preference:
+  # `CostFctFGAT::doLinearize` saves the state at `timeWindow_.midpoint()` and
+  # `finishLinearize` replaces the background and the first guess with it. An
+  # off-centre window would write an analysis valid at a time no cycle starts
+  # from. See `window_bounds` in `ackbar/config/jobtime.py`.
+  cost type: 3D-FGAT
+
+  time window:
+    begin: '{{window_begin}}'
+    length: '{{window_length}}'
+
+  analysis variables: $(ANALYSIS_VARIABLES)
+
+  geometry: $(GEOMETRY)
+
+  # The trajectory, as states already on disk. `PseudoModel` does not integrate:
+  # it hands out the state at each step in turn, which is what the previous
+  # cycle's forecast already wrote. The overshoot that produced the far half of
+  # this window is the extra half window of model an FGAT experiment pays, and
+  # it is paid in the forecast, once, rather than here.
+  #
+  # `tstep` is `forecast.slots` and the states are every slot inside the window,
+  # in time order. The window's own start is *not* among them, matching
+  # `hofx_4d_pseudo` and `config/soca/hofx4d.yaml`: the first state a pseudo
+  # model hands out is one step in, and repeating the start would step it off
+  # the end of the list before the window closed.
+  model:
+    name: PseudoModel
+    tstep: $(TSTEP)
+    states: $(STATES)
+
+  # Where the trajectory starts, which is the window's own beginning and not the
+  # analysis time. In `var.yaml` these are the same instant; here they are half
+  # a window apart, so this is the previous cycle's forecast at the slot that
+  # falls on `window_begin` rather than its final restart set.
+  background:
+    read_from_file: 1
+    basename: $(BACKGROUND_DIR)
+    ocn_filename: $(RESTART_FILE)
+    date: '{{window_begin}}'
+    state variables: $(BACKGROUND_VARIABLES)
+
+  background error: $(BACKGROUND_ERROR)
+
+  observations:
+    observers: $(OBSERVERS)
+
+variational: $(VARIATIONAL)
+
+output: $(ANALYSIS_OUTPUT)
+
+final:
+  increment:
+    output:
+      state component: $(INCREMENT_OUTPUT)

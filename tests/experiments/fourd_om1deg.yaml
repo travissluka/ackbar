@@ -1,6 +1,14 @@
-# 3DVar and 4DVar differ by one configuration value and, for now, by nothing in
-# the graph. What they do not share is the arithmetic: this experiment exists to
-# pin it.
+# A three-dimensional window and a four-dimensional one differ by one
+# configuration value and by nothing in the graph. What they do not share is the
+# arithmetic: this experiment exists to pin it.
+#
+# `fgat` rather than `4d`, and the arithmetic is the same either way: `FOUR_D`
+# covers both, and the overshoot, the slot cadence and the handoff are computed
+# from the window's *length* and never from its type. What `4d` would add is a
+# covariance requirement, because 4D-Ens-Var's four dimensions are the
+# ensemble's and the B here is static. See `_check_four_d_covariance` in
+# `ackbar/graph/build.py`, which refuses that combination permanently rather
+# than pending an implementation.
 #
 # A 24 hour cycle with the default 24 hour window, sub-divided every 6 hours.
 # The window is centred on the analysis time, so it runs from 12 hours before
@@ -19,7 +27,7 @@ experiment:
   name: fourd_om1deg
 solver:
   window:
-    type: '4d'
+    type: 'fgat'
 cycle:
   start: '2018-04-15T00:00:00Z'
   length: PT24H

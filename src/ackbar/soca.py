@@ -42,7 +42,8 @@ from pathlib import Path
 
 import yaml
 
-from .config.jobtime import FOUR_D, cycle_time, member_dir, window_type
+from .config.jobtime import (FOUR_D, cycle_time, member_dir, slot_length,
+                             window_bounds, window_type)
 from .config.jobtime import render as render_jobtime
 from .config.jobtime import symbols
 from .config.template import fill
@@ -89,9 +90,43 @@ APPLICATIONS = {
     # against one state standing in for the whole window.
     "hofx4d": "soca_hofx.x",
     "var": "soca_var.x",
+    # The same executable as `var`, and a separate entry because the key names a
+    # *document* rather than a binary: `varfgat.yaml` beside `varfgat.log` is
+    # what says which cost function a cycle actually solved, and that is not
+    # recoverable afterwards from the log of a solve that ran fine.
+    "varfgat": "soca_var.x",
     "letkf": "soca_letkf.x",
     "recenter": "soca_ensrecenter.x",
 }
+
+#: Which template each window type builds its analysis from. `4d` is absent
+#: rather than mapped: 4D-Ens-Var takes its background as a list of states and
+#: its ensemble as one trajectory per member, so it is a different document
+#: shape rather than a different `cost type` inside this one. `var_config`
+#: refuses it by name.
+COST_TEMPLATE = {"3d": "var", "fgat": "varfgat"}
+
+
+def cost_template(config, trajectory):
+    """Which document this cycle's analysis is built from.
+
+    The window type, except for the first cycle of a four-dimensional
+    experiment, which has no trajectory because nothing ran before it to write
+    one. Its background is the staged initial condition and its window holds
+    exactly one state, which is 3D-Var: FGAT compares each observation against
+    the state nearest its own time, and when there is one state that is the same
+    comparison. Solving it as FGAT over a single-entry pseudo model would step
+    off the end of the list on the first observation.
+
+    *trajectory* distinguishes the two cases it has to. `None` is "there is no
+    predecessor", which is a fact about cycle 1 and is what this reads. An empty
+    mapping is "the predecessor wrote nothing", which is a failure and is
+    refused in `_trajectory` rather than quietly solved as 3D-Var.
+    """
+    window = window_type(config)
+    if window == "fgat" and trajectory is None:
+        return "var"
+    return COST_TEMPLATE.get(window)
 
 #: How an application is told to spread observations across ranks. ACKBAR's
 #: rather than a layer's, and this is a change from how soca-science expressed
@@ -299,7 +334,7 @@ def hofx4d(config, site, paths, cycle, task, *, initial, states, observers,
 
 
 def analysis(config, site, paths, cycle, task, *, background, observers, target,
-             ensemble=None):
+             ensemble=None, trajectory=None):
     """Solve for one cycle's analysis, into *target*.
 
     Two kinds of product, and they are committed together because a run that
@@ -320,10 +355,16 @@ def analysis(config, site, paths, cycle, task, *, background, observers, target,
         return []
 
     products = _redirect_output(observers, paths.scratch(cycle, task) / "out")
+    # The document decides its own name, so the trace kept beside the log says
+    # which cost function solved this cycle. `var_config` is what refuses a
+    # window type nothing builds, and it is called before the run directory is
+    # staged so that refusal costs nothing.
+    document = var_config(config, cycle, observers, background=background,
+                          ensemble=ensemble, trajectory=trajectory,
+                          templates=paths.templates)
     run = run_application(
-        "var", config, site, paths, cycle, task,
-        var_config(config, cycle, observers, background=background,
-                   ensemble=ensemble, templates=paths.templates))
+        cost_template(config, trajectory), config, site, paths, cycle, task,
+        document)
 
     when = cycle_time(config, cycle)
     states = [(run / "out" / product_name(kind, when),
@@ -621,7 +662,7 @@ def _observers(observers, distribution):
 
 
 def var_config(config, cycle, observers, *, background, ensemble=None,
-               templates=None):
+               trajectory=None, templates=None):
     """The whole `soca_var.x` YAML. See `config/soca/var.yaml`.
 
     The values come from where the experiment already states them: the geometry
@@ -636,34 +677,78 @@ def var_config(config, cycle, observers, *, background, ensemble=None,
     """
     model = config["model"]
     solver = config["solver"]
-    if window_type(config) in FOUR_D:
-        # The forecast already writes the sub-window states and already
-        # overshoots to cover the far end of the window, so an experiment can
-        # ask for this and get a 3D-Var document built over a trajectory it
-        # paid for and did not use. Refused rather than ignored: that is a
-        # 50 per cent model bill and an analysis nobody chose, and neither
-        # leaves a mark anywhere.
+    window = window_type(config)
+    name = cost_template(config, trajectory)
+    if name is None:
+        # 4D-Ens-Var, which this document cannot become by changing its cost
+        # type: its background is a list of states and its ensemble is one
+        # trajectory per member. Refused rather than quietly built as something
+        # else, because an experiment that asked for `4d` has already paid the
+        # extra half window of model and would get an analysis nobody chose.
         raise ModelError(
-            f"solver.window.type is {window_type(config)!r} and "
-            f"config/soca/var.yaml builds 3D-Var. The sub-window states exist "
-            f"and the cost function that reads them does not yet; see phase 9 "
-            f"in docs/build-order.md."
+            f"solver.window.type is {window!r}, and neither config/soca/var.yaml "
+            f"nor config/soca/varfgat.yaml builds 4D-Ens-Var. The sub-window "
+            f"states exist and the cost function that reads them as an ensemble "
+            f"does not yet; see phase 9 in docs/build-order.md."
         )
+
     variables = list(_require(solver, "analysis variables"))
     geometry = _geometry(model)
+    restart = _restart(model)
+    slots = {}
+    if name == "varfgat":
+        slots = _trajectory(config, cycle, trajectory, restart)
 
-    return build_document("var", config, cycle, {
+    return build_document(name, config, cycle, {
         "GEOMETRY": geometry,
         "ANALYSIS_VARIABLES": variables,
         "BACKGROUND_DIR": _basename(background),
-        "RESTART_FILE": _restart(model),
+        "RESTART_FILE": restart,
         "BACKGROUND_VARIABLES": list(_require(solver, "background variables")),
         "BACKGROUND_ERROR": background_error(solver, variables, ensemble=ensemble),
         "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
         "VARIATIONAL": _variational(solver, geometry),
         "ANALYSIS_OUTPUT": _written(ANALYSIS),
         "INCREMENT_OUTPUT": _written(INCREMENT),
+        **slots,
     }, templates=templates)
+
+
+def _trajectory(config, cycle, trajectory, restart):
+    """The pseudo model's slots, for the FGAT document only.
+
+    *trajectory* maps a valid time to the directory holding the state at it, and
+    is the previous cycle's sub-window states: `slot_times` computes them so
+    that cycle *n*'s forecast writes exactly cycle *n+1*'s window.
+
+    The window's own start is dropped rather than absent from the caller's map,
+    because the same map is what names the background. A pseudo model's first
+    state is one step in, and repeating the start would step it off the end of
+    the list before the window closed.
+    """
+    if not trajectory:
+        raise ModelError(
+            f"solver.window.type is {window_type(config)!r}, which compares "
+            f"each observation against the state nearest its own time, and "
+            f"cycle {cycle} was given no trajectory to read. The forecast "
+            f"writes those states at `forecast.slots`; without them there is "
+            f"nothing for the pseudo model to hand out."
+        )
+    begin, _ = window_bounds(config, cycle)
+    states = [{
+        "read_from_file": 1,
+        "date": format_instant(when),
+        "basename": _basename(directory),
+        "ocn_filename": restart,
+    } for when, directory in sorted(trajectory.items()) if when != begin]
+
+    if not states:
+        raise ModelError(
+            f"cycle {cycle}'s window contains no state after its own start, so "
+            f"the pseudo model has nothing to step to. `forecast.slots` has to "
+            f"divide the window into at least two."
+        )
+    return {"TSTEP": format_duration(slot_length(config)), "STATES": states}
 
 
 def letkf_config(config, cycle, observers, *, backgrounds, members,

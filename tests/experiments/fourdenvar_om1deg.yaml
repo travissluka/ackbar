@@ -1,0 +1,41 @@
+# 4D-Ens-Var: the one window type nothing builds yet.
+#
+# `envar_om1deg` with a four-dimensional window, so the covariance is the
+# ensemble's and the ensemble is read as trajectories rather than as one state
+# per member. That combination is what `validate` is supposed to refuse, and
+# this fixture is what proves it does; see `DEFERRED_FIXTURE` in
+# `tests/test_validate.py`.
+#
+# Ensemble rather than static, deliberately. A static B with `type: '4d'` is
+# refused earlier and permanently, at graph build, because a 4D-Ens-Var's four
+# dimensions *are* the ensemble's and carrying a static B across the window
+# needs a linear model SOCA does not have for the ocean. This experiment has to
+# get past that check to reach the one it is testing.
+#
+# Move it into `FIXTURES` when 4D-Ens-Var lands, the way `fourd_om1deg` moved
+# when FGAT did.
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - da/envar
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: fourdenvar_om1deg
+solver:
+  window:
+    type: '4d'
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 3
+forecast:
+  slots: PT6H
+ensemble:
+  size: 4
+  source: none
+  on_missing_member: run_degraded
+vars:
+  obs_dir: /archive/obs/osse_2018

@@ -1,0 +1,60 @@
+# Tier 3: FGAT at gom_25km. The one four-dimensional experiment that needs MOM6.
+#
+# `tier3_var` with `solver.window.type: fgat` and a slot cadence, and nothing
+# else changed, so the difference between the two results is the comparison and
+# not the configuration.
+#
+# This is the only one of the new DA methods that earns a real model. Everything
+# else about a four-dimensional window is arithmetic, pinned at tier 0, or
+# document shape, pinned at tier 1. What is only provable here is the handoff
+# between the model and the analysis that a 4D window creates and a 3D one does
+# not:
+#
+#   - the forecast overshoots the next analysis time by half a window and MOM6
+#     writes an intermediate restart set at every slot on the way, in one run
+#     rather than a chain of them;
+#   - the set the *next* cycle starts from is an interval partway through that
+#     run rather than the last thing it wrote;
+#   - the analysis then reads those slots back as a pseudo model trajectory, and
+#     a state written at an hour FMS did not reach is a file that does not exist.
+#
+# `model/persistence` cannot stand in: it hands one restart set forward and
+# writes nothing in between, which `graph.build._check_window` refuses outright
+# rather than letting the forecast exit 0 having written none of the states it
+# declared.
+#
+# PT12H cycles, the default PT12H window centred on the analysis time, so the
+# window runs from 6 hours before the next cycle to 6 hours after it and the
+# forecast integrates 18 hours. PT3H slots: four states inside the window, the
+# first of which is the background and the other three the pseudo model's steps.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_fgat
+  description: 3D-FGAT cycling at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+solver:
+  window:
+    type: 'fgat'
+  variational:
+    iterations:
+    - ninner: 3
+      gradient norm reduction: 1.0e-10
+forecast:
+  slots: PT3H
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+cleanup:
+  # Two, for the reason `tier3_var` states at length: `ana` is reaped a cycle
+  # before the restarts, and the assertions here compare one cycle's against
+  # another's.
+  keep_cycles: 2

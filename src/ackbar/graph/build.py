@@ -239,6 +239,7 @@ def build_graph(config):
     _check_ensemble_source(config)
     _check_hours(config)
     _check_window(config)
+    _check_four_d_covariance(config)
     _check_extended(config)
     count = config["cycle"]["count"]
     canonical = member_set(config)
@@ -469,6 +470,44 @@ def _check_window(config):
     # a reason the experiment's author can act on, and this one would otherwise
     # report a coupling step they never chose.
     _check_coupling(config, "forecast.slots", step)
+
+
+def _check_four_d_covariance(config):
+    """`4d` is 4D-Ens-Var, so it needs an ensemble to be four-dimensional with.
+
+    The combination someone reaches for first, and the only cell in the window
+    by covariance table that cannot exist. `3d` and `fgat` are cost functions
+    over one increment and take any covariance; `4d` is not a third of those,
+    it is 4D-Ens-Var, whose four dimensions *are* the ensemble's. Its members
+    are read as trajectories and the covariance is their spread at each
+    sub-window.
+
+    A static B has no time dimension to offer, and carrying an increment across
+    the window instead needs a linear model, which is what makes 4D-Var 4D-Var.
+    SOCA has `Identity` and the HTLM, neither of which is a tangent linear
+    ocean, so the honest answer is that this experiment cannot be run here and
+    not that it has not been wired up yet.
+
+    Separate from the phase gate in `validate`, which says 4D-Ens-Var is not
+    built yet and gets deleted when it is. This one is permanent.
+    """
+    if window_type(config) != "4d":
+        return
+    solver = (config.get("solver") or {}).get("name", "none")
+    covariance = (config.get("solver") or {}).get("covariance")
+    if solver == "variational" and covariance not in ("ensemble", "hybrid"):
+        raise GraphError(
+            f"solver.window.type is '4d', which is 4D-Ens-Var, and "
+            f"solver.covariance is {covariance!r}. The four dimensions of a "
+            f"4D-Ens-Var are the ensemble's: its members are read as "
+            f"trajectories and the covariance is their spread at each "
+            f"sub-window, so a static B has nothing four-dimensional to offer. "
+            f"Carrying one across the window instead needs a linear model, "
+            f"which is what makes 4D-Var 4D-Var and which SOCA does not have "
+            f"for the ocean. Use 'ensemble' or 'hybrid', or 'fgat', which "
+            f"compares against the trajectory and solves one increment at the "
+            f"window's centre."
+        )
 
 
 def _check_coupling(config, name, quantity):
