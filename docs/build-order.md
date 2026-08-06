@@ -389,26 +389,6 @@ salinity clamping** v2 did inside its checkpoint. Nothing has needed it yet, and
 existing guard is a refusal on a non-finite analysis. Add it when a cycle produces a
 temperature that a clamp would have caught, not before.
 
-## Phase 7.5. A Gulf of Mexico OSSE
-
-Not in the original plan, and it belongs before any comparison between solvers rather than
-after. Without a nature run, "did LETKF beat 3DVar" can only be answered from departures, and
-each system fits its own observations, so the comparison is self-referential. A nature run
-gives state-space verification, which is what `verify` exists for and what the benchmarking
-premise of this repository rests on. It also gives phase 7's ensemble somewhere honest to come
-from.
-
-- **Blocked on data, not on workflow.** The Gulf domains run with a single frozen SODA
-  five-day mean on the open boundary and a short forcing sample, so a months-long run needs
-  time-varying boundary conditions and a real forcing archive first. That is an offline stage.
-- **Decide the twin.** Nature and DA at the same resolution is an identical twin: easy, and
-  flattering. Nature at 4 or 8 km against DA at 12 or 25 km is fraternal, is the honest
-  version, and changes what the observation generator has to do.
-- **Perturbed atmospheric forcing comes with it.** It is the same data problem, and without it
-  the ensemble every phase after this one depends on cannot hold its spread. See phase 7.
-- **`tools/obs-archive-osse.py` is the small version of it**, and says so: its truth is one
-  state plus a fixed anomaly rather than a trajectory.
-
 ## Phase 8. Ensemble and hybrid covariance
 
 `solver.covariance` becomes a value that is read rather than one that is only validated. Three
@@ -581,11 +561,39 @@ what the slot states are for.
 
 As an ensemble source. Mostly falls out of phase 7.
 
-## After that: regional
+## Phase 11. A Gulf of Mexico OSSE
 
-All of the above is on the global domains, `OM_1deg` for development and `OM4_025` for
-production. Regional comes once global cycling works. See Domains in `design.md` for what it
-pulls in.
+Not in the original plan. It was written as phase 7.5 on the argument that it belongs before any
+comparison between solvers, and that argument still holds: without a nature run, "did LETKF beat
+3DVar" can only be answered from departures, each system fits its own observations, and the
+comparison is self-referential. A nature run gives state-space verification, which is what
+`verify` exists for and what the benchmarking premise of this repository rests on.
+
+What changed is not the argument but what it gates. The comparison is not the next thing. The
+workflow gets finished first, through 4D and EDA, and then swept: those two are the last phases
+that change what a document or a config layer looks like, so an evaluation and cleanup pass
+before them would be a pass done twice. This runs after that, and it loses nothing by waiting,
+because it has never been blocked on workflow.
+
+- **Blocked on data, not on workflow.** The Gulf domains run with a single frozen SODA
+  five-day mean on the open boundary and a short forcing sample, so a months-long run needs
+  time-varying boundary conditions and a real forcing archive first. That is an offline stage.
+- **Decide the twin.** Nature and DA at the same resolution is an identical twin: easy, and
+  flattering. Nature at 4 or 8 km against DA at 12 or 25 km is fraternal, is the honest
+  version, and changes what the observation generator has to do.
+- **Perturbed atmospheric forcing comes with it.** It is the same data problem, and without it
+  the ensemble the covariance phases depend on cannot hold its spread. See phase 7.
+- **`tools/obs-archive-osse.py` is the small version of it**, and says so: its truth is one
+  state plus a fixed anomaly rather than a trajectory.
+
+## Regional, which arrived early
+
+The plan had all of the above on the global domains, `OM_1deg` for development and `OM4_025` for
+production, with regional coming once global cycling worked. It came between phases 5 and 6
+instead, because the global domain was too slow to iterate on, and tier 3 is now entirely
+`gom_25km`. See Domains in `design.md` for what it pulled in, and `domains.md` for what each
+domain costs and what is wrong with it. What is still owed from doing it early is
+domain-scoped observation culling.
 
 ## Spikes, and the phase each must precede
 
