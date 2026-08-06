@@ -529,9 +529,12 @@ Concretely, in order of how much they can go wrong:
 4. **`cleanup` reaping them.** A slot state is a full 3D field, so an ensemble at a 6 slot window
    is six times the per-cycle output of the restarts, and this is the item that fills a disk in
    the second week rather than the first.
-5. **A `pseudo model` block in the var document**, built by `ackbar/soca.py` from the same slot
-   list, since a template and a directory listing that disagree is an analysis reading a state
-   from the wrong hour.
+5. **A `pseudo model` block in the var document.** Split the way every document now is: the
+   block's shape, and the `cost type` beside it, are a sibling file under `config/soca/`, since
+   FGAT differs from 3D-Var in structure rather than in values. The *states* it names stay a
+   slot that `ackbar/soca.py` fills from the same list that decided where the forecast wrote
+   them, because a document and a directory listing that disagree is an analysis reading a
+   state from the wrong hour.
 
 ### 4DEnVar: the slots, times the ensemble
 

@@ -17,7 +17,7 @@ agreeing on paper and needs no model at all.
 
 This leaves a real calibration behind in $ACKBAR_STATIC_ROOT/static/gom_25km,
 and that is deliberate rather than tolerated. It runs at the iteration count in
-`config/diffusion.yaml`, so what it writes is what the tool writes, and gom_25km
+`config/static/diffusion.yaml`, so what it writes is what the tool writes, and gom_25km
 is the domain the suite already uses for plumbing. A test that calibrated
 somewhere else would be exercising a path nothing else uses.
 

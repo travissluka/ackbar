@@ -55,6 +55,7 @@ def create(config, site, schema, layers, *, root, force=False, python=None):
         yaml.safe_dump(config, sort_keys=False, default_flow_style=False)
     )
     _freeze_layers(paths, layers)
+    _freeze_templates(paths, root)
     _provenance(paths, config, site, root, layers)
 
     scripts = emit.write_all(config, paths, graph, root=root, python=python)
@@ -88,6 +89,30 @@ def _freeze_layers(paths, layers):
     for index, layer in enumerate(layers, start=1):
         safe = layer.name.replace("/", "_")
         shutil.copyfile(layer.path, target / f"{index:02d}-{safe}.yaml")
+
+
+def _freeze_templates(paths, root):
+    """The SOCA document templates, copied out of the checkout.
+
+    Frozen for the reason the layers are, and it is the same question: a result
+    that looks wrong is investigated from the experiment directory, and the
+    shape of the document an application read is half of what produced it. The
+    other half, the values, is in the `*.yaml` each task keeps beside its log.
+
+    Copied rather than referenced, so that editing `config/soca/` in the
+    checkout while an experiment is cycling cannot give cycle 40 a different
+    document than cycle 39.
+    """
+    source = Path(root) / "config" / "soca"
+    if not source.is_dir():
+        raise CreateError(
+            f"{source} does not exist, so no SOCA application has a document to "
+            f"build from. It is part of the checkout, beside `config/layers`."
+        )
+    target = paths.templates
+    target.mkdir(parents=True, exist_ok=True)
+    for entry in sorted(source.glob("*.yaml")):
+        shutil.copyfile(entry, target / entry.name)
 
 
 def _provenance(paths, config, site, root, layers):

@@ -27,7 +27,7 @@ tools/soca-dirac.sh <domain>              # check it
 `soca-diffusion.sh` writes `hz.nc`, `hz_ssh.nc`, `loc_hz.nc` and `vt.nc` into
 `$ACKBAR_STATIC_ROOT/static/<domain>/diffusion`, which is what the `filepath`
 entries in the variational and hybrid layers name. The list is the entries in
-`config/diffusion.yaml` rather than a list in the script, so adding a group is
+`config/static/diffusion.yaml` rather than a list in the script, so adding a group is
 one edit. Until it has run, `ackbar validate`
 step 3 reports those files as missing inputs. Keyed on domain and nothing else,
 for the same reason the gridspec is: two experiments on a domain that disagree
@@ -41,7 +41,7 @@ restart and writes a length scale at every cell. Horizontally that is a multiple
 of the local Rossby radius, floored by a multiple of the local cell size and
 capped, then smoothed by itself. Vertically it is the number of model levels the
 mixed layer spans at the surface, tapering to a floor below it. The numbers are
-in `config/diffusion.yaml`, which is not per domain: everything in it is
+in `config/static/diffusion.yaml`, which is not per domain: everything in it is
 relative to something the grid already carries, so a 4 km grid and a 25 km grid
 reading the same file get different lengths in metres.
 
@@ -79,7 +79,7 @@ of tridiagonal solves down each column, rather than explicit, whose iteration
 count grows with the square of the scale in levels. `vt.nc` holds a
 normalization computed with the implicit operator; read back through the
 explicit one, every vertical increment is scaled by the ratio of two kernels.
-`method` and `iterations` therefore appear in both `config/diffusion.yaml` and
+`method` and `iterations` therefore appear in both `config/static/diffusion.yaml` and
 the variational layer, and `tests/test_diffusion.py` exists to hold them
 together, across both layers that read a calibration. The horizontal is
 explicit, which is saber's default and is stated in neither place. The
@@ -125,7 +125,7 @@ not the other.
 
 ## Iteration count
 
-`normalization iterations` in `config/diffusion.yaml` is the number of
+`normalization iterations` in `config/static/diffusion.yaml` is the number of
 randomizations the horizontal normalization is estimated from, and its error
 falls as one over the square root of it. `tools/soca-diffusion.sh --iterations N`
 overrides it downwards, and exists for one purpose: proving the stage runs, in
@@ -147,7 +147,7 @@ which is the measured improvement to make here; what makes it optional rather
 than required is that the mixed layer moves slowly compared to a DA cycle.
 
 The standard deviations in the variational layer are the bundle's defaults, not
-chosen values, and the sea surface height multiplier in `config/diffusion.yaml`
+chosen values, and the sea surface height multiplier in `config/static/diffusion.yaml`
 is soca-science v2's. Both are decisions waiting to be made rather than settings
 that have been made.
 

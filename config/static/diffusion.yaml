@@ -7,6 +7,12 @@
 # experiment on a domain should be comparing analyses against one B, not against
 # whatever B its own configuration happened to describe.
 #
+# That is what `config/static/` is for and what separates it from
+# `config/layers/`. A layer is read by `ackbar create` and becomes part of an
+# experiment's frozen configuration; a file here is read by a tool, before any
+# experiment exists, and produces something under `domain.static` that every
+# experiment on the domain then shares.
+#
 # Not per domain, and that is deliberate rather than unfinished. Every length
 # here is relative to something the grid already knows: the local Rossby radius,
 # the local cell size, or the local mixed layer. A 4 km grid and a 25 km grid

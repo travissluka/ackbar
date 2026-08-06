@@ -10,19 +10,25 @@ of it, and a check that reports success for configurations that will still fail
 is worse than no check.
 
 What carries that weight instead is step 3. Malformed JEDI YAML is rare here,
-because it is generated from data structures rather than templated with `sed`.
-Missing and misnamed *files* are the common failure, and those are entirely
-checkable up front.
+because a document's values are assembled from data structures rather than
+templated with `sed`, and its shape is a checked-in file that is parsed rather
+than a string that is pasted. Missing and misnamed *files* are the common
+failure, and those are entirely checkable up front.
 """
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
-from .config.jobtime import JobTimeError, render, symbols
+import yaml
+
+from .config.jobtime import SYMBOL_NAMES, JobTimeError, render, symbols
+from .config.jobtime import TOKEN as JOBTIME_TOKEN
 from .config.jobtime import unresolved as unresolved_jobtime
 from .config.lint import ambiguous_numbers
 from .config.resolve import unresolved as unresolved_experiment
 from .config.schema import validate as validate_schema
+from .config.template import TemplateError, slots_of
 from .duration import DurationError
 from .graph import GraphError, build_graph, job_time_context, member_set
 
@@ -76,6 +82,7 @@ def validate_experiment(config, schema, site, root, offline=False):
 
     ran |= {2, 6}
     findings += _graph_step(config, graph)
+    findings += _template_step(root)
 
     jobtime_findings, paths, observations = _jobtime_step(config, graph)
     findings += jobtime_findings
@@ -109,6 +116,44 @@ def _schema_step(config, schema):
     # the experiment-time pass has a hole in it.
     for where, value in unresolved_experiment(config):
         yield Finding(1, where, f"unsubstituted experiment-time token: {value!r}")
+
+
+def _template_step(root):
+    """The SOCA document templates, before one is frozen into the experiment.
+
+    Three things, and all of them are properties of the file alone, which is why
+    this needs no cycle and no observer list. Whether the *slots* a template
+    declares are the ones the task computes is checked exactly, by
+    `tests/test_templates.py`, because that comparison needs both halves and one
+    of them is Python.
+
+    A template with a mistake in it is otherwise found by the first cycle to run
+    that application, which for `recenter` is after the ensemble and the
+    deterministic analysis have both already run.
+    """
+    findings = []
+    for source in sorted((Path(root) / "config" / "soca").glob("*.yaml")):
+        where = f"config/soca/{source.name}"
+        try:
+            skeleton = yaml.safe_load(source.read_text())
+        except yaml.YAMLError as error:
+            findings.append(Finding(2, where, f"is not parseable YAML: {error}"))
+            continue
+
+        try:
+            slots_of(skeleton)
+        except TemplateError as error:
+            findings.append(Finding(2, f"{where}: {error.path}", error.message))
+
+        for path, value in unresolved_jobtime(skeleton):
+            for token in JOBTIME_TOKEN.findall(value):
+                name = token.partition(":")[0].strip()
+                if name not in SYMBOL_NAMES:
+                    findings.append(Finding(2, f"{where}: {path}", (
+                        f"unknown job-time symbol {{{{{name}}}}}; the set is "
+                        f"closed, see `ackbar config symbols`"
+                    )))
+    return findings
 
 
 def _jobtime_step(config, graph):

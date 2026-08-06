@@ -26,7 +26,7 @@
 # exactly 1. That is what normalizing it means. The horizontal normalization is
 # a Monte Carlo estimate, so what comes back is 1 plus the estimate's error, and
 # that error is the only direct measurement of whether `normalization
-# iterations` in config/diffusion.yaml was set high enough. A peak of 0.97 is
+# iterations` in config/static/diffusion.yaml was set high enough. A peak of 0.97 is
 # not a rounding difference: it says every increment through this B is 3 percent
 # small, at that point, in a way nothing downstream reports.
 #
@@ -125,7 +125,7 @@ mpiexec -n 8 "$TOOLBOX" dirac.yaml > toolbox.log 2>&1 || {
 # niter >= 2 (scale/spacing)^2 times a grid aspect ratio, and it takes the
 # **maximum over every cell in the domain**, so one cell where the scale is long
 # against its own grid spacing sets the price for all of them. The vertical
-# count is whatever `config/diffusion.yaml` states, because implicit does not
+# count is whatever `config/static/diffusion.yaml` states, because implicit does not
 # have a stability limit to satisfy.
 #
 # One line per group, in the order the groups are declared, which is why the

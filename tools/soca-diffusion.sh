@@ -46,7 +46,7 @@
 #     structure, but it does mean this is not bit reproducible across a change
 #     in `-n` below.
 #
-# Rerun it after a change to `config/diffusion.yaml`, after a change to the
+# Rerun it after a change to `config/static/diffusion.yaml`, after a change to the
 # domain's grid, and after a bundle bump that touches saber's diffusion block.
 # Nothing detects a stale calibration.
 set -euo pipefail
@@ -57,7 +57,7 @@ source "$ACKBAR_ROOT/site/activate.sh"
 DOMAIN=${1:?usage: soca-diffusion.sh <domain> [<restart>] [--iterations N]}
 shift
 RESTART=
-# `--iterations` overrides `normalization iterations` in config/diffusion.yaml,
+# `--iterations` overrides `normalization iterations` in config/static/diffusion.yaml,
 # and exists for one purpose: proving the stage runs, in seconds rather than in
 # tens of minutes. A calibration built at a low count is not a calibration. It
 # is normalized by a Monte Carlo estimate whose error falls as 1/sqrt(N), so at
@@ -87,7 +87,7 @@ OUT=$STATIC/diffusion
 
 TOOLBOX=$ACKBAR_ROOT/pkg/jedi/build/bin/soca_error_covariance_toolbox.x
 SCALES=$ACKBAR_ROOT/tools/diffusion-scales.py
-CONFIG=$ACKBAR_ROOT/config/diffusion.yaml
+CONFIG=$ACKBAR_ROOT/config/static/diffusion.yaml
 NAMELIST=$ACKBAR_ROOT/config/model/mom6sis2/mom_input.nml
 METADATA=$ACKBAR_ROOT/config/model/mom6sis2/fields_metadata.yaml
 
@@ -146,7 +146,7 @@ mkdir -p out
 echo "soca-diffusion: building length scales for $DOMAIN in $WORK"
 python3 "$SCALES" "$GRIDSPEC" "$RESTART" "$CONFIG" .
 
-# The calibration documents. Generated from `config/diffusion.yaml` rather than
+# The calibration documents. Generated from `config/static/diffusion.yaml` rather than
 # kept beside it as templates, so that the group names, the file names and the
 # vertical scheme have exactly one source and cannot disagree.
 #

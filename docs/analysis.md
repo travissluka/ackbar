@@ -47,10 +47,20 @@ is then carried forward by every cycle after it, one more each time.
 
 ## The document `soca_var.x` reads
 
-Built by `ackbar/soca.py`, not templated. The only parts an experiment states
-are the ones nothing else implies, and they live in
-`config/layers/da/variational.yaml`: `background error` and `variational`.
-Everything else comes from somewhere the experiment already says it.
+Two files. `config/soca/var.yaml` is the *shape*: which blocks exist, what they
+are called, where they sit, and why. `ackbar/soca.py` fills its `$(UPPERCASE)`
+slots with the *values*, every one of which comes from somewhere the experiment
+already says it. The only parts an experiment states directly are the ones
+nothing else implies, and they live in `config/layers/da/variational.yaml`:
+`background error` and `variational`.
+
+The split is not the templating that soca-science did with `sed`, and the rule
+that makes it not is narrow: a template holds a value only when nothing in
+Python reads it. The moment a value is read on both sides, it becomes a slot,
+because two spellings of a filename field is a `writeback` that opens a name
+nothing wrote and reports an analysis that produced nothing. `exp`, `type` and
+`datadir` are the three with teeth, and `tests/test_templates.py` refuses a
+template that spells any of them out.
 
 Four values are ACKBAR's own, and each of them is wrong by *omission* rather
 than by being wrong, which is the failure mode worth knowing about:
@@ -78,10 +88,11 @@ the three its own subsection. Without the nesting the writer reports a missing
 
 ## The document `soca_letkf.x` reads
 
-The same construction, with one structural difference: the background is an
-ensemble. oops takes that either as `members from template`, with a `%mem%`
-pattern and a zero padding, or as `members`, an explicit list. ACKBAR builds the
-list, and the reason is worth knowing before anyone "simplifies" it back.
+The same construction, from `config/soca/letkf.yaml` and the same builder, with
+one structural difference: the background is an ensemble. oops takes that either
+as `members from template` (its own sense of the word: a `%mem%` pattern and a
+zero padding) or as `members`, an explicit list. ACKBAR builds the list, and the
+reason is worth knowing before anyone "simplifies" it back.
 
 **The index a member is written out as is its position, not its number.**
 `oops::DataSetBase::write` numbers what it writes by each state's place in the

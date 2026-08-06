@@ -253,9 +253,30 @@ model:
 
 Configuration resolves in a fixed order: **merge, then substitute, then validate.** Merging
 last would stop a layer overriding a value another layer interpolated; validating before
-substitution would check `$(ntasks)` rather than the integer it stands for. `$(...)` is
-experiment time and is frozen once; `{{...}}` is job time, survives that pass untouched, and
-comes from a closed set that `ackbar config symbols` prints.
+substitution would check `$(ntasks)` rather than the integer it stands for.
+
+Three substitution syntaxes, and each names who fills it and when. `$(lowercase)` is experiment
+time, resolved once from the layer stack's `vars` and frozen. `{{lowercase}}` is job time,
+survives that pass untouched, and comes from a closed set that `ackbar config symbols` prints.
+`$(UPPERCASE)` is task time: a slot in a `config/soca/` document template that one function in
+`ackbar/soca.py` fills with something only it can compute. It shares the experiment-time sigil
+on purpose, so that a template merged as a layer by mistake is refused as an unknown symbol
+rather than resolved to nothing.
+
+```
+config/
+  layers/     the experiment layer stack: domain, model, da mode, observers
+  soca/       one JEDI document template per SOCA application
+  static/     parameters for the offline per-domain stages
+  model/      the model's own case files, namelist and fields metadata
+  obs/        observer definitions
+  schema/     what `ackbar validate` step 1 checks a merged config against
+```
+
+A template under `config/soca/` holds the *shape* of a document and holds a value only when
+nothing in Python reads it. Anything Python also reads stays a slot, because two spellings of a
+filename field is a writeback that opens a name nothing wrote. `tests/test_templates.py` pins
+both halves.
 
 `validate` runs six steps and says which ones it ran. `--offline` skips the three that need the
 filesystem or the site's queue limits, which is what the test tiers use and what is useful on a

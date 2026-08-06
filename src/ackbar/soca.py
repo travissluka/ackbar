@@ -24,6 +24,14 @@ and the grid the model integrates on are guaranteed to be the same grid.
 product of the static stage, keyed on domain, and building it is a full MOM6
 initialization that no cycling job should pay for a constant. The domain layer
 names the directory; `tools/soca-gridspec.sh` writes it.
+
+**The document's shape is a file, its values are here.** Each application has a
+template under `config/soca/`, holding the blocks, their names, their nesting
+and the reasons for them. This module fills the `$(UPPERCASE)` slots in one and
+writes the result. See `ackbar/config/template.py` for the rule that keeps a
+template from becoming the thing every previous workflow got wrong: a value
+Python also reads is never written in a template, only slotted, because two
+spellings of a filename field is a `writeback` that finds nothing.
 """
 
 import os
@@ -34,10 +42,19 @@ from pathlib import Path
 
 import yaml
 
-from .config.jobtime import cycle_time, member_dir, symbols
+from .config.jobtime import cycle_time, member_dir
+from .config.jobtime import render as render_jobtime
+from .config.jobtime import symbols
+from .config.template import fill
+from .duration import ISO_INSTANT
 from .graph.tasks import SOCA_BIN
 from .mom6sis2 import (OVERRIDE, SOCA_OVERRIDE, ModelError, keep_traces,
                        link_override)
+
+#: The document templates, in the checkout. `create` freezes a copy into the
+#: experiment's own `cfg/soca/`, and that is the copy a job reads; this is the
+#: fallback for the tools and tests that have no experiment directory.
+TEMPLATES = Path(__file__).resolve().parents[2] / "config" / "soca"
 
 #: What the static stage produces and every application here reads.
 GRIDSPEC = "soca_gridspec.nc"
@@ -57,11 +74,19 @@ CASE_FILES = ("MOM_input",)
 #: diagnostic. Two lines is a whole diag_table: a label and the base date.
 DIAG_TABLE = "soca\n{0.year} {0.month} {0.day} {0.hour} {0.minute} {0.second}\n"
 
-#: The application's own config and log, kept out of scratch on the way past.
-TRACES = ("hofx.yaml", "hofx.log")
-VAR_TRACES = ("var.yaml", "var.log")
-LETKF_TRACES = ("letkf.yaml", "letkf.log")
-RECENTER_TRACES = ("recenter.yaml", "recenter.log")
+#: The SOCA applications this module runs, and the executable each one is.
+#:
+#: The key is a naming convention rather than a label: `var` is the template
+#: `config/soca/var.yaml`, the document `var.yaml` written into the run
+#: directory, the log `var.log` beside it, and the two files `keep_traces`
+#: carries out of scratch. One name per application, so that adding a fifth is
+#: a template and a line here.
+APPLICATIONS = {
+    "hofx": "soca_hofx3d.x",
+    "var": "soca_var.x",
+    "letkf": "soca_letkf.x",
+    "recenter": "soca_ensrecenter.x",
+}
 
 #: How an application is told to spread observations across ranks. ACKBAR's
 #: rather than a layer's, and this is a change from how soca-science expressed
@@ -185,6 +210,39 @@ def analysis_file(config, cycle):
     return product_file(config, cycle, ANALYSIS)
 
 
+def traces(name):
+    """An application's config and log, kept out of scratch on the way past.
+
+    Both, and the config as much as the log: what an application read is half of
+    why it did what it did, and scratch is purged.
+    """
+    return (f"{name}.yaml", f"{name}.log")
+
+
+def run_application(name, config, site, paths, cycle, task, document):
+    """Run one SOCA application to completion, and keep its two traces.
+
+    The shape every task in this module has. A run directory holding the case's
+    grid files, the *document* the caller built written into it, and a launch
+    whose config and log are carried out of scratch whether or not it succeeded.
+
+    What differs between the four is the document they build and what they
+    commit afterwards, which is exactly why those stay with the caller and this
+    does not. Returns the run directory, since the caller's products are in it.
+    """
+    run = paths.scratch(cycle, task)
+    stage(config, run, cycle)
+    _write(run / f"{name}.yaml", yaml.safe_dump(document, sort_keys=False))
+
+    try:
+        launch(config, site, run, task, APPLICATIONS[name],
+               f"{name}.yaml", f"{name}.log")
+    finally:
+        keep_traces(run, paths.sub("log") / str(cycle), task, None,
+                    names=traces(name))
+    return run
+
+
 def hofx(config, site, paths, cycle, task, *, background, observers):
     """Evaluate *observers* against the background state of one cycle.
 
@@ -198,18 +256,11 @@ def hofx(config, site, paths, cycle, task, *, background, observers):
               f"nothing to evaluate")
         return []
 
-    run = paths.scratch(cycle, task)
-    stage(config, run, cycle)
-
-    products = _redirect_output(observers, run / "out")
-    document = hofx_config(config, cycle, observers, background=background)
-    _write(run / "hofx.yaml", yaml.safe_dump(document, sort_keys=False))
-
-    try:
-        launch(config, site, run, task, "soca_hofx3d.x", "hofx.yaml", "hofx.log")
-    finally:
-        keep_traces(run, paths.sub("log") / str(cycle), task, None, names=TRACES)
-
+    products = _redirect_output(observers, paths.scratch(cycle, task) / "out")
+    run_application(
+        "hofx", config, site, paths, cycle, task,
+        hofx_config(config, cycle, observers, background=background,
+                    templates=paths.templates))
     return commit(products)
 
 
@@ -234,18 +285,11 @@ def analysis(config, site, paths, cycle, task, *, background, observers, target,
               f"analysis for this cycle is the background")
         return []
 
-    run = paths.scratch(cycle, task)
-    stage(config, run, cycle)
-
-    products = _redirect_output(observers, run / "out")
-    document = var_config(config, cycle, observers, background=background,
-                          ensemble=ensemble)
-    _write(run / "var.yaml", yaml.safe_dump(document, sort_keys=False))
-
-    try:
-        launch(config, site, run, task, "soca_var.x", "var.yaml", "var.log")
-    finally:
-        keep_traces(run, paths.sub("log") / str(cycle), task, None, names=VAR_TRACES)
+    products = _redirect_output(observers, paths.scratch(cycle, task) / "out")
+    run = run_application(
+        "var", config, site, paths, cycle, task,
+        var_config(config, cycle, observers, background=background,
+                   ensemble=ensemble, templates=paths.templates))
 
     when = cycle_time(config, cycle)
     states = [(run / "out" / product_name(kind, when),
@@ -273,19 +317,10 @@ def recenter(config, site, paths, cycle, task, *, center, ensemble, members,
     member's own, and *target* is a function from a member index to where its
     recentred state belongs.
     """
-    run = paths.scratch(cycle, task)
-    stage(config, run, cycle)
-
-    document = recenter_config(config, cycle, center=center, ensemble=ensemble,
-                               members=members)
-    _write(run / "recenter.yaml", yaml.safe_dump(document, sort_keys=False))
-
-    try:
-        launch(config, site, run, task, "soca_ensrecenter.x", "recenter.yaml",
-               "recenter.log")
-    finally:
-        keep_traces(run, paths.sub("log") / str(cycle), task, None,
-                    names=RECENTER_TRACES)
+    run = run_application(
+        "recenter", config, site, paths, cycle, task,
+        recenter_config(config, cycle, center=center, ensemble=ensemble,
+                        members=members, templates=paths.templates))
 
     name = product_name(RECENTERED, cycle_time(config, cycle))
     written = _positions(run / "out", members, mean=False)
@@ -312,19 +347,12 @@ def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
               f"analysis for this cycle is the background")
         return []
 
-    run = paths.scratch(cycle, task)
-    stage(config, run, cycle)
-
-    products = _redirect_output(observers, run / "out", into=departures)
-    document = letkf_config(config, cycle, observers,
-                            backgrounds=backgrounds, members=members)
-    _write(run / "letkf.yaml", yaml.safe_dump(document, sort_keys=False))
-
-    try:
-        launch(config, site, run, task, "soca_letkf.x", "letkf.yaml", "letkf.log")
-    finally:
-        keep_traces(run, paths.sub("log") / str(cycle), task, None,
-                    names=LETKF_TRACES)
+    products = _redirect_output(observers, paths.scratch(cycle, task) / "out",
+                                into=departures)
+    run = run_application(
+        "letkf", config, site, paths, cycle, task,
+        letkf_config(config, cycle, observers, backgrounds=backgrounds,
+                     members=members, templates=paths.templates))
 
     when = cycle_time(config, cycle)
     name = analysis_file(config, cycle)
@@ -441,41 +469,79 @@ def _write(target, text):
 
 # --- the configuration the application reads ---------------------------------
 
-def hofx_config(config, cycle, observers, *, background):
-    """The whole `soca_hofx3d.x` YAML, as a data structure.
+def build_document(name, config, cycle, slots, *, templates=None):
+    """One application's YAML, from its template and the slots a task computed.
 
-    Built rather than templated. Every value here is one an experiment already
-    states somewhere else, and the failure this avoids is the one every prior
-    workflow had: a template and a configuration that agree until someone edits
-    one of them.
+    Two passes over the file, in this order and not the other. The job-time
+    `{{...}}` tokens are resolved first, against nothing but the template's own
+    text, so that a `{{...}}` that happens to appear inside a computed value is
+    left exactly as the thing that computed it wrote it. Then the `$(SLOT)`s are
+    filled, which is where every value this module builds enters the document.
+
+    *templates* is the directory holding them, which for a job is the
+    experiment's frozen `cfg/soca` and for a tool or a test is the checkout's
+    own. Read at the moment it is used rather than at import, because a job
+    reading its own frozen copy is the whole point of freezing one.
     """
-    table = symbols(config, cycle)
-    model = config["model"]
+    source = Path(templates or TEMPLATES) / f"{name}.yaml"
+    if not source.exists():
+        raise ModelError(
+            f"{source} does not exist, so there is no document to build. It is "
+            f"frozen into the experiment by `ackbar create`, from "
+            f"`config/soca/` in the checkout"
+        )
+    skeleton = render_jobtime(yaml.safe_load(source.read_text()),
+                              symbols(config, cycle))
+    return fill(skeleton, slots, source=str(source))
+
+
+def _geometry(model):
+    """The one geometry every application here is given.
+
+    `geom_grid_file` is relative because it is linked into the run directory by
+    `stage`; the other two are absolute paths the model layer names.
+    """
     return {
-        "geometry": {
-            "geom_grid_file": f"{GRIDSPEC}",
-            "mom6_input_nml": _require(model, "namelist"),
-            "fields metadata": _require(model, "fields metadata"),
-        },
-        # The background, which for a run with no analysis is the previous
-        # cycle's forecast and for cycle 1 is the initial condition materialized
-        # into `rst/0`. The trailing separator matters: SOCA concatenates
-        # basename and filename without one.
-        "state": {
-            "date": table["current_cycle"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "read_from_file": 1,
-            "basename": f"{background}{os.sep}",
-            "ocn_filename": _require(model.get("restart") or {}, "ocn"),
-            "state variables": list(_require(model, "state variables")),
-        },
-        # The window the observers select on, which is the cycle's own window
-        # and not something hofx gets to choose.
-        "time window": {
-            "begin": table["window_begin"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "length": table["window_length"],
-        },
-        "observations": {"observers": _observers(observers, GLOBAL_DISTRIBUTION)},
+        "geom_grid_file": f"{GRIDSPEC}",
+        "mom6_input_nml": _require(model, "namelist"),
+        "fields metadata": _require(model, "fields metadata"),
     }
+
+
+def _basename(path):
+    """A directory as SOCA wants it, which is with the separator on the end.
+
+    SOCA concatenates `basename` and `ocn_filename` without one, so a value
+    missing it names a sibling of the directory rather than a file inside it.
+    """
+    return f"{path}{os.sep}"
+
+
+def _restart(model):
+    """The ocean restart's filename, which every state description names."""
+    return _require(model.get("restart") or {}, "ocn")
+
+
+def _date(config, cycle):
+    """The analysis time, as JEDI parses it.
+
+    The instant every state in a cycle's document is stamped with, and for the
+    ensemble writers the reference the member filenames are formed against, so
+    the offset in them is zero.
+    """
+    return cycle_time(config, cycle).strftime(ISO_INSTANT)
+
+
+def hofx_config(config, cycle, observers, *, background, templates=None):
+    """The whole `soca_hofx3d.x` YAML. See `config/soca/hofx.yaml`."""
+    model = config["model"]
+    return build_document("hofx", config, cycle, {
+        "GEOMETRY": _geometry(model),
+        "BACKGROUND_DIR": _basename(background),
+        "RESTART_FILE": _restart(model),
+        "STATE_VARIABLES": list(_require(model, "state variables")),
+        "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
+    }, templates=templates)
 
 
 def _observers(observers, distribution):
@@ -494,136 +560,53 @@ def _observers(observers, distribution):
     return bodies
 
 
-def var_config(config, cycle, observers, *, background, ensemble=None):
-    """The whole `soca_var.x` YAML, as a data structure.
+def var_config(config, cycle, observers, *, background, ensemble=None,
+               templates=None):
+    """The whole `soca_var.x` YAML. See `config/soca/var.yaml`.
 
-    Built the same way `hofx_config` is, and from the same places: the geometry
+    The values come from where the experiment already states them: the geometry
     from the model layer, the background from the previous cycle's restart set,
     the window from the cycle, the observers from `stage.obs`. Two subtrees are
     passed through verbatim from `config/layers/da/variational.yaml`, because
     they are the only parts nothing else in the experiment implies: the
     background error, and the minimizer.
 
-    Four things here are ACKBAR's rather than a layer's, and each is a thing
-    that is wrong by omission rather than by being wrong.
-
-    **The background error's variable lists.** A `linear variable change` inside
-    a covariance needs `input variables` and `output variables`, and they are
-    the analysis variables in both sources. Omitting `input variables` leaves
-    `oops::ModelSpaceCovarianceBase::BVars_` a null pointer, which is
-    dereferenced not at construction but the first time Jb is evaluated: the
-    application reads the whole background, builds every block, prints the
-    diffusion it loaded, and *then* segfaults. Built here rather than stated,
-    because a layer that restated the analysis variables a third time is a layer
-    that can disagree with itself.
-
-    **The inner loop's geometry.** `CostFunction::linearize` reads
-    `variational.iterations[].geometry` and throws if it is absent, so every
-    iteration needs one. It is the outer geometry, because ACKBAR does not run a
-    multi-resolution incremental analysis; the day it does, that is what this
-    value becomes and the layer still does not have to know the paths.
-
-    **`output`.** It is what writes the analysis, and it is also what makes the
-    departures complete. `oops::Variational` only runs its final cost evaluation
-    when something asks for one, and `CostJo` saves `oman` on that evaluation
-    and nowhere else, so an analysis configured without an output writes `ombg`,
-    no `oman`, and no message about either.
-
-    **`final.increment`.** Analysis minus background, which is the one field
-    that answers "did this cycle do anything" without a comparison against
-    another experiment.
-
     *ensemble* is the member backgrounds a hybrid or ensemble covariance draws
     from, and is absent for a static B. See `background_error`.
     """
-    table = symbols(config, cycle)
     model = config["model"]
     solver = config["solver"]
     variables = list(_require(solver, "analysis variables"))
-    geometry = {
-        "geom_grid_file": f"{GRIDSPEC}",
-        "mom6_input_nml": _require(model, "namelist"),
-        "fields metadata": _require(model, "fields metadata"),
-    }
-    date = table["current_cycle"].strftime("%Y-%m-%dT%H:%M:%SZ")
+    geometry = _geometry(model)
 
-    return {
-        "cost function": {
-            # 3D-Var is the only window this builds so far. FGAT and 4D differ
-            # here and in the graph, which is why `solver.window` is validated
-            # and not yet read: a value this ignores is worse than one it
-            # rejects.
-            "cost type": "3D-Var",
-            "time window": {
-                "begin": table["window_begin"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "length": table["window_length"],
-            },
-            "analysis variables": variables,
-            "geometry": geometry,
-            "background": {
-                "read_from_file": 1,
-                "basename": f"{background}{os.sep}",
-                "ocn_filename": _require(model.get("restart") or {}, "ocn"),
-                "date": date,
-                # Not `model.state variables`, which is what the observers need
-                # read and interpolated. The background error blocks read fields
-                # the analysis never solves for, and leaving one out is a block
-                # that constructs and then reads a field of zeros.
-                "state variables": list(_require(solver, "background variables")),
-            },
-            "background error": background_error(solver, variables,
-                                                 ensemble=ensemble),
-            "observations": {
-                "observers": _observers(observers, GLOBAL_DISTRIBUTION),
-            },
-        },
-        "variational": _variational(solver, geometry),
-        "output": _written(ANALYSIS),
-        # `state component` is not decoration. The increment written here is a
-        # `ControlIncrement`, which is the model increment plus the model and
-        # observation bias corrections, and it hands each of the three its own
-        # subsection. The state's is the only one anything here fills in.
-        "final": {"increment": {"output": {"state component": _written(INCREMENT)}}},
-    }
+    return build_document("var", config, cycle, {
+        "GEOMETRY": geometry,
+        "ANALYSIS_VARIABLES": variables,
+        "BACKGROUND_DIR": _basename(background),
+        "RESTART_FILE": _restart(model),
+        "BACKGROUND_VARIABLES": list(_require(solver, "background variables")),
+        "BACKGROUND_ERROR": background_error(solver, variables, ensemble=ensemble),
+        "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
+        "VARIATIONAL": _variational(solver, geometry),
+        "ANALYSIS_OUTPUT": _written(ANALYSIS),
+        "INCREMENT_OUTPUT": _written(INCREMENT),
+    }, templates=templates)
 
 
-def letkf_config(config, cycle, observers, *, backgrounds, members):
-    """The whole `soca_letkf.x` YAML, as a data structure.
+def letkf_config(config, cycle, observers, *, backgrounds, members,
+                 templates=None):
+    """The whole `soca_letkf.x` YAML. See `config/soca/letkf.yaml`.
 
     The same construction as `var_config`, with one structural difference: the
     background is an *ensemble*.
 
-    oops takes an ensemble either as `members from template`, with a `%mem%`
-    pattern and a zero padding, or as `members`, an explicit list. The list is
-    what is built here even though the template would fit, because the template
-    is the thing that quietly goes wrong: an ensemble with a gap in it needs an
-    `except`, the index a member is written out as is its *position* in the
-    template rather than its own number, and the two disagree exactly when a
-    member is missing. A list of twenty near-identical blocks is verbose in a
-    file nobody hand-edits, and in exchange every member's background is a path
-    that `ackbar validate` stats before anything is submitted.
-
     *members* is the ensemble, which is every member index except the control.
     The control's analysis is the ensemble mean, and the driver is what asks for
     it.
-
-    Two things are ACKBAR's rather than a layer's, on the same rule as the
-    variational document: they are wrong by omission and the omission is quiet.
-
-    **The driver.** `do posterior observer` is what computes `oman`; without it
-    the cycle produces departures against the background only, and `post.obs`
-    has half of what it needs. `save posterior mean` is what gives the control
-    member an analysis at all.
-
-    **The outputs.** One block per thing saved, and each is required by the
-    driver flag that asks for it: `oops::LocalEnsembleDA` throws by name when a
-    flag is set and its output block is absent, which is the one failure in this
-    document that is loud.
     """
-    table = symbols(config, cycle)
     model = config["model"]
     solver = config["solver"]
-    date = table["current_cycle"].strftime("%Y-%m-%dT%H:%M:%SZ")
+    date = _date(config, cycle)
 
     if not members:
         raise ModelError(
@@ -632,7 +615,7 @@ def letkf_config(config, cycle, observers, *, backgrounds, members):
             "`ensemble.on_missing_member` policy let the cycle continue anyway."
         )
 
-    restart = _require(model.get("restart") or {}, "ocn")
+    restart = _restart(model)
     states = member_states(
         lambda member: backgrounds / member_dir(member) / restart,
         members,
@@ -640,83 +623,34 @@ def letkf_config(config, cycle, observers, *, backgrounds, members):
         variables=_require(solver, "background variables"),
     )
 
-    return {
-        "geometry": {
-            "geom_grid_file": f"{GRIDSPEC}",
-            "mom6_input_nml": _require(model, "namelist"),
-            "fields metadata": _require(model, "fields metadata"),
-        },
-        "time window": {
-            "begin": table["window_begin"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "length": table["window_length"],
-        },
-        "background": {"members": states},
-        "observations": {
-            "observers": _observers(observers,
-                                    _require(solver, "ensemble distribution")),
-        },
-        "local ensemble DA": _require(solver, "local ensemble DA"),
-        "driver": {
-            # Without this there is no `oman`, and nothing says so.
-            "do posterior observer": True,
-            # Without this the control member has no analysis.
-            "save posterior mean": True,
-            "save posterior ensemble": True,
-            "save posterior mean increment": True,
-            "save prior variance": True,
-            "save posterior variance": True,
-        },
-        # `date` is the reference the ensemble filenames are formed against.
-        # It is the analysis time, so the offset in them is zero.
-        "output": dict(_written(ANALYSIS), type=ENSEMBLE_TYPE, date=date),
-        "output increment": dict(_written(INCREMENT), date=date),
-        "output variance prior": dict(_written(SPREAD_PRIOR), date=date),
-        "output variance posterior": dict(_written(SPREAD_POSTERIOR), date=date),
-    }
+    return build_document("letkf", config, cycle, {
+        "GEOMETRY": _geometry(model),
+        "MEMBER_BACKGROUNDS": states,
+        "OBSERVERS": _observers(observers,
+                                _require(solver, "ensemble distribution")),
+        "LOCAL_ENSEMBLE_DA": _require(solver, "local ensemble DA"),
+        "ANALYSIS_OUTPUT": _written(ANALYSIS, type=ENSEMBLE_TYPE, date=date),
+        "INCREMENT_OUTPUT": _written(INCREMENT, date=date),
+        "SPREAD_PRIOR_OUTPUT": _written(SPREAD_PRIOR, date=date),
+        "SPREAD_POSTERIOR_OUTPUT": _written(SPREAD_POSTERIOR, date=date),
+    }, templates=templates)
 
 
-def recenter_config(config, cycle, *, center, ensemble, members):
-    """The whole `soca_ensrecenter.x` YAML, as a data structure.
-
-    Small, and every part of it is a path or a variable list, which is why it is
-    the one analysis document with nothing passed through from a layer: there is
-    no science in a recentring, only an arithmetic identity about where an
-    ensemble sits.
-
-    The variables are the *analysis* variables rather than the background's, and
-    the reason is what the application does with them:
-    `x = x_center; x += pert` replaces every field of the member with the
-    centre's before adding the perturbation back. Naming a field here that the
-    analysis never solved for would recentre it too, so a member would come back
-    carrying the control's layer thicknesses, which is a different vertical grid
-    for the same water.
-    """
+def recenter_config(config, cycle, *, center, ensemble, members, templates=None):
+    """The whole `soca_ensrecenter.x` YAML. See `config/soca/recenter.yaml`."""
     variables = list(_require(config["solver"], "analysis variables"))
-    date = symbols(config, cycle)["current_cycle"].strftime("%Y-%m-%dT%H:%M:%SZ")
-    model = config["model"]
+    date = _date(config, cycle)
     center = Path(center)
 
-    return {
-        "geometry": {
-            "geom_grid_file": f"{GRIDSPEC}",
-            "mom6_input_nml": _require(model, "namelist"),
-            "fields metadata": _require(model, "fields metadata"),
-        },
-        "recenter variables": variables,
-        "center": {
-            "read_from_file": 1,
-            "basename": f"{center.parent}{os.sep}",
-            "ocn_filename": center.name,
-            "date": date,
-            "state variables": variables,
-        },
-        "ensemble": {
-            "members": member_states(ensemble, members, date=date,
-                                     variables=variables),
-        },
-        "recentered output": dict(_written(RECENTERED), type=ENSEMBLE_TYPE,
-                                  date=date),
-    }
+    return build_document("recenter", config, cycle, {
+        "GEOMETRY": _geometry(config["model"]),
+        "ANALYSIS_VARIABLES": variables,
+        "CENTER_DIR": _basename(center.parent),
+        "CENTER_FILE": center.name,
+        "MEMBER_ANALYSES": member_states(ensemble, members, date=date,
+                                         variables=variables),
+        "RECENTERED_OUTPUT": _written(RECENTERED, type=ENSEMBLE_TYPE, date=date),
+    }, templates=templates)
 
 
 def background_error(solver, variables, *, ensemble=None):
@@ -873,15 +807,20 @@ def _variational(solver, geometry):
     return section
 
 
-def _written(kind):
+def _written(kind, **extra):
     """Where SOCA puts one of its own products, and what it calls it.
 
     `datadir` is the run directory's `out`, like every observer's output and for
     the same reason: an application killed partway leaves a truncated file, and
     the only place that is safe is one nothing else reads.
+
+    *extra* is what a per-member writer adds: a `date`, which is the reference
+    its filenames are formed against, and for the members themselves a `type`
+    that overrides the committed name's. See `ENSEMBLE_TYPE`.
     """
     exp, type_ = kind
-    return {"datadir": "out", "exp": exp, "type": type_, "date colons": False}
+    return {"datadir": "out", "exp": exp, "type": type_,
+            "date colons": False, **extra}
 
 
 def _redirect_output(observers, staging, into=None):

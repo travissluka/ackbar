@@ -1,6 +1,6 @@
 """Tier 0: the two ends of the diffusion calibration have to describe one operator.
 
-`config/diffusion.yaml` says what `tools/soca-diffusion.sh` builds.
+`config/static/diffusion.yaml` says what `tools/soca-diffusion.sh` builds.
 `config/layers/da/variational.yaml` says what the analysis reads back. Nothing
 at runtime compares them, and nothing can: saber reads the normalization out of
 a file and applies it, and a normalization computed for one operator applied
@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-DIFFUSION = REPO / "config" / "diffusion.yaml"
+DIFFUSION = REPO / "config" / "static" / "diffusion.yaml"
 VARIATIONAL = REPO / "config" / "layers" / "da" / "variational.yaml"
 HYBRID = REPO / "config" / "layers" / "da" / "hybrid.yaml"
 
@@ -103,7 +103,7 @@ def test_the_horizontal_is_left_explicit(calibration, groups):
     iteration count is small and its kernel is the Gaussian the scales were
     derived as. Setting a method here would be a change of physics that reads
     like a change of spelling, so what is asserted is that neither end says
-    anything: `config/diffusion.yaml` has no `method` under `horizontal`, and
+    anything: `config/static/diffusion.yaml` has no `method` under `horizontal`, and
     the analysis's horizontal blocks carry only a filepath.
     """
     for spec in calibration["horizontal"].values():

@@ -61,7 +61,7 @@ solver:
     # the gridspec is. Until it has run, `ackbar validate` step 3 names them as
     # missing, which is the intended failure: a B calibrated on a different grid
     # than the model integrates on is what this arrangement exists to make
-    # impossible. The lengths those files encode are in `config/diffusion.yaml`,
+    # impossible. The lengths those files encode are in `config/static/diffusion.yaml`,
     # which nothing here reads, for the same reason nothing here restates the
     # gridgen configuration.
     #
@@ -91,7 +91,7 @@ solver:
             # lets the vertical scales go uncapped. Horizontally the scales are
             # a few cells and explicit is cheaper.
             #
-            # These two values must match `vertical:` in `config/diffusion.yaml`.
+            # These two values must match `vertical:` in `config/static/diffusion.yaml`.
             # The normalization in `vt.nc` was computed with the operator that
             # file configures, and reading it back through a differently
             # configured operator produces a B that is wrong by a factor nothing

@@ -1,0 +1,38 @@
+# soca_ensrecenter.x: pull every member of the analysis ensemble onto the
+# deterministic analysis.
+#
+# See `config/soca/hofx.yaml` for the rules this file follows. Every $(SLOT) is
+# filled by `recenter_config` in `ackbar/soca.py`.
+#
+# Small, and every part of it is a path or a variable list, which is why it is
+# the one analysis document with nothing passed through from a layer: there is
+# no science in a recentring, only an arithmetic identity about where an
+# ensemble sits. Each member keeps its own perturbation about the ensemble mean
+# and is given the deterministic analysis as its centre, which is the whole of
+# the operation: `member - mean(ensemble) + centre`.
+
+geometry: $(GEOMETRY)
+
+# The *analysis* variables rather than the background's, and the reason is what
+# the application does with them: `x = x_center; x += pert` replaces every field
+# of the member with the centre's before adding the perturbation back. Naming a
+# field here that the analysis never solved for would recentre it too, so a
+# member would come back carrying the control's layer thicknesses, which is a
+# different vertical grid for the same water.
+recenter variables: $(ANALYSIS_VARIABLES)
+
+center:
+  read_from_file: 1
+  basename: $(CENTER_DIR)
+  ocn_filename: $(CENTER_FILE)
+  date: '{{current_cycle}}'
+  state variables: $(ANALYSIS_VARIABLES)
+
+ensemble:
+  members: $(MEMBER_ANALYSES)
+
+# `type: ens`, for the reason `config/soca/letkf.yaml` gives: it is the only
+# type `soca_genfilename` puts a member index in. The name the recentred state
+# is *committed* under is a different one, because by then the file is in that
+# member's own directory and an index in the name is redundant.
+recentered output: $(RECENTERED_OUTPUT)

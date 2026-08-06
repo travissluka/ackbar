@@ -266,6 +266,7 @@ site:
 <output_root>/<exp>/
     HALT          present while paused; every submitter checks it
     cfg/          resolved config, the ordered layer files verbatim, provenance record
+    cfg/soca/     the SOCA document templates, frozen from the checkout
     cfg/<cycle>/<task>.sh   the emitted batch script, one per node
     ledger/       append-only submission records, and the per-cycle submit marker
     done/<cycle>/<task>[.mem###].json   sentinels, written last by a successful task
@@ -520,25 +521,43 @@ Rules:
   inherited element can be deleted rather than only overridden. Lists with no natural key
   (`variables`, saber blocks, filter chains) replace wholesale. This is a schema decision baked
   into all 25 ported observer configs, so it is settled before they are ported.
-- **Two resolution passes, both explicit.** The first resolves at experiment creation and is
-  frozen. The second resolves at job time, because cycle date, window begin and length,
-  previous and next cycle, member index, forecast length, and MOM6's `current_date` and `hours`
-  cannot be known once. v3 had exactly this split (`$(var)` and `{{var}}`); what it lacked was
-  a named, closed set of job-time symbols. That set is defined and validated, not discovered,
-  and `ackbar config symbols` prints it. Either syntax may carry a format spec after a colon,
-  which is what lets one file want the same date two ways: `{{window_begin}}` is the ISO
-  instant JEDI parses, `{{current_cycle:%Y%m%d%H}}` is the archive directory that has no colons
-  in it.
+- **Three resolution passes, all explicit, and the syntax names who fills it.** `$(lowercase)`
+  resolves at experiment creation and is frozen. `{{lowercase}}` resolves at job time, because
+  cycle date, window begin and length, previous and next cycle, member index, forecast length,
+  and MOM6's `current_date` and `hours` cannot be known once. v3 had exactly this split; what
+  it lacked was a named, closed set of job-time symbols. That set is defined and validated, not
+  discovered, and `ackbar config symbols` prints it. Either syntax may carry a format spec
+  after a colon, which is what lets one file want the same date two ways: `{{window_begin}}` is
+  the ISO instant JEDI parses, `{{current_cycle:%Y%m%d%H}}` is the archive directory that has
+  no colons in it.
 
-  **The job-time pass is scoped to `observations`.** Not "the whole config, at job time":
-  `observations.py` renders each observer entry, and every other subtree reaches a job with its
-  `{{...}}` unrendered, because the values a job needs are computed in the job body from the
-  cycle it was given rather than substituted into config. That is the narrower promise and it
-  is the one that is kept. It matters because `ackbar validate` renders the *whole* config to
-  check it, so a `{{...}}` written anywhere else validates clean and arrives at the job
-  literally, which looks like a path that does not exist rather than like a substitution bug.
-  Widening the pass to the whole config is the fix if something outside `observations` ever
-  needs a job-time value; until then this paragraph is the specification.
+  `$(UPPERCASE)` is the third and is *task* time: a slot in a `config/soca/` document template,
+  filled by the one function in `ackbar/soca.py` that builds that document, from values only it
+  can compute. It shares the experiment-time sigil deliberately. A template is not a layer and
+  must never be merged as one, and if one ever is, the experiment-time pass meets
+  `$(OBSERVERS)` and refuses it as an unknown symbol rather than resolving it to nothing.
+
+  **The job-time pass runs over two things and not the whole config.** `observations.py`
+  renders each observer entry, and `soca.py` renders a document template before filling its
+  slots. Every other subtree reaches a job with its `{{...}}` unrendered, because the values a
+  job needs are computed in the job body from the cycle it was given rather than substituted
+  into config. That is the narrower promise and it is the one that is kept. It matters because
+  `ackbar validate` renders the *whole* config to check it, so a `{{...}}` written anywhere
+  else validates clean and arrives at the job literally, which looks like a path that does not
+  exist rather than like a substitution bug. Widening the pass is the fix if something outside
+  those two ever needs a job-time value; until then this paragraph is the specification.
+
+- **A document's shape is a file; its values are Python.** Each SOCA application has a template
+  under `config/soca/`, and `ackbar/soca.py` fills its slots. Splitting them this way is only
+  safe because of one narrow rule: **a template holds a value only when nothing in Python reads
+  it.** The moment a value is read on both sides it becomes a slot, because two spellings of a
+  filename field is a `writeback` that opens a name nothing wrote and reports an analysis that
+  produced nothing. `exp`, `type` and `datadir` are the three with teeth. Filling is strict in
+  both directions: an unfilled slot is an error, and so is a computed value the template does
+  not use, which is a template that has quietly dropped a block. `tests/test_templates.py` pins
+  the slot set of each template against what its builder supplies, because run time is too late
+  for `recenter`, whose first execution is after the ensemble filter and the deterministic
+  analysis have both already run.
 - **Cycle *n* is computable from *n* alone.** The analysis time is `cycle.start + (n-1) *
   cycle.length`, the window is centred on it and one cycle long so that consecutive windows
   tile without gap or overlap, and cycle 0 is where experiment setup materializes the offline

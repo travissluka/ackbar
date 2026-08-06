@@ -294,6 +294,52 @@ class TestStep3InputPaths:
         assert outputs == []
 
 
+class TestStep2Templates:
+    """The SOCA document templates, checked before one is frozen.
+
+    Everything here is a property of the file alone, which is why it needs no
+    cycle and no observer list. Whether the slots a template declares match what
+    the task computes needs both halves and is pinned by
+    `tests/test_templates.py`.
+    """
+
+    def rooted(self, tmp_path, text, name="var.yaml"):
+        (tmp_path / "config" / "soca").mkdir(parents=True)
+        (tmp_path / "config" / "soca" / name).write_text(text)
+        return tmp_path
+
+    def found(self, tmp_path, text, keys, schema, name="var.yaml"):
+        root = self.rooted(tmp_path, text, name)
+        return [f for f in full(load("var_om1deg", keys), schema, root=str(root))
+                if f.step == 2]
+
+    def test_a_template_that_is_not_yaml_is_rejected(self, tmp_path, keys, schema):
+        found = self.found(tmp_path, "a: [1,\nb: 2\n", keys, schema)
+        assert len(found) == 1
+        assert "not parseable YAML" in found[0].message
+
+    def test_a_lowercase_slot_is_rejected(self, tmp_path, keys, schema):
+        """It would be an experiment-time symbol, and this file never sees that pass."""
+        found = self.found(tmp_path, "output: $(analysis_output)\n", keys, schema)
+        assert len(found) == 1
+        assert "lowercase" in found[0].message
+
+    def test_an_unknown_job_time_symbol_is_rejected(self, tmp_path, keys, schema):
+        found = self.found(tmp_path, "when: '{{analysis_time}}'\n", keys, schema)
+        assert len(found) == 1
+        assert "unknown job-time symbol {{analysis_time}}" in found[0].message
+
+    def test_a_known_job_time_symbol_with_a_format_spec_is_accepted(
+            self, tmp_path, keys, schema):
+        found = self.found(tmp_path, "when: 'd{{current_cycle:%Y%m%d}}'\n",
+                           keys, schema)
+        assert found == []
+
+    def test_the_real_templates_pass(self, keys, schema):
+        found = [f for f in full(load("var_om1deg", keys), schema) if f.step == 2]
+        assert found == []
+
+
 class TestStep4Executables:
     def test_a_missing_executable_is_rejected(self, tmp_path, keys, schema):
         found = full(load("var_om1deg", keys), schema, root=str(tmp_path))

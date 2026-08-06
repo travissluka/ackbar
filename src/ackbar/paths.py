@@ -114,6 +114,16 @@ class Paths:
         return self.sub("cfg") / "experiment.yaml"
 
     @property
+    def templates(self):
+        """The SOCA document templates, frozen at create time.
+
+        Frozen for the reason the layers are: "what exactly did this experiment
+        run" has to be answerable from the experiment directory, and editing the
+        checkout mid-run must not change cycle 40 and not cycle 39.
+        """
+        return self.sub("cfg") / "soca"
+
+    @property
     def provenance(self):
         return self.sub("cfg") / "provenance.json"
 

@@ -1,0 +1,59 @@
+# soca_letkf.x: assimilate every member of one cycle's ensemble.
+#
+# See `config/soca/hofx.yaml` for the rules this file follows. Every $(SLOT) is
+# filled by `letkf_config` in `ackbar/soca.py`.
+#
+# The same construction as the variational document with one structural
+# difference: the background is an *ensemble*, one state per member, built as an
+# explicit list rather than oops's `members from template`. See `member_states`
+# for why the template form is the one that quietly goes wrong.
+
+geometry: $(GEOMETRY)
+
+time window:
+  begin: '{{window_begin}}'
+  length: '{{window_length}}'
+
+background:
+  members: $(MEMBER_BACKGROUNDS)
+
+observations:
+  observers: $(OBSERVERS)
+
+# The localization and the solver, from `solver.local ensemble DA`. This is the
+# science of an ensemble filter and belongs entirely to the layer.
+local ensemble DA: $(LOCAL_ENSEMBLE_DA)
+
+# Every flag here is paired with an output block below, and
+# `oops::LocalEnsembleDA` throws by name when a flag is set and its block is
+# absent, which is the one failure in this document that is loud. The two that
+# are not loud are the two that matter:
+driver:
+  # Without this there is no `oman`, and nothing says so. The cycle produces
+  # departures against the background only, and `post.obs` has half of what it
+  # needs.
+  do posterior observer: true
+  # Without this the control member has no analysis at all: in a pure LETKF the
+  # posterior mean *is* the control's answer, since ACKBAR does not separately
+  # compute one.
+  save posterior mean: true
+  save posterior ensemble: true
+  save posterior mean increment: true
+  # Prior and posterior spread. Not decoration: an ensemble filter fails in two
+  # ways that look nothing alike in the departures and identical in any single
+  # analysis, the spread collapsing until every later cycle ignores its
+  # observations, or the spread growing until the filter chases noise. These two
+  # side by side are the record of which is happening, and nothing else in the
+  # workflow produces it.
+  save prior variance: true
+  save posterior variance: true
+
+# One block per thing saved. Each carries `date`, the reference the ensemble
+# filenames are formed against; it is the analysis time, so the offset in them
+# is zero. The member analyses take `type: ens`, which is the only value
+# `soca_genfilename` puts a member index in: any other has every member writing
+# one filename in turn while the application exits zero.
+output: $(ANALYSIS_OUTPUT)
+output increment: $(INCREMENT_OUTPUT)
+output variance prior: $(SPREAD_PRIOR_OUTPUT)
+output variance posterior: $(SPREAD_POSTERIOR_OUTPUT)

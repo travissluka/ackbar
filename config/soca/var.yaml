@@ -1,0 +1,73 @@
+# soca_var.x: solve for one cycle's analysis.
+#
+# See `config/soca/hofx.yaml` for the rules this file follows. Every $(SLOT) is
+# filled by `var_config` in `ackbar/soca.py`.
+#
+# Four things below are ACKBAR's rather than a layer's, and each of them is
+# wrong by *omission* rather than by being wrong. They are commented where they
+# sit, because that is the only place a reader would think to look.
+
+cost function:
+  # 3D-Var is the only window this document builds. FGAT and 4D differ here and
+  # in the graph, which is why `solver.window` is validated and not yet read: a
+  # value this ignores is worse than one it rejects. When they arrive they are
+  # sibling files rather than a branch in Python.
+  cost type: 3D-Var
+
+  time window:
+    begin: '{{window_begin}}'
+    length: '{{window_length}}'
+
+  analysis variables: $(ANALYSIS_VARIABLES)
+
+  geometry: $(GEOMETRY)
+
+  background:
+    read_from_file: 1
+    # A trailing separator is part of the value: SOCA concatenates basename and
+    # filename without one.
+    basename: $(BACKGROUND_DIR)
+    ocn_filename: $(RESTART_FILE)
+    date: '{{current_cycle}}'
+    # Not the model layer's `state variables`, which is what the observers need
+    # read and interpolated. The background error blocks read fields the
+    # analysis never solves for, and leaving one out is a block that constructs
+    # and then reads a field of zeros.
+    state variables: $(BACKGROUND_VARIABLES)
+
+  # Assembled from `solver.covariance`: the static SABER block alone, the
+  # ensemble alone, or both as weighted components. The `linear variable
+  # change` inside it is given `input variables` and `output variables` there
+  # rather than here, and they are not optional: without `input variables`,
+  # `oops::ModelSpaceCovarianceBase::BVars_` is a null pointer that is
+  # dereferenced the first time Jb is evaluated, so the application reads the
+  # whole background, builds every block, prints the diffusion it loaded, and
+  # *then* segfaults.
+  background error: $(BACKGROUND_ERROR)
+
+  observations:
+    observers: $(OBSERVERS)
+
+# The minimizer, from `solver.variational`, with each iteration's inner-loop
+# geometry filled in. `CostFunction::linearize` reads
+# `variational.iterations[].geometry` and throws if it is absent.
+variational: $(VARIATIONAL)
+
+# What writes the analysis, and also what makes the departures complete.
+# `oops::Variational` only runs its final cost evaluation when something asks
+# for one, and `CostJo` saves `oman` on that evaluation and nowhere else, so an
+# analysis configured without an output writes `ombg`, no `oman`, and no
+# message about either.
+output: $(ANALYSIS_OUTPUT)
+
+# Analysis minus background, which is the one field that answers "did this
+# cycle do anything" without a comparison against another experiment.
+#
+# `state component` is not decoration. What is written here is a
+# `ControlIncrement`: the model increment plus the model and observation bias
+# corrections, each handed its own subsection. The state's is the only one
+# anything here fills in.
+final:
+  increment:
+    output:
+      state component: $(INCREMENT_OUTPUT)
