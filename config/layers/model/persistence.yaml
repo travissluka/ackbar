@@ -1,0 +1,36 @@
+# Persistence: the same model configuration, not integrated.
+#
+# Inherit it **after** `model/mom6sis2`, because that is what it is:
+#
+#     inherit:
+#       - domain/gom_25km
+#       - model/mom6sis2
+#       - model/persistence
+#       - da/variational
+#
+# and this file is one key. Everything else a persistence experiment needs is
+# what a MOM6-SIS2 experiment needs and for the same reasons: the analysis still
+# builds a MOM6 geometry from `MOM_input` and the domain's gridspec, still reads
+# a real restart set, and writeback still edits a real one. The only thing that
+# does not happen is the integration. A layer that restated those paths would be
+# a second copy of them to keep in step, and the failure would be an analysis
+# and a forecast on two different grids.
+#
+# Why it exists: the DA loop and the model fail in the same place, and only one
+# of them is under construction at a time. A 3DVar experiment at `gom_25km`
+# spends nearly all of its wall clock in MOM6, re-proving what phase 4 already
+# proved; with persistence the loop closes in seconds and the handoff, the
+# writeback and the departures can be got right first. See
+# `ackbar/persistence.py`.
+#
+# It is also the baseline every analysis is measured against. An experiment
+# whose analysis does not beat persistence has a problem that is not in its
+# model.
+#
+# What it is not is an ocean. The state it hands forward is dynamically stale
+# the moment the clock moves, so the analysis is correcting a background that
+# degrades in a way no ocean does. Read any score from a persistence experiment
+# as a statement about the workflow.
+
+model:
+  name: persistence
