@@ -1,0 +1,112 @@
+# Correlation length scales for the background error's diffusion operator.
+#
+# Read by `tools/soca-diffusion.sh`, which is offline and keyed on domain, and
+# by nothing in the workflow. An experiment names the *product* of this file
+# (`$(domain_static)/diffusion/*.nc`) and never these numbers, for the same
+# reason it names the gridspec rather than the gridgen configuration: every
+# experiment on a domain should be comparing analyses against one B, not against
+# whatever B its own configuration happened to describe.
+#
+# Not per domain, and that is deliberate rather than unfinished. Every length
+# here is relative to something the grid already knows: the local Rossby radius,
+# the local cell size, or the local mixed layer. A 4 km grid and a 25 km grid
+# reading this file get different scales in metres because `rossby_radius`, `dx`
+# and `MLD` differ, not because someone remembered to write a second copy. Add a
+# `domains:` override the first time a domain genuinely needs one.
+#
+# Source: soca-science v2, `configs/soca/saber_init/soca_diffusion_scales_*.yaml`
+# and `tools/calc_scales.py`. The horizontal numbers below are v2's unchanged.
+
+# ------------------------------------------------------------------------------
+# Horizontal, in metres. One entry per output file, and the name is the file:
+# `hz` becomes `$(domain_static)/diffusion/hz.nc`.
+#
+#   scale = clip(rossby_radius * `rossby mult`,
+#                min = max(dx, dy) * `min grid mult`,
+#                max = `max`)
+#
+# then smoothed by itself, so that the diffusion coefficient does not have a
+# sharper gradient than the fields it is meant to correlate.
+#
+# The floor is what keeps this usable at high latitude and on a coarse grid,
+# where the Rossby radius falls below the cell size and an unfloored scale
+# would ask the operator to correlate a cell with itself. The ceiling is what
+# keeps it usable at the equator, where the radius runs past 250 km and the
+# explicit scheme's iteration count runs with it.
+# ------------------------------------------------------------------------------
+horizontal:
+
+  # Temperature and salinity, and anything else that is not sea surface height.
+  hz:
+    rossby mult: 1.0
+    min grid mult: 1.5
+    max: 250.0e3
+
+  # Sea surface height, which is dynamically broader than the tracers: it
+  # integrates the whole column, so a single altimeter track informs a wider
+  # patch than a single Argo profile at the same place does.
+  #
+  # 1.5 rather than soca-science v2's 2.0. It is also the cheap end of the
+  # choice: the explicit horizontal scheme's iteration count goes as the square
+  # of the scale measured in grid cells, and this is the group that sets the
+  # price, so 1.5 costs a little over half what 2.0 does. The floor and the
+  # ceiling are still v2's.
+  hz_ssh:
+    rossby mult: 1.5
+    min grid mult: 2.0
+    max: 350.0e3
+
+# ------------------------------------------------------------------------------
+# Vertical, in *model levels* rather than metres, because that is the coordinate
+# the operator diffuses along and MOM6's layers are not evenly spaced.
+#
+# The scale at the surface is the number of levels in the mixed layer, taken
+# from `MLD` in the restart and interpolated down to `min` at the bottom of the
+# mixed layer, so that the analysis spreads freely inside a well mixed column
+# and barely at all across the pycnocline. Below that it is `min` everywhere.
+# It is not capped: see the note on `max` below.
+#
+# Written to `$(domain_static)/diffusion/vt.nc`, and read only by the group that
+# holds the tracers. Sea surface height is a single level and has no vertical
+# correlation to describe.
+# ------------------------------------------------------------------------------
+vertical:
+  min: 1.5
+
+  # There is deliberately no `max`. soca-science v2 had one, at 10 levels, and
+  # it was a cost control rather than a statement about the ocean: the explicit
+  # scheme's iteration count grows with the square of the scale in levels, so an
+  # 80 level mixed layer in a 75 level column would have priced the whole
+  # domain. Implicit removes that, so the ceiling has nothing left to protect
+  # and a deep mixed layer gets the vertical correlation it actually has.
+  #
+  # Implicit rather than explicit is the one place this departs from v2. The
+  # count below is a number of tridiagonal solves down each column and does not
+  # depend on the scale at all, which is what makes dropping the ceiling free.
+  # Two is saber's minimum; it must be even.
+  #
+  # This number has to match `solver.background error` in
+  # `config/layers/da/variational.yaml`: the normalization written here is
+  # computed with the operator configured here, and reading it back through a
+  # differently configured operator produces a B that is silently unnormalized.
+  # `tests/test_diffusion.py` is what stops the two drifting apart.
+  method: implicit
+  iterations: 2
+
+# ------------------------------------------------------------------------------
+# How many randomizations the horizontal normalization is estimated from. This
+# is the whole cost of the calibration: the rest is one pass over the grid.
+#
+# The SOCA test configuration uses 1000 and says in a comment that the real
+# world wants 1e4; v2 used 20000. The normalization error falls as
+# 1/sqrt(iterations), so this buys accuracy slowly, and an under-normalized B
+# shows up as an analysis whose increment amplitude is wrong by a percent or
+# two rather than as anything that looks like a failure.
+#
+# This is the number for science. `tools/soca-diffusion.sh --iterations N`
+# overrides it downwards to prove the stage runs at all, and the tests use that;
+# a calibration built that way is not one anybody should assimilate through.
+# The generated `calibrate.yaml` is copied next to the output because it is the
+# only thing that records which of the two a given `hz.nc` is.
+# ------------------------------------------------------------------------------
+normalization iterations: 10000

@@ -1,9 +1,9 @@
 # Where a domain's model configuration lives. Sourced, not run.
 #
 #   source "$ACKBAR_ROOT/tools/domain-paths.sh"
-#   domain_paths gom_25km      # sets BASE, DATA and OVERRIDE
+#   domain_paths gom_25km      # sets BASE, DATA, OVERRIDE, STATIC and LEVELS
 #
-# The three paths are read out of the domain's own layer rather than derived
+# The values are read out of the domain's own layer rather than derived
 # from its name, because no rule over the name is right for all of them: the
 # Gulf resolutions share one base directory between four domains, and om_1deg's
 # is upstream's inside the MOM6-examples submodule. The layer is where a domain
@@ -43,7 +43,15 @@ def resolve(name, seen=()):
 
 for shell, var in (("BASE", "mom6_base_dir"),
                    ("DATA", "mom6_input_dir"),
-                   ("OVERRIDE", "mom6_override_dir")):
+                   ("OVERRIDE", "mom6_override_dir"),
+                   # Where SOCA's view of the domain is kept: the gridspec and
+                   # the diffusion calibration. The same var the domain layer
+                   # points `domain.static` at, so an offline stage writes
+                   # exactly where the workflow will look.
+                   ("STATIC", "domain_static"),
+                   # The domain's NK, which every configuration that reads a
+                   # three dimensional field off disk has to restate.
+                   ("LEVELS", "diffusion_levels")):
     print(f"{shell}={resolve(var)}")
 EOF
     ) || return 1

@@ -204,8 +204,14 @@ $EDITOR config/model/mom6sis2/domain/gom/<res>/MOM_override  # reduce the import
 $EDITOR config/layers/domain/<domain>.yaml                  # the three vars, resources
 tools/soca-gridspec.sh <domain>                                # the static stage
 tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <slug>  # the IC stage
+tools/soca-diffusion.sh <domain>                               # for a DA experiment
+tools/soca-dirac.sh <domain>                                   # and check it
 ackbar validate <experiment>.yaml
 ```
+
+The last two are only needed by an experiment whose `da` layer is `variational`
+or `hybrid`; a free run names no background error. See
+[`background-error.md`](background-error.md).
 
 `ackbar validate` step 3 stats every one of those paths, so a stage that has not
 been run is a message naming the directory rather than a job that fails an hour

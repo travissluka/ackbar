@@ -56,20 +56,21 @@ solver:
   background error:
     covariance model: SABER
 
-    # Correlation, as a diffusion operator. The two filepaths are the product of
-    # an offline calibration stage that does not exist yet: they are what
-    # `soca_setcorscales.x` and `soca_error_covariance_toolbox.x` write, keyed
-    # on domain the way the gridspec is, and `ackbar validate` step 3 will name
-    # them as missing until that stage is built and run. That is the intended
-    # failure: a B calibrated on a different grid than the model integrates on
-    # is the thing this arrangement exists to make impossible.
+    # Correlation, as a diffusion operator. The three filepaths are the product
+    # of `tools/soca-diffusion.sh`, which is offline and keyed on domain the way
+    # the gridspec is. Until it has run, `ackbar validate` step 3 names them as
+    # missing, which is the intended failure: a B calibrated on a different grid
+    # than the model integrates on is what this arrangement exists to make
+    # impossible. The lengths those files encode are in `config/diffusion.yaml`,
+    # which nothing here reads, for the same reason nothing here restates the
+    # gridgen configuration.
     #
-    # The vertical scales are fixed rather than recalibrated every cycle. v2 ran
-    # the vertical calibration per cycle from an `MLD` variable read out of
-    # `MOM.res.nc`; whether ACKBAR's restarts carry it is unverified, and it
-    # fails silently if they do not. The bundle's own calibration uses a fixed
-    # value and no MLD at all. Per-cycle calibration is a measured improvement
-    # to make later, not a prerequisite for a working analysis.
+    # `filepath` is a stem rather than a filename. saber appends `.nc`.
+    #
+    # The vertical scales are calibrated once, against the mixed layer of one
+    # restart, rather than recalibrated every cycle as v2 did. Per-cycle is the
+    # measured improvement to make later; what makes it optional rather than
+    # required is that MLD moves slowly compared to a DA cycle.
     saber central block:
       saber block name: diffusion
       read:
@@ -82,9 +83,24 @@ solver:
           vertical:
             levels: $(diffusion_levels)
             filepath: $(domain_static)/diffusion/vt
+            # Implicit in the vertical, explicit (the default) in the
+            # horizontal. The explicit scheme's iteration count grows with the
+            # square of the scale in grid units, and a mixed layer can span a
+            # large number of levels; the implicit scheme is a fixed count of
+            # tridiagonal solves down each column instead, which is also what
+            # lets the vertical scales go uncapped. Horizontally the scales are
+            # a few cells and explicit is cheaper.
+            #
+            # These two values must match `vertical:` in `config/diffusion.yaml`.
+            # The normalization in `vt.nc` was computed with the operator that
+            # file configures, and reading it back through a differently
+            # configured operator produces a B that is wrong by a factor nothing
+            # reports. `tests/test_diffusion.py` is what holds them together.
+            method: implicit
+            iterations: 2
         - variables: [sea_surface_height_above_geoid]
           horizontal:
-            filepath: $(domain_static)/diffusion/hz
+            filepath: $(domain_static)/diffusion/hz_ssh
 
     saber outer blocks:
     # Taper the background error to zero in shallow water and with depth, so the

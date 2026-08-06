@@ -256,8 +256,10 @@ domain was too slow to iterate on: a simulated day costs 178 seconds there again
 `gom_25km`. That work added the Gulf of Mexico domains, split a MOM6 case into the text half
 that belongs in git and the data half that does not, gave ACKBAR its own `MOM_override`, and
 answered two of the spikes below. It did not add the regional stages the design calls for:
-grid-edge masking of the analysis and domain-scoped observation culling are still owed, and
-they are owed before a regional *analysis* rather than before a regional free run.
+domain-scoped observation culling is still owed, and it is owed before a regional *analysis*
+rather than before a regional free run. Grid-edge masking is no longer on that list as work:
+it is an open question to settle by looking at the first regional 3DVar increment, since v2's
+workaround may be describing a SOCA that no longer exists. See Domains in `design.md`.
 `docs/domains.md` is the entry point.
 
 ## Phase 6. Variational, static B, 3D
@@ -265,8 +267,14 @@ they are owed before a regional *analysis* rather than before a regional free ru
 Static B and analysis-to-restart writeback.
 
 - **Prerequisite spike:** IAU versus direct restart write, run *before* this phase, not inside
-  it.
-- **Build:** the DA task, the writeback task, and the per cycle vertical B calibration task.
+  it. Closed: `soca_checkpoint_model.x` does not exist in the pinned SOCA, so writeback is a
+  python direct write.
+- **Done already:** the background error's correlation, as an offline stage rather than as a
+  task. `tools/soca-diffusion.sh` calibrates it and `tools/soca-dirac.sh` checks it, both keyed
+  on domain. See [`background-error.md`](background-error.md).
+- **Build:** the DA task and the writeback task. The per cycle vertical B calibration is a
+  measured improvement on the offline one rather than a prerequisite for it, so it is not in
+  this phase.
 - **Order within the phase:** bring it up on `model: persistence` first. That gives the full DA
   loop, including writeback and background handoff, at no model cost, and a baseline to score
   against once MOM6 is back in the loop. Then switch to `model: mom6sis2`.

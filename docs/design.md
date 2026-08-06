@@ -774,6 +774,19 @@ Regional costs more than a different grid file. What it actually pulls in:
   be assumed stale until checked.
 - **Grid edge masking.** The analysis must not write into the boundary and sponge zone. v2
   zeroed the outer ring of `mask2d` after gridgen (`soca_domom6_action.py mask-grid-edges`).
+
+  Whether ACKBAR still needs to is **an open question, not a task**. That workaround is old
+  enough that it may be describing a SOCA which no longer exists, and copying it forward
+  because v2 had it is exactly the mistake `prior-workflows.md` exists to prevent: it would
+  throw away the outermost row of every analysis on evidence nobody checked. It also is not
+  free of consequences elsewhere. The diffusion calibration reads `mask2d` (see
+  [`background-error.md`](background-error.md)), so masking the ring changes the correlation
+  everywhere near the boundary, not just at it.
+
+  Settle it by experiment rather than by reading: once a 3DVar cycle runs on a regional
+  domain, look at the increment in the boundary columns. If SOCA already leaves them alone,
+  the masking is not owed and this bullet goes away. If it does not, mask the ring in
+  `tools/soca-gridspec.sh` and recalibrate the diffusion, in that order.
 - **Observation culling to the domain.** v2 did this per cycle with `soca_domaincheck.py` and
   flagged it in its own source as a temporary fix that "new workflow should address in a more
   effective manner". Cull at archive-build time instead, so the per-cycle path stays identical
@@ -860,6 +873,13 @@ stage in miniature. `tools/soca-gridspec.sh` writes it from the model's own conf
 grid the analysis works on and the grid the model integrates on are the same grid by
 construction rather than by two configurations agreeing. Nothing detects a stale one, so it is
 rebuilt after a bundle bump that touches MOM6 or SOCA's geometry.
+
+The stage's other product is `static/<domain>/diffusion/`, the calibrated correlation of the
+static background error, written by `tools/soca-diffusion.sh`. It belongs here on the same
+argument and one more: its normalization is a Monte Carlo estimate, so two runs of it do not
+agree bit for bit, and an experiment that calibrated its own would differ from its neighbour
+in a way no comparison would attribute correctly. A free run names none of it.
+[`background-error.md`](background-error.md) is the entry point.
 
 They live under `$ACKBAR_STATIC_ROOT`, one directory per stage, keyed as the table says and in
 that order: `ic/<domain>/<source>/<YYYYMMDDThh>` is the initial condition stage,
