@@ -264,6 +264,24 @@ class TestStep3InputPaths:
         assert [f.where.endswith("2018041512.nc4") for f in found] == [True]
         assert "required" in found[0].message
 
+    def test_a_saber_filepath_is_a_stem_and_the_file_it_names_ends_in_nc(
+        self, keys, schema
+    ):
+        """saber's `filepath` is not the name of anything on disk.
+
+        It reads and writes parameter files through `util::readFieldSet`, which
+        takes a stem and appends `.nc`. Checked literally, the diffusion
+        calibration would report as a missing input on a domain where it is
+        present, forever, which is the fastest way to teach a reader that step 3
+        is noise.
+        """
+        found = [
+            f.where for f in full(load("var_om1deg", keys), schema)
+            if "/diffusion/" in f.where
+        ]
+        assert found, "the variational fixture names no diffusion parameters"
+        assert all(where.endswith(".nc") for where in found)
+
     def test_output_paths_are_not_mistaken_for_inputs(self, keys, schema):
         # The experiment is about to create them; that is the point of it.
         config = load("var_om1deg", keys)

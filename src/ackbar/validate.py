@@ -166,9 +166,21 @@ def _take_observation_inputs(rendered, observations):
         record["paths"].add(path)
 
 
+#: Keys whose value is a filename with the extension left off. saber writes and
+#: reads every parameter file through `util::readFieldSet`, which takes a stem
+#: and appends `.nc`, so the string in the configuration is not the name of
+#: anything on disk. Without this, a calibrated diffusion operator reports as a
+#: missing input forever, which trains the reader to ignore step 3.
+STEM_KEYS = ("filepath",)
+STEM_SUFFIX = ".nc"
+
+
 def _collect_paths(node, out):
     if isinstance(node, dict):
-        for value in node.values():
+        for key, value in node.items():
+            if key in STEM_KEYS and isinstance(value, str) and _looks_like_path(value):
+                out.add(value + STEM_SUFFIX)
+                continue
             _collect_paths(value, out)
     elif isinstance(node, list):
         for value in node:
