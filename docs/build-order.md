@@ -20,7 +20,7 @@ it" has a cheap answer most of the time.
 | 0 | unit: merge, resolution, schema | python only | seconds | every commit |
 | 1 | `validate` and graph goldens on fixture experiments | python only | seconds | every commit |
 | 2 | stub workflow end to end, including the fault matrix | Slurm; no JEDI, no model | minutes | every commit |
-| 3 | real cycling, `OM_1deg`, a few cycles | full build | tens of minutes | per phase |
+| 3 | real cycling, `gom_25km`, a few cycles | full build | minutes | per phase |
 | 4 | production scale, `OM4_025` | HPC | days | per release |
 
 Tiers 0 through 2 are the regression suite. Tier 2 is the important one: it is the only cheap
@@ -154,7 +154,7 @@ the OSSE truth run.
   into the experiment's own cycle-0 forecast output location so that cycle 1 is not special.
 - **Build:** the forecast task, model config layering, `diag_table` selection by forecast
   purpose, restart handoff.
-- **Test:** tier 3, a few cycles at `OM_1deg`. Tiers 0 through 2 keep passing.
+- **Test:** tier 3, a few cycles at `gom_25km`. Tiers 0 through 2 keep passing.
 - **Done when:** N cycles are restart continuous, and a killed cycle resumes and reproduces.
 
 Also here, and the prerequisite for the rest of it: **`srun` launching MOM6 on rancor**, so that
@@ -296,7 +296,7 @@ Static B and analysis-to-restart writeback.
   improvement on the offline one rather than a prerequisite for it, so it is not in this phase;
   `b.vt` is in the graph and deferred, and what closes it is the vertical `filepath` naming a
   per-cycle file instead of a static one.
-- **Test:** tier 3, `tests/test_tier3_var.py`, two experiments at OM_1deg. Tiers 0 through 2
+- **Test:** tier 3, `tests/test_tier3_var.py`, two experiments at `gom_25km`. Tiers 0 through 2
   keep passing, plus `test_soca.py`, `test_writeback.py` and `test_persistence.py`.
 - **Order within the phase:** bring it up on `model: persistence` first. That gives the full DA
   loop, including writeback and background handoff, at no model cost, and a baseline to score
@@ -331,7 +331,10 @@ its integrity check.
 one the design predicted. Global observation files do not break a regional domain: SOCA runs,
 every out-of-domain observation fails QC, and the cycle completes. What it produces is an
 analysis with nothing in it, so the culling is owed for the sake of the *observation counts*,
-not for stability. That is why phase 6 is tested at OM_1deg.
+not for stability. What tier 3 does instead is read an archive that was generated in-domain
+(`obs/gom-osse-smoke`), which sidesteps the question rather than answering it: the first
+experiment to point a regional domain at a global archive still gets an empty analysis and no
+complaint.
 
 ## Phase 7. LETKF
 

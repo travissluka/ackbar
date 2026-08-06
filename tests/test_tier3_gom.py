@@ -1,10 +1,10 @@
-"""Tier 3: free run cycling on the real MOM6-SIS2, at gom_25km.
+"""Tier 3: what only a regional domain can be asked, at gom_25km.
 
-`test_tier3.py` proves restart continuity and reproduce-after-kill, and it
-proves them at `om_1deg`. Nothing here repeats that. This file asserts the
-things that are only true on a regional domain, and it is cheap enough to be
-worth having as its own run: a cycle is six seconds of model rather than two
-minutes.
+The same experiment `test_tier3.py` runs, asked different questions. That file
+takes the claims any domain would have to satisfy, restart continuity and
+reproduce-after-kill. Nothing here repeats them. This file asserts the things
+that are only true on a regional domain, and it is cheap enough to be worth its
+own run rather than an ordering dependency on the other module's.
 
 - **A configuration whose halves live apart still runs.** Text from the repository, data
   from the static root, and neither reachable from the other.
@@ -115,14 +115,9 @@ def test_the_regional_model_cycles_and_leaves_restart_sets(run):
         ["1.json", "2.json", "3.json"]
 
 
-def test_every_cycle_hands_its_restart_set_to_the_next(run):
-    # Same claim as om_1deg's, cheap enough here to be worth restating: the
-    # experiment starts at 2015-01-05 01:00 and steps 12 hours a cycle.
-    for cycle in KEPT:
-        line = (run.member_out("rst", cycle, 0) / "coupler.res"
-                ).read_text().splitlines()[2].split()[:6]
-        hours = 1 + 12 * cycle
-        assert [int(v) for v in line] == [2015, 1, 5 + hours // 24, hours % 24, 0, 0]
+# The restart handoff was checked here as well while this experiment and
+# `test_tier3.py`'s were different domains. They are one experiment now, so the
+# claim is asked once, there.
 
 
 # --- the overrides reach the model -------------------------------------------

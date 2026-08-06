@@ -33,15 +33,30 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.tier3
 
 REPO = Path(__file__).resolve().parents[1]
 DOMAIN = "gom_25km"
 
+#: The state the diracs are placed in, named rather than discovered. Left to
+#: itself `soca-dirac.sh` searches the domain's initial conditions and refuses
+#: to guess between several, which is right for a person at a terminal and wrong
+#: here: what is under test is the operator, and a second product or a perturbed
+#: ensemble appearing beside this one is not a change to it.
+EXPERIMENT = REPO / "tests" / "experiments" / "tier3_gom.yaml"
+
 #: Generous. The calibration is a quarter of a minute on this domain and the
 #: point of the limit is not to sit through a hang.
 TIMEOUT = 1800
+
+
+def restart():
+    """The experiment's initial condition, with this site's static root in it."""
+    named = yaml.safe_load(EXPERIMENT.read_text())["model"]["initial_condition"]
+    root = os.environ["ACKBAR_STATIC_ROOT"]
+    return Path(named.replace("$(static_root)", root)) / "MOM.res.nc"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -55,12 +70,15 @@ def require_everything():
         pytest.skip(f"run tools/soca-gridspec.sh {DOMAIN} first")
     if not Path(REPO, "pkg/jedi/build/bin/soca_error_covariance_toolbox.x").exists():
         pytest.skip("SOCA is not built")
+    if not restart().exists():
+        pytest.skip(f"{restart()} does not exist")
 
 
 def run(tool, *args):
     done = subprocess.run(
         [str(REPO / "tools" / tool), DOMAIN, *args],
         capture_output=True, text=True, timeout=TIMEOUT,
+        env={**os.environ, "ACKBAR_DIRAC_RESTART": str(restart())},
     )
     assert done.returncode == 0, done.stdout + done.stderr
     return done.stdout

@@ -142,22 +142,22 @@ it is eligible again. `ACKBAR_TIER2_FAST=1` skips the requeue case for iterating
 wrong thing to run before a commit, since requeue is the one fault the scheduler inflicts on
 its own without being asked.
 
-Tier 3 runs the real model, and there are three of them. `test_tier3.py` cycles `om_1deg` for
-three cycles, then does it again killing a forecast mid-integration, and asserts the healed
-restarts are bit-identical to the ones the undisturbed run wrote: about fifteen minutes and two
-gigabytes. `test_tier3_hofx.py` adds observers to the same free run and evaluates them against
-each cycle's background, over an archive with a deliberate hole in it, and asserts the missing
-file drops one observer rather than the cycle: about ten minutes. `test_tier3_gom.py` cycles the
-regional `gom_25km` and asserts what is only true there: a case whose text and data live apart,
-ACKBAR's overrides reaching the model, and the open boundary still configured. A cycle there is
-six seconds of model rather than two minutes, so it costs about two.
+Tier 3 runs the real model, all of it on `gom_25km`, where a simulated day costs six seconds
+against 178 at `om_1deg` and nothing under test is global-only. `test_tier3.py` cycles the free
+run three times, then does it again killing a forecast mid-integration, and asserts the healed
+restarts are bit-identical to the ones the undisturbed run wrote. `test_tier3_gom.py` runs the
+same experiment and asserts what only a regional domain can be asked: a case whose text and data
+live apart, ACKBAR's overrides reaching the model, and the open boundary still configured.
+`test_tier3_hofx.py` adds observers, evaluates them against each cycle's background over an
+archive with a deliberate hole in it, and asserts the missing file drops one observer rather
+than the cycle. Each is a few minutes, and almost all of that is scheduler latency.
 
 All are opt-in and need the built `coupler_main`, the offline initial condition the experiment
-names, and, for hofx, SOCA and the domain's static stage.
+names, and, for hofx, SOCA, the observation archive, and the domain's static stage.
 
 ```bash
 source site/activate.sh
-tools/soca-gridspec.sh om_1deg              # once per domain, and after a bundle bump
+tools/soca-gridspec.sh gom_25km             # once per domain, and after a bundle bump
 ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3.py tests/test_tier3_hofx.py
 ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3_gom.py
 ```
@@ -204,7 +204,7 @@ initial condition that an offline stage already produced, and creation materiali
 experiment's own cycle-0 restart location as symlinks. That one step is what makes cycle 1 an
 ordinary cycle: `forecast(1)` finds its background exactly where `forecast(50)` does, and
 nothing in the graph, the model, or healing carries a notion of a first cycle.
-`tests/experiments/tier3_free.yaml` is the smallest complete example.
+`tests/experiments/tier3_gom.yaml` is the smallest complete example.
 
 When something breaks, three commands cover it and none of them needs `squeue` or `scancel` by
 hand:

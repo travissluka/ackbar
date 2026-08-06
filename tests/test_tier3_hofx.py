@@ -1,4 +1,4 @@
-"""Tier 3: the observation path on the real model, at OM_1deg.
+"""Tier 3: the observation path on the real model, at gom_25km.
 
 The phase 5 milestone. The phase 4 free run with observers attached, and two
 claims, of which the second is the one the whole design of this path turns on:
@@ -11,18 +11,18 @@ claims, of which the second is the one the whole design of this path turns on:
   and the cycle finishes. An archive with holes is the normal case over any real
   record, and a workflow that stops on one is a workflow that cannot be used.
 
-One full run, so about ten minutes: three twelve hour forecasts, and hofx is
-seconds beside them. Opt in with `ACKBAR_TIER3=1`; needs `source
-site/activate.sh`, a built `coupler_main` and SOCA, the offline initial
-condition, and the domain's static stage (`tools/soca-gridspec.sh OM_1deg`).
+One full run, and almost all of it is scheduler latency: a twelve hour
+`gom_25km` forecast is six seconds and hofx is less. Opt in with
+`ACKBAR_TIER3=1`; needs `source site/activate.sh`, a built `coupler_main` and
+SOCA, the offline initial condition and observation archive the experiment
+names, and the domain's static stage (`tools/soca-gridspec.sh gom_25km`).
 
     ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3_hofx.py
 """
 
 import json
 import os
-import subprocess
-import sys
+import shutil
 from pathlib import Path
 
 import pytest
@@ -41,10 +41,10 @@ REPO = Path(__file__).resolve().parents[1]
 EXPERIMENT = REPO / "tests" / "experiments" / "tier3_hofx.yaml"
 NAME = "tier3_hofx"
 
-#: Three cycles of one twelve hour OM_1deg forecast each, plus hofx and the
+#: Three cycles of one twelve hour gom_25km forecast each, plus hofx and the
 #: bookkeeping. Generous, because what this guards against is sitting through a
 #: hang rather than a slow machine.
-QUIET = 1800
+QUIET = 900
 
 #: The cycle whose ADT file is deliberately absent, and the observer that is
 #: missing from it. Cycle 2 rather than 1 or 3, so that the cycle before it and
@@ -71,27 +71,33 @@ def paths_for():
 
 @pytest.fixture(scope="module")
 def archive(tmp_path_factory):
-    """An observation archive this test owns, with one file left out.
+    """A copy of the experiment's archive that this test owns, one file short.
 
-    Built here rather than shared, because the gap is the point of the test and
-    a hole punched in the archive every other experiment reads would be a hole
-    in their results too.
+    Copied rather than read in place, because the gap is the point of the test
+    and a hole punched in the archive every other experiment reads would be a
+    hole in their results too. Copied rather than generated, because the archive
+    is an offline product: what runs here should be the same bytes a real
+    experiment gets, not a second recipe for them that could drift.
     """
-    source = yaml.safe_load(EXPERIMENT.read_text())
-    root = tmp_path_factory.mktemp("obs")
-    subprocess.run(
-        [sys.executable, str(REPO / "tools" / "obs-archive-smoke.py"),
-         "--start", source["cycle"]["start"],
-         "--length", source["cycle"]["length"],
-         "--count", str(source["cycle"]["count"]),
-         "--out", str(root)],
-        check=True, capture_output=True,
-    )
+    source = yaml.safe_load(EXPERIMENT.read_text())["vars"]["obs_dir"]
+    root = tmp_path_factory.mktemp("obs") / "archive"
+    shutil.copytree(resolve_static(source), root)
     # The archive is keyed by date, not by cycle number, and the cycle
     # directories sort in time order, so this is the gap cycle's file.
     missing = sorted(root.rglob(f"*/{GAP_OBSERVER}.*.nc4"))[GAP_CYCLE - 1]
     missing.unlink()
     return root
+
+
+def resolve_static(value):
+    """`$(static_root)/...` as written in the experiment, against this site.
+
+    The one experiment-time symbol these paths use. Resolving it here rather
+    than hardcoding the archive keeps the experiment the only place that says
+    which observations this test runs on.
+    """
+    root = os.environ["ACKBAR_STATIC_ROOT"]
+    return Path(value.replace("$(static_root)", root))
 
 
 @pytest.fixture(scope="module")
@@ -176,7 +182,8 @@ def test_the_first_cycle_evaluates_the_initial_condition(run):
     """
     document = emitted(run, 1)
     assert document["state"]["basename"].rstrip("/").endswith("rst/0/mem000")
-    assert document["state"]["date"] == "1958-01-01T12:00:00Z"
+    assert document["state"]["date"] == \
+        yaml.safe_load(EXPERIMENT.read_text())["cycle"]["start"]
 
 
 def test_each_cycle_evaluates_its_own_background(run):

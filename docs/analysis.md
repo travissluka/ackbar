@@ -345,7 +345,7 @@ it after `model/mom6sis2`, since it is that configuration not integrated:
 
 ```yaml
 inherit:
-  - domain/om_1deg
+  - domain/gom_25km
   - model/mom6sis2
   - model/persistence
   - da/variational

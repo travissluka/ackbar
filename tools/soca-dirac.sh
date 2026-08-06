@@ -74,8 +74,14 @@ METADATA=$ACKBAR_ROOT/config/model/mom6sis2/fields_metadata.yaml
 RESTART=${ACKBAR_DIRAC_RESTART:-}
 
 if [[ -z $RESTART ]]; then
+    # `ic/<domain>/<product>/<date>/MOM.res.nc`, and no deeper. An initial
+    # condition that also carries a perturbed ensemble keeps it in a
+    # subdirectory beside that file, and those are the same state six more
+    # times rather than six more states to choose between. What this refuses to
+    # guess at is which product or which date, never which member.
     mapfile -t candidates < <(
-        find "$ACKBAR_STATIC_ROOT/ic/$DOMAIN" -name MOM.res.nc 2>/dev/null | sort)
+        find "$ACKBAR_STATIC_ROOT/ic/$DOMAIN" -maxdepth 3 -name MOM.res.nc \
+            2>/dev/null | sort)
     [[ ${#candidates[@]} -eq 1 ]] || {
         echo "soca-dirac: set ACKBAR_DIRAC_RESTART; found ${#candidates[@]} candidates" >&2
         exit 1

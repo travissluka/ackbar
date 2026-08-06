@@ -585,7 +585,7 @@ def test_the_shipped_layers_produce_a_document_soca_would_accept(tmp_path):
     # dictionary, and an unserializable value fails at the last moment.
     reread = yaml.safe_load(yaml.safe_dump(document))
     assert reread["geometry"]["fields metadata"].startswith(str(repo))
-    assert reread["state"]["date"] == "1958-01-01T12:00:00Z"
+    assert reread["state"]["date"] == "2015-01-05T01:00:00Z"
 
 
 # --- the covariance ----------------------------------------------------------

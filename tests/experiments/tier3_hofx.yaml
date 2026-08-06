@@ -10,16 +10,16 @@
 # where the first cycle looks different, and it is different in what it reads
 # rather than in what it does.
 inherit:
-  - domain/om_1deg
+  - domain/gom_25km
   - model/mom6sis2
   - da/none
   - obs/adt_3a
   - obs/sst_noaa19
 experiment:
   name: tier3_hofx
-  description: phase 5, hofx over a free run at OM_1deg
+  description: phase 5, hofx over a free run at gom_25km
 cycle:
-  start: '1958-01-01T12:00:00Z'
+  start: '2015-01-05T01:00:00Z'
   length: PT12H
   count: 3
 vars:
@@ -29,9 +29,12 @@ vars:
   # period differ in exactly this line. The observer layers append their own
   # cycle directory beneath it, so this names the archive and not a window.
   #
-  # `soca-test-smoke` is retimed bundle test data. See the README beside it:
-  # every departure it produces is meaningless, and it is here because the
-  # machinery under test is the staging, the dropping and the evaluation.
-  obs_dir: $(static_root)/obs/soca-test-smoke/1958
+  # `gom-osse-smoke` rather than the retimed bundle data in `soca-test-smoke`,
+  # for the reason its own README gives: those are real ioda files scattered
+  # over the world ocean and essentially none of them land in the Gulf, so a
+  # regional run reading them evaluates nothing and says so by succeeding.
+  # Every departure this one produces is fiction too. What is under test is the
+  # staging, the dropping and the evaluation.
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
 model:
-  initial_condition: $(static_root)/ic/om_1deg/woa13-smoke/19580101T12
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01

@@ -1,4 +1,4 @@
-"""Tier 3: free run cycling on the real MOM6-SIS2, at OM_1deg.
+"""Tier 3: free run cycling on the real MOM6-SIS2, at gom_25km.
 
 The phase 4 milestone, written down so that it is a test rather than an
 afternoon. Two claims, and the second is the one that costs something to check:
@@ -11,9 +11,14 @@ afternoon. Two claims, and the second is the one that costs something to check:
   when nothing went wrong. Anything weaker passes for a workflow that quietly
   restarts from the wrong state.
 
-Two full runs, so about fifteen minutes and two gigabytes of restarts. Opt in
-with `ACKBAR_TIER3=1`; needs `source site/activate.sh`, a built `coupler_main`,
-and the offline initial condition the experiment names.
+Neither claim is about the domain, so it is asked on the cheap one: a simulated
+day costs 6 seconds at `gom_25km` against 178 at `om_1deg`. The experiment is
+shared with `test_tier3_gom.py`, which asks it the things only a regional domain
+can be asked.
+
+Two full runs, and the model is seconds of it. Opt in with `ACKBAR_TIER3=1`;
+needs `source site/activate.sh`, a built `coupler_main`, the imported
+configuration, and the offline initial condition the experiment names.
 
     ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3.py
 """
@@ -26,10 +31,12 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from ackbar import ledger, slurm
 from ackbar.cli import main
 from ackbar.config.jobtime import member_dir
+from ackbar.duration import parse_duration, parse_instant
 from ackbar.paths import Paths
 from ackbar.site import load_site
 
@@ -38,13 +45,13 @@ from test_tier2 import _purge, _rows, wait_for_quiet
 pytestmark = pytest.mark.tier3
 
 REPO = Path(__file__).resolve().parents[1]
-EXPERIMENT = REPO / "tests" / "experiments" / "tier3_free.yaml"
-NAME = "tier3_free"
+EXPERIMENT = REPO / "tests" / "experiments" / "tier3_gom.yaml"
+NAME = "tier3_gom"
 
-#: A cycle is one 12 hour OM_1deg forecast on 8 PEs, a bit over two minutes,
-#: plus the bookkeeping around it. Generous, because what this guards against is
-#: sitting through a hang, not a slow machine.
-QUIET = 1800
+#: A cycle is one 12 hour gom_25km forecast on 8 PEs, six seconds of model plus
+#: the bookkeeping and scheduler latency around it. Generous, because what this
+#: guards against is sitting through a hang, not a slow machine.
+QUIET = 900
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -87,16 +94,38 @@ def cycle_through(kill_cycle=None):
     assert main(["start", NAME]) == 0
 
     if kill_cycle is not None:
-        job = _running_forecast(kill_cycle)
-        # Part way in, so that the attempt has written scratch and is a
-        # genuine mid-integration kill rather than a job that never started.
-        time.sleep(40)
-        slurm.scancel([job])
+        _kill_mid_forecast(kill_cycle)
         assert wait_for_quiet(NAME, QUIET) in ("stuck", "drained")
         assert main(["heal", NAME]) == 0
 
     assert wait_for_quiet(NAME, QUIET) == "drained"
     return paths_for()
+
+
+def _kill_mid_forecast(cycle, member=0, timeout=300):
+    """Cancel the forecast once it is doing work, and before it is finished.
+
+    Waiting a fixed number of seconds does not survive a change of domain: what
+    was mid-integration at `om_1deg` is minutes after the restarts were written
+    at `gom_25km`, and the kill then lands on a job that has already succeeded.
+    The test does not fail *there*, it fails two assertions later with nothing
+    having been healed, which is a long way from the cause.
+
+    So this waits on the model instead of on a clock. `model.log` is MOM6's own
+    stdout, so its first byte means the attempt is executing, and it is written
+    a whole initialization and integration before any restart is.
+    """
+    job = _running_forecast(cycle)
+    log = paths_for().scratch(cycle, "forecast", member) / "model.log"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if log.exists() and log.stat().st_size > 0:
+            slurm.scancel([job])
+            return
+        time.sleep(0.1)
+    # Scratch is deleted on success, so the other way to arrive here is a
+    # forecast that finished before this loop ever saw it.
+    pytest.fail(f"cycle {cycle}'s forecast never wrote {log}: {_rows(NAME)}")
 
 
 def _running_forecast(cycle, timeout=900):
@@ -142,9 +171,15 @@ def test_every_cycle_hands_its_restart_set_to_the_next(both_runs):
 
 
 def _expected_time(cycle):
-    """1958-01-01 12:00 plus one twelve hour cycle each, from the experiment."""
-    hours = 12 + 12 * cycle
-    return [1958, 1, 1 + hours // 24, hours % 24, 0, 0]
+    """`cycle.start` plus one cycle length each, read from the experiment.
+
+    Derived rather than written down, so that retiming the experiment does not
+    leave a date here that quietly still passes for the wrong reason.
+    """
+    source = yaml.safe_load(EXPERIMENT.read_text())["cycle"]
+    at = (parse_instant(source["start"])
+          + cycle * parse_duration(source["length"]))
+    return [at.year, at.month, at.day, at.hour, at.minute, at.second]
 
 
 def test_the_restart_sets_are_not_all_the_same_state(both_runs):
@@ -188,7 +223,8 @@ def test_the_model_resumed_rather_than_starting_over(both_runs):
 
 def test_cleanup_keeps_only_what_a_forecast_can_still_read(both_runs):
     # Cycle n's forecast reads n-1, so with the run finished at cycle 3 the sets
-    # worth keeping are 2 and 3. At a gigabyte a cycle this is not tidiness.
+    # worth keeping are 2 and 3. Cheap here, but the same rule runs at OM4_025,
+    # where a restart set is gigabytes and this is not tidiness.
     assert both_runs["kept"] == ["2", "3"]
 
 
