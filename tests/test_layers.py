@@ -3,7 +3,7 @@
 import pytest
 
 from ackbar.config.layers import (
-    LayerError, load_yaml, merge_layers, resolve_layers,
+    LayerError, merge_layers, resolve_layers,
 )
 from ackbar.config.merge import MergeError
 

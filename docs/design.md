@@ -608,7 +608,7 @@ submission runs it implicitly:
 1. the merged config against ackbar's own schema
 2. generation of every job's YAML for every cycle, checked as well-formed
 3. every referenced input path exists and is readable
-4. every executable exists and is runnable, and matches the recorded provenance
+4. every executable exists and is runnable
 5. projected disk usage against free space, and projected job count against queue limits
 6. the graph is acyclic, every member-level array shares the canonical index set, and every
    enabled task has declared resources
@@ -654,13 +654,22 @@ comparison can run against different binaries with nothing recording it. This ma
 concretely here, because answer-changing MOM6 defaults moved between the pins ackbar might use
 and because build directories get rebuilt in place.
 
-Recorded at experiment creation into `cfg/`, and re-checked on resume with a loud warning on
-drift:
+Recorded at experiment creation into `cfg/`, by `create._provenance`:
 
-- `git describe` for ackbar itself and for every submodule under `pkg/`
-- the sha256 and mtime of every executable the experiment will invoke
-- the spack-stack environment identifier
-- the resolved site layer
+- the experiment name, and when it was created
+- `ackbar_root`, and `ackbar_commit`: `git rev-parse HEAD` with a `-dirty` suffix when the
+  working tree is not clean
+- the site name, and the names of the layers the config was merged from
+
+A clean `ackbar_commit` pins every submodule under `pkg/` through its gitlink, so it does
+answer "which JEDI" for a clean tree. When the tree is dirty, `-dirty` is the whole of the
+signal: it does not say what differs, and a rebuilt build directory under an unchanged commit
+is invisible to it.
+
+What is *not* recorded, and is owed before two experiments can be compared with confidence:
+per-submodule commits, the sha256 and mtime of each executable the experiment invokes, the
+spack-stack environment identifier, and the resolved site layer rather than its name. Nothing
+re-checks provenance on resume; `ackbar resume` clears the halt flag and resubmits.
 
 ## Model and DA modes
 
@@ -796,7 +805,10 @@ produces the same diagnostics.
 
 Three classes must be supported, not two:
 
-- **global 1 degree** (`OM_1deg`), the development and test domain
+- **global 1 degree** (`OM_1deg`), the coarse global case. It was meant to be the development
+  and test domain and is not: a forecast there is slow enough that iterating on it was the
+  bottleneck, so `gom_25km` took that role and `om_1deg`'s live use is the graph fixtures,
+  which run no model
 - **global quarter degree** (`OM4_025`), the production domain
 - **regional domains at various resolutions**
 
@@ -1095,22 +1107,21 @@ regional last.
   member parallelism requires fewer PEs per member or oversubscription. The stub model removes
   this from the critical path for testing the workflow, but a small real configuration running
   four concurrent members at 2 PEs is still worth having as a correctness check.
-- **Divergence policy** for a missing or bad member, per experiment. See Task graph.
 - **Whether there is a control member, per DA method.** Settled for two of them. An LETKF does
   not use one, and `stub_letkf` runs with `control: false`. A hybrid does: `mem000` is the
   deterministic analysis, it is not assimilated by the filter, and it is the centre every other
   member is recentred onto. The graph carries this as `ensemble.control`, defaulting to true.
   What is still open is EDA, where every member is a deterministic analysis of perturbed
   observations and the control is one more of them or none of them.
-- **Where the analysis time sits in the window.** Centred is the current assumption, and it is
-  what soca-science did, but it is not the only valid position: 4DVar requires the window to
-  begin at the analysis time, and 4DEnVar allows either. So window placement becomes a
-  configured property of the solver when the 4D window work lands, not a constant. It is
-  `window_begin` in `config/jobtime.py`, computed as the cycle time minus half the cycle length,
-  and the reason it is called out here rather than left to the phase is that getting it wrong
-  produces a working experiment assimilating the wrong half day of observations. See phase 9 in
-  `docs/build-order.md`, which also lists the second implicit equality in the same place: the
-  window length is the cycle length, and a 4D window that overlaps its neighbours breaks it.
+- ~~**Where the analysis time sits in the window.**~~ **Settled in phase 9, in the other
+  direction: centred is not a choice.** This section used to say placement would become a
+  configured property of the solver. It cannot be. `CostFctFGAT::doLinearize` saves the state
+  at `timeWindow_.midpoint()` and `finishLinearize` replaces the background with it, so an
+  off-centre window writes an analysis valid at a time no cycle starts from. The window is
+  `window_bounds` in `src/ackbar/config/jobtime.py`, the analysis time plus and minus half the
+  *window* length, which is `solver.window.length` and falls back to the cycle length. The
+  second implicit equality named here is gone with it: `W` and `C` are now independent, and
+  `graph.build._check_window` refuses each way they can fail to fit, by name.
 - ~~**`da` is not necessarily one node.**~~ **Settled in phase 8: two tasks, and the first kept
   its name.** `da` is the analysis that produces the *control's* answer, whichever solver that
   is; `da.ens` is what maintains the ensemble a hybrid's covariance is drawn from, and exists

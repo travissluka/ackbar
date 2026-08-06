@@ -107,6 +107,36 @@ class TestKeyedLists:
             merge(base, {"observations": []}, KEYED)
         assert "duplicate" in str(caught.value)
 
+    def test_duplicate_key_in_the_overriding_layer_is_an_error_too(self):
+        """The asymmetry that used to make a typo silently drop an observer.
+
+        The second element with an identity already used merged onto the first,
+        so naming one observer twice folded two blocks into one and left the
+        observer meant to get the second block with nothing. No error from the
+        merge, and none from the schema either: there is no uniqueness
+        constraint on the key.
+        """
+        base = {"observations": [
+            {"obs space": {"name": "adt"}},
+            {"obs space": {"name": "sst"}},
+        ]}
+        over = {"observations": [
+            {"obs space": {"name": "adt"}, "obs localizations": [{"a": 1}]},
+            {"obs space": {"name": "adt"}, "obs localizations": [{"b": 2}]},
+        ]}
+        with pytest.raises(MergeError) as caught:
+            merge(base, over, KEYED)
+        assert "duplicate" in str(caught.value)
+        assert caught.value.path == ("observations", 1)
+
+    def test_a_removal_marker_that_is_not_a_boolean_is_refused(self):
+        # `$remove: 'true'` merged normally and then had its marker stripped, so
+        # the output carried no trace of a line meant to delete something.
+        base = {"observations": [{"obs space": {"name": "adt"}}]}
+        over = {"observations": [{"obs space": {"name": "adt"}, "$remove": "true"}]}
+        with pytest.raises(MergeError, match="only a boolean removes"):
+            merge(base, over, KEYED)
+
     def test_a_nested_list_inside_a_keyed_element_still_replaces(self):
         # observations is keyed; obs filters inside it is not. The schema path
         # of the inner list is observations.obs filters, with no index.

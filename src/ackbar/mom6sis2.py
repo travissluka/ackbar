@@ -40,6 +40,7 @@ one case where it is read is a misconfigured cold start and starting at the righ
 date beats starting in 1958.
 """
 
+import errno
 import os
 import re
 import shlex
@@ -177,6 +178,13 @@ def stage(config, run, cycle, task, *, source):
             f"never ran or exited without writing one, and starting from the "
             f"namelist date instead would integrate this state from the wrong "
             f"time without complaint."
+        )
+    ocean = (model.get("restart") or {}).get("ocn")
+    if ocean and not (source / ocean).exists():
+        raise ModelError(
+            f"{source} has a {STAMP} but no {ocean}, so it is a clock without "
+            f"an ocean. Resuming would leave MOM6 to fail on the missing file "
+            f"one cycle after whatever produced this set reported success."
         )
 
     run.mkdir(parents=True, exist_ok=True)
@@ -541,11 +549,39 @@ def commit(run, target, slots=None, restart=None, handoff=None):
         if name == STAMP:
             stamp = source
         else:
-            os.replace(source, target / name)
-    os.replace(stamp, target / STAMP)
+            _move(source, target / name)
+    _move(stamp, target / STAMP)
 
     if shared is not None:
         _link_state(target, shared, restart)
+
+
+def _move(source, target):
+    """One file from the run directory into the experiment tree.
+
+    `os.replace` is the whole operation while scratch and output share a
+    filesystem, which is how rancor is configured and why this has never been
+    exercised otherwise. They are meant to be two filesystems: `paths.py` says
+    so, `run._commit` says so, and the site file for the first real HPC will say
+    so by pointing scratch at a Lustre scratch and output at a project
+    directory. A rename between two filesystems raises `EXDEV`, so every
+    forecast would fail at its last step, after the model had run.
+
+    The fallback copies to a temporary *in the destination directory* and
+    renames within it, so the visible name still appears whole or not at all.
+    That is what lets `commit` write `coupler.res` last and have its presence
+    mean the set is complete.
+    """
+    try:
+        os.replace(source, target)
+        return
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+    partial = target.with_name(target.name + ".partial")
+    shutil.copyfile(source, partial)
+    os.replace(partial, target)
+    os.unlink(source)
 
 
 def _final_set(written, restart):
@@ -607,6 +643,24 @@ def _stamped_set(written, when, restart):
             f"exist. `restart_interval` in `coupler_nml` has to divide the "
             f"cycle length for the forecast to write a set there at all."
         )
+    # And the ocean, whose absence is otherwise invisible. `coupler_main` stamps
+    # its own two clock files and FMS stamps SIS2's, so an interval written on a
+    # domain whose `MOM_override` lacks `RESTART_CONTROL = 2` looks complete:
+    # MOM6 took the default bit and overwrote one unstamped `MOM.res.nc` rather
+    # than stamping anything. Unchecked, `commit` then deletes that unstamped
+    # file as unclaimed and hands forward a set carrying a clock and an ice
+    # state and no ocean, which passes every "is this set whole" test ackbar
+    # makes (all of them key on `coupler.res`) and fails a cycle later inside
+    # MOM6, by which point the analysis has already run against it.
+    if not any(name == restart for _, name in found):
+        raise ModelError(
+            f"the model exited 0 having written no {restart} at {when} in "
+            f"{written}, so the set the next cycle resumes from would carry a "
+            f"clock and an ice state and no ocean. `RESTART_CONTROL` in this "
+            f"domain's `MOM_override` has to have bit 1 set (`= 2`) for MOM6 to "
+            f"write a time-stamped restart at all; the default bit 0 overwrites "
+            f"one unstamped file per interval."
+        )
     return found
 
 
@@ -650,7 +704,7 @@ def _claim_slot(written, when, directory, restart):
         )
     directory.mkdir(parents=True, exist_ok=True)
     for source in found:
-        os.replace(source, directory / source.name.replace(body, stem))
+        _move(source, directory / source.name.replace(body, stem))
 
 
 def _link_state(target, directory, restart):

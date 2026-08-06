@@ -50,11 +50,22 @@ domain_paths "$DOMAIN"
 GRIDGEN=$ACKBAR_ROOT/pkg/jedi/build/bin/soca_gridgen.x
 NAMELIST=$ACKBAR_ROOT/config/model/mom6sis2/mom_input.nml
 METADATA=$ACKBAR_ROOT/config/model/mom6sis2/fields_metadata.yaml
-# Rossby radius, which becomes a field in the gridspec and is read by the
-# horizontal localization the ensemble phases configure. Not needed by hofx.
+# Rossby radius, which becomes a field in the gridspec. It is the most
+# load-bearing science input this script has: `config/static/diffusion.yaml`
+# scales it into the `hz`, `hz_ssh` and `loc_hz` correlation lengths, and the
+# LETKF's Rossby localization reads it at every grid point. Checked with the
+# rest rather than treated as optional, because SOCA reads `rossby file` with no
+# default: a gridspec built without it fails much later and twice over, as a
+# missing key when the diffusion scales are computed and as a garbage
+# localization radius after that.
+#
+# Still a path into a submodule's test tree, which `git clean` there removes and
+# which the convention followed by `fields_metadata.yaml` and `obsop_name_map.yml`
+# says not to depend on. Where it should live instead is a question about the
+# static stage rather than about this script.
 ROSSBY=$ACKBAR_ROOT/pkg/jedi/soca/test/Data/rossrad.nc
 
-for path in "$GRIDGEN" "$NAMELIST" "$METADATA" "$BASE/MOM_input" \
+for path in "$GRIDGEN" "$NAMELIST" "$METADATA" "$ROSSBY" "$BASE/MOM_input" \
             "$OVERRIDE/MOM_override" "$OVERRIDE/MOM_override.soca" "$DATA"; do
     [[ -e $path ]] || { echo "soca-gridspec: $path does not exist" >&2; exit 1; }
 done
@@ -81,7 +92,7 @@ printf 'soca_gridspec\n1 1 1 0 0 0\n' > diag_table
     echo "  geom_grid_file: soca_gridspec.nc"
     echo "  mom6_input_nml: mom_input.nml"
     echo "  fields metadata: $METADATA"
-    [[ -e $ROSSBY ]] && echo "  rossby file: $ROSSBY"
+    echo "  rossby file: $ROSSBY"
 } > gridgen.yml
 
 echo "soca-gridspec: building $DOMAIN geometry in $WORK"

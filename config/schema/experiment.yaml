@@ -85,6 +85,23 @@ properties:
       count: { type: integer, minimum: 1 }
       throttle: { type: integer, minimum: 1 }
 
+  # What survives the cycling. `cleanup` reaps every state directory at or
+  # below `n-2`, which is all any later task can read, so by the end of a run
+  # the only model states left are the last two cycles'. A keep rule pins one
+  # cycle in every `keep_every`, which is what makes a long experiment
+  # branchable: `model.initial_condition` can then name another experiment's
+  # `rst/<n>/mem000` and start a variant from the middle of it.
+  #
+  # In cycles, not v2's `SAVE_RST_REGEX` date pattern, because ackbar numbers
+  # cycles; the regex existed there only because directories were named by
+  # date. Cycle 0 is pinned by any keep rule, being the materialized initial
+  # condition.
+  cleanup:
+    type: object
+    additionalProperties: false
+    properties:
+      keep_every: { type: integer, minimum: 1 }
+
   model:
     type: object
     required: [name]

@@ -11,6 +11,7 @@ has to replace rather than inherit, and a data directory beside it rather than
 inside it, because that is the shape a regional domain has.
 """
 
+import errno
 import json
 import os
 from datetime import datetime, timezone
@@ -671,6 +672,79 @@ def test_a_handoff_the_run_never_wrote_a_set_at_stops_the_cycle(tmp_path):
                         handoff=missed)
 
 
+def test_an_interval_with_a_clock_and_no_ocean_is_refused_not_handed_forward(
+        tmp_path):
+    """What a domain missing `RESTART_CONTROL = 2` actually leaves behind.
+
+    MOM6 takes the default bit and overwrites one unstamped file per interval
+    instead of stamping anything, while `coupler_main` and FMS stamp theirs
+    regardless. So the interval looks present and is missing the only part that
+    matters. Unrefused, `commit` deletes the unstamped ocean state as unclaimed
+    and hands forward a clock, an ice state and nothing else, which every check
+    ackbar makes accepts because they all key on `coupler.res`.
+    """
+    written = written_restart(tmp_path / "run" / "RESTART")
+    for state, _ in SLOTS.values():
+        (written / state).unlink()
+
+    with pytest.raises(mom6sis2.ModelError, match="RESTART_CONTROL"):
+        mom6sis2.commit(written.parent, tmp_path / "rst", restart="MOM.res.nc",
+                        handoff=HANDOFF)
+
+    # And nothing was committed on the way to finding out.
+    assert not (tmp_path / "rst").exists()
+
+
+def test_a_restart_set_commits_across_a_filesystem_boundary(tmp_path, monkeypatch):
+    """Scratch and output are meant to be two filesystems.
+
+    `paths.py` and `run._commit` both say so, and the first site file that
+    honours it points scratch at a Lustre scratch and output at a project
+    directory. A rename between two of them raises EXDEV, which would fail every
+    forecast at its last step with the model run already paid for. It works on
+    rancor only because both roots are under `/data`.
+    """
+    written = written_restart(tmp_path / "run" / "RESTART")
+    real = os.replace
+    crossed = []
+
+    def one_filesystem_per_root(source, target):
+        if Path(source).is_relative_to(tmp_path / "run") \
+                and not Path(target).is_relative_to(tmp_path / "run"):
+            crossed.append(Path(target).name)
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real(source, target)
+
+    monkeypatch.setattr(mom6sis2.os, "replace", one_filesystem_per_root)
+    mom6sis2.commit(written.parent, tmp_path / "rst",
+                    slots=slot_map(tmp_path), restart="MOM.res.nc")
+
+    assert crossed                      # the boundary was actually reached
+    assert (tmp_path / "rst" / "MOM.res.nc").exists()
+    assert (tmp_path / "rst" / mom6sis2.STAMP).exists()
+    assert (tmp_path / "bkg" / "20150105T040000Z" / "MOM.res.nc").read_bytes() \
+        == b"ocean MOM.res_Y2015_D005_S14400.nc\n"
+    # Nothing half-written is left under either name.
+    assert not list((tmp_path / "rst").glob("*.partial"))
+
+
+def test_a_set_with_no_ocean_in_it_is_refused_before_the_model_starts(
+        env, tmp_path):
+    """The other end of the same hole.
+
+    A set that reached `rst/` without an ocean would otherwise be staged, and
+    MOM6 would fail on the missing file a whole cycle after the thing that
+    produced it reported success.
+    """
+    config, _, _ = env
+    source = tmp_path / "rst"
+    restart_set(source)
+    (source / "MOM.res.nc").unlink()
+
+    with pytest.raises(mom6sis2.ModelError, match="clock without an ocean"):
+        mom6sis2.stage(config, tmp_path / "run", 1, "forecast", source=source)
+
+
 # --- launching ---------------------------------------------------------------
 
 def test_the_launcher_and_the_task_size_come_from_config(env, tmp_path, monkeypatch):
@@ -817,6 +891,10 @@ def test_cleanup_looks_for_the_model_s_own_restarts_and_not_the_stub_s(env):
     assert run.restart_stamp(config) == mom6sis2.STAMP
     for cycle in (1, 2):
         restart_set(paths.member_out("rst", cycle, 0))
+    # A free run evaluates observations against the set being dropped, and that
+    # `hofx` is a leaf, so `cleanup` waits for it as well as for the restarts.
+    paths.sentinel(2, "hofx").parent.mkdir(parents=True, exist_ok=True)
+    paths.sentinel(2, "hofx").write_text("{}")
 
     run.run_task(config, site, paths, 3, "cleanup")
     assert not paths.cycle_out("rst", 1).exists()
@@ -838,4 +916,41 @@ def test_the_config_layer_points_at_a_case_that_is_actually_there(config):
     assert os.path.isdir(model["base"])
     assert os.path.isfile(model["base"] + "/input.nml")
     assert os.path.isfile(model["diag_table"]["forecast"])
+
+
+#: Where the per-domain overrides live, and the shared base they must not
+#: duplicate. Two spellings of one parameter is a fatal in MOM6, so `common/`
+#: deliberately ships no `MOM_override` at all.
+DOMAINS = REPO / "config" / "model" / "mom6sis2" / "domain"
+
+
+def test_every_domain_keeps_the_back_compatibility_bugs_off():
+    """Guarded here rather than only where a real model reports what it ran.
+
+    Dropping the back-compatibility pins is a closed decision whose reversal
+    invalidates every initial condition already generated, and it was checked
+    only by a tier 3 assertion: delete the line from a domain and tiers 0 to 2
+    stay green, on a machine with no model built at all.
+    """
+    overrides = sorted(DOMAINS.glob("*/*/MOM_override")) \
+        + sorted(DOMAINS.glob("*/MOM_override"))
+    assert overrides, f"no MOM_override found under {DOMAINS}"
+    for path in overrides:
+        assert "ENABLE_BUGS_BY_DEFAULT = False" in path.read_text(), path
+
+
+def test_every_domain_asks_mom6_for_a_time_stamped_restart():
+    """What makes a sub-window state and an interval handoff exist at all.
+
+    Bit 0 is the default and overwrites one unstamped file, so a forecast given
+    a `restart_interval` on a domain missing this ends holding the state it
+    started from, having reported success at every step.
+    """
+    for path in sorted(DOMAINS.glob("*/*/MOM_override")) \
+            + sorted(DOMAINS.glob("*/MOM_override")):
+        assert "RESTART_CONTROL = 2" in path.read_text(), path
+
+
+def test_the_shared_base_ships_no_override_to_be_overridden_twice():
+    assert not (DOMAINS / "gom" / "common" / "MOM_override").exists()
 

@@ -10,10 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from ackbar import ledger, run, soca
+from ackbar import ledger, run, soca, submit
 from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
+from ackbar.graph.build import build_graph
 from ackbar.paths import Paths
 
 REPO = Path(__file__).resolve().parents[1]
@@ -302,6 +303,99 @@ def test_a_cleanup_that_refused_once_tries_again(env):
     assert not paths.cycle_out("rst", 1).exists()
 
 
+def test_a_cleanup_that_refused_collects_the_arrears_on_its_next_pass(env):
+    """A refusal has to be a delay and not a leak.
+
+    Each cleanup runs once and nothing revisits its cycle, so indexing a single
+    directory means one incomplete cycle strands its predecessor's state for the
+    life of the experiment. At gom_4km with twenty members that is tens of
+    gigabytes a cycle, and it accumulates in exactly the situation that produced
+    it: a disk too full to finish a forecast.
+    """
+    _, _, paths = env
+    for cycle in (1, 2, 3):
+        _complete_cycle(env, cycle)
+
+    # Cycle 2 is incomplete when cleanup(3) looks, so cycle 1 survives it.
+    missing = paths.member_out("rst", 2, 2) / "restart.stub"
+    missing.unlink()
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists()
+
+    # By the time cleanup(4) runs the cycle has been healed. Cycle 1 is below
+    # its horizon rather than at it, and is collected anyway.
+    missing.write_bytes(b"healed")
+    do(env, 4, "cleanup")
+    assert not paths.cycle_out("rst", 1).exists()
+    assert not paths.cycle_out("rst", 2).exists()
+    assert paths.cycle_out("rst", 3).exists()
+
+
+def test_a_keep_rule_pins_one_cycle_in_every_n(env):
+    """What makes a long experiment branchable.
+
+    Without it the states left when a fifty cycle run finishes are cycles 49 and
+    50, so re-running a segment after a mistake found at cycle 40 means starting
+    from cycle 0.
+    """
+    config, _, paths = env
+    config["cleanup"] = {"keep_every": 2}
+    for cycle in (1, 2, 3, 4):
+        _complete_cycle(env, cycle)
+
+    do(env, 4, "cleanup")
+    assert not paths.cycle_out("rst", 1).exists()
+    assert paths.cycle_out("rst", 2).exists()
+    # And the initial condition, which is cycle 0 and is what a variant would
+    # actually be branched from.
+    assert paths.cycle_out("rst", 0).exists()
+
+
+def test_cleanup_waits_for_the_hofx_reading_the_set_it_would_delete(env):
+    """`hofx` is a leaf, so nothing upstream of the next cycle waits for it.
+
+    `hofx(n)` reads `rst/<n-1>` and `cleanup(n+1)` drops exactly that. Both are
+    released by the same forecast completing, and on one node they cannot even
+    run at once, so one of them runs second by construction. This is the free
+    run shape, which is also the OSSE truth run.
+    """
+    config, _, paths = env
+    config["solver"] = {"name": "none", "window": {"type": "3d"}}
+    _complete_cycle(env, 1)
+    _complete_cycle(env, 2)
+
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists()
+
+    paths.sentinel(2, "hofx").parent.mkdir(parents=True, exist_ok=True)
+    paths.sentinel(2, "hofx").write_text("{}")
+    do(env, 3, "cleanup")
+    assert not paths.cycle_out("rst", 1).exists()
+
+
+def test_cleanup_waits_for_the_long_forecast_still_integrating(env):
+    """A long forecast outlives the cycle it started from by construction.
+
+    That is the whole reason its cadence is a setting. A running model has
+    already opened its restarts, but a requeued one rebuilds `INPUT/` from
+    scratch and would find the tree gone.
+    """
+    config, _, paths = env
+    config["forecast"] = {"extended": {"length": "P7D", "every": "PT24H"}}
+    _complete_cycle(env, 1)
+    _complete_cycle(env, 2)
+
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists()
+
+    for cycle in (1, 2):
+        sentinel = paths.sentinel(cycle, "forecast.ext", 1)
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text("{}")
+    do(env, 3, "cleanup")
+    assert not paths.cycle_out("rst", 1).exists()
+
+
 def test_stats_reruns_rather_than_reporting_the_run_it_replaced(env):
     """The harvest describes a cycle, and a heal changes what the cycle is."""
     _, _, paths = env
@@ -331,12 +425,45 @@ def test_the_last_cycle_submits_nothing(env):
 
 def test_a_cycle_already_in_the_ledger_is_not_submitted_again(env):
     # The ledger is the authority, and it is the check that survives a marker
-    # file being tidied away by hand.
-    _, _, paths = env
+    # file being tidied away by hand. A requeued submitter reaching here twice
+    # is what this prevents, and what it left behind is the whole cycle.
+    config, _, paths = env
+    tasks = [n.task for n in build_graph(config).cycle_nodes(2)]
+    for task in tasks:
+        ledger.append(paths, cycle=2, task=task, members=(), attempt=1,
+                      job_id=1, dependency=None)
+    assert do(env, 1, "submit") == 0
+    assert len(ledger.read(paths)) == len(tasks)
+
+
+def test_a_cycle_only_partly_in_the_ledger_is_finished_rather_than_skipped(
+        env, monkeypatch):
+    """The state a submitter that died partway through leaves behind.
+
+    Asked of the cycle as a whole, this reads as done: the submitter exits 0,
+    the unsubmitted nodes have no job id, so nothing reports them failed and no
+    heal finds them broken. The experiment wedges while reading as healthy, and
+    no command repairs it: `resume` submits the cycle after this one, whose
+    parents were never submitted, and re-submitting the cycle by hand duplicates
+    the tasks that did go.
+    """
+    config, _, paths = env
     ledger.append(paths, cycle=2, task="da", members=(), attempt=1, job_id=1,
                   dependency=None)
-    assert do(env, 1, "submit") == 0
-    assert len(ledger.read(paths)) == 1
+
+    asked = {}
+
+    def record(config, site, paths, cycle, *, graph=None, tasks=None, **kw):
+        asked.update(cycle=cycle, tasks=tasks)
+        return []
+
+    monkeypatch.setattr(submit, "submit_cycle", record)
+    do(env, 1, "submit")
+
+    tasks = {n.task for n in build_graph(config).cycle_nodes(2)}
+    assert asked["cycle"] == 2
+    # Everything but the one already there, and `da` is not submitted twice.
+    assert set(asked["tasks"]) == tasks - {"da"}
 
 
 # --- the harvest -------------------------------------------------------------

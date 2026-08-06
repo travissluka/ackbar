@@ -60,13 +60,13 @@ download; list the directory for the real ones.
 
 | Tarball | ~Size | Contents / why |
 |---|---|---|
-| `OM_1deg.tgz` | 9 MB | `OM_1deg/INPUT` grid, topography, vgrid. Our development config. **Present.** |
-| `reanalysis-sample.tgz` | 174 MB | `reanalysis/JRA55-do/v1.4.0/{short_sample,padded}`, the `JRA_*.nc` forcing `OM_1deg` links. **Present.** |
+| `OM_1deg.tgz` | 9 MB | `OM_1deg/INPUT` grid, topography, vgrid. |
+| `reanalysis-sample.tgz` | 174 MB | `reanalysis/JRA55-do/v1.4.0/{short_sample,padded}`, the `JRA_*.nc` forcing `OM_1deg` links. |
 | `reanalysis.tgz` | 12.4 GB | Full JRA55-do v1.4.0. Only needed for multi-year JRA-forced runs. |
 | `OM4_025.tgz` | 421 MB | Quarter degree. Newer than the `/data/OLD` copy; see the gap noted below. |
 | `OM4_025.tgz.old` | 324 MB | The older quarter-degree pack, which is what `/data/OLD/MOM6_static/OM4_025` matches. |
 | `OM4_05.tgz` | 89 MB | Half degree. |
-| `obs.woa13.tgz` | 1.0 GB | `obs/NOAA-NODC/WOA13/v2a` monthly T/S used to initialize `OM_1deg`. **Present** via `/data/OLD`. |
+| `obs.woa13.tgz` | 1.0 GB | `obs/NOAA-NODC/WOA13/v2a` monthly T/S used to initialize `OM_1deg`. Reachable via `/data/OLD`. |
 | `obs.tgz` | 84 MB | Older WOA05 observational climatology. |
 | `global.tgz` | 741 MB | Legacy `global/siena_201204` style datasets for old configs. |
 | `CORE.tgz` | 895 MB | CORE/NYF v2 atmospheric forcing. |

@@ -8,7 +8,7 @@ first-class configuration axis here rather than a flag (see Domains in
 
 | Domain | Grid | NK | DT | One sim day, 8 PEs | Use |
 |---|---|---|---|---|---|
-| `om_1deg` | 360 x 320 | 75 | 1800 | 178 s | global development and test |
+| `om_1deg` | 360 x 320 | 75 | 1800 | 178 s | coarse global; graph fixtures only |
 | `gom_25km` | 87 x 56 | 36 | 1800 | 6.3 s | regional plumbing |
 | `gom_12km` | 174 x 111 | 36 | 900 | 30.5 s | regional science |
 | `gom_8km` | 271 x 173 | 25 | 900 | 67 s | eddy resolving |

@@ -29,8 +29,8 @@ from . import (ensemble, ledger, mom6sis2, observations, persistence, soca,
                writeback)
 from .config.jobtime import (cycle_time, forecast_overshoot, handoff_time,
                              slot_times)
-from .graph.build import member_set
-from .graph.tasks import ensemble_covariance, ensemble_source
+from .graph.build import extended_cycles, extended_members, member_set
+from .graph.tasks import BY_NAME, ensemble_covariance, ensemble_source
 
 #: Faults the stub can inject, each named for the terminal state it produces.
 #: `impossible memory request` is deliberately absent: that is a resources
@@ -989,6 +989,7 @@ def _submit_next(config, site, paths, cycle):
     failed cycle stops the chain rather than producing cycles of garbage off a
     bad background.
     """
+    from .graph.build import build_graph
     from .submit import submit_cycle
 
     if paths.halt_flag.exists():
@@ -1001,13 +1002,28 @@ def _submit_next(config, site, paths, cycle):
     if nxt > config["cycle"]["count"]:
         print(f"ackbar: cycle {cycle} is the last, nothing to submit")
         return
-    if nxt in ledger.submitted_cycles(paths):
-        # The ledger is the authority on "was this already submitted", and it
-        # is the check that survives a marker file being cleaned up by hand.
+
+    # The ledger is the authority on "was this already submitted", and it is
+    # the check that survives a marker file being cleaned up by hand. Asked per
+    # task rather than per cycle, because a submitter that dies partway through
+    # leaves some of the cycle in the ledger and the rest nowhere at all. Asked
+    # of the cycle as a whole, this would report the cycle done and exit 0; the
+    # unsubmitted nodes have no job id, so nothing reports them failed, no heal
+    # finds them broken, and the experiment wedges in the one state that reads
+    # as healthy. `tasks=` is the path `heal` already uses, and it leaves the
+    # submission marker alone for exactly this reason.
+    graph = build_graph(config)
+    done = {r["task"] for r in ledger.read(paths) if r["cycle"] == nxt}
+    missing = [n.task for n in graph.cycle_nodes(nxt) if n.task not in done]
+    if not missing:
         print(f"ackbar: cycle {nxt} is already in the ledger, not submitting")
         return
+    if done:
+        print(f"ackbar: cycle {nxt} is partly in the ledger, submitting the "
+              f"{len(missing)} task(s) that are not: {', '.join(missing)}")
 
-    records = submit_cycle(config, site, paths, nxt)
+    records = submit_cycle(config, site, paths, nxt, graph=graph,
+                           tasks=missing if done else None)
     for record in records:
         print(f"ackbar: submitted {record['cycle']}.{record['task']} "
               f"as {record['job_id']}")
@@ -1043,6 +1059,13 @@ def _cleanup(config, paths, cycle):
     a week fills the disk in the second week. `obs_out/` is deliberately not
     here: the departures are the experiment's product rather than an
     intermediate, and they are kilobytes where these are gigabytes.
+
+    Everything at or below the horizon goes, not only `<n-2>` itself. A refusal
+    has to be a delay rather than a leak: this task considers one cycle, runs
+    once, and nothing revisits it, so indexing a single directory means one
+    incomplete cycle strands its predecessor's state for the life of the
+    experiment. Sweeping the range instead collects on the next pass whatever
+    the last one declined to touch.
     """
     members = member_set(config)
     keep = cycle - 1
@@ -1052,10 +1075,39 @@ def _cleanup(config, paths, cycle):
 
     stamp = restart_stamp(config)
     proof = [paths.member_out("rst", keep, m) / stamp for m in members]
+
+    # The restart sets prove the *cycling* forecast is past this state, and for
+    # a long time that was read as proof that everything was. It is not. The
+    # rule is the design's: a cycle's inputs may go once every declared
+    # consumer's output exists, and two consumers sit outside the chain that
+    # ends at `rst/<keep>`.
+    #
+    # `hofx(keep)` reads `rst/<drop>` and is a leaf: nothing requires it to
+    # finish before the forecast that releases the next cycle, so it and this
+    # task are released by the same event and race. Its sentinel is the right
+    # artifact rather than an output path, because a cycle whose observers all
+    # realize empty legitimately writes no observation file.
+    if BY_NAME["hofx"].when(config):
+        proof.append(paths.sentinel(keep, "hofx"))
+
+    # A long forecast outlives the cycle it started from by construction, which
+    # is the whole reason its cadence is a setting. It starts from the same
+    # state as the cycling forecast (`ana/<n>` with an analysis, `rst/<n-1>`
+    # without), so the one integrating out of the dropped tree is `drop` in a DA
+    # run and `keep` in a free one; wait for both rather than work out which
+    # shape this is. A running model has already opened its restarts, but a
+    # requeued one rebuilds `INPUT/` from scratch and would find nothing.
+    if BY_NAME["forecast.ext"].when(config):
+        long_forecast = extended_cycles(config, config["cycle"]["count"])
+        for when in (drop, keep):
+            if when in long_forecast:
+                proof.extend(paths.sentinel(when, "forecast.ext", m)
+                             for m in extended_members(config, members))
+
     absent = [str(p) for p in proof if not p.exists()]
     if absent:
-        print(f"ackbar: not cleaning cycle {drop}, cycle {keep} is incomplete "
-              f"({len(absent)} restart(s) missing)")
+        print(f"ackbar: not cleaning cycle {drop} or earlier, cycle {keep} is "
+              f"incomplete ({len(absent)} artifact(s) missing)")
         return
 
     # `ana/<drop>` is safe under the same proof: it is what `forecast(drop)`
@@ -1065,10 +1117,37 @@ def _cleanup(config, paths, cycle):
     # and `rst/<keep>` existing means that analysis and the forecast after it
     # are both done with them.
     for kind in ("rst", "ana", "bkg"):
-        target = paths.cycle_out(kind, drop)
-        if target.exists():
+        for target in _reapable(paths, kind, drop, config):
             shutil.rmtree(target)
             print(f"ackbar: removed {target}")
+
+
+def _reapable(paths, kind, drop, config):
+    """The cycle directories of one kind at or below the horizon, oldest first.
+
+    Skips the ones a keep rule pins. Without one an experiment holds only its
+    last two cycles the moment it finishes, so branching a variant off the
+    middle of a fifty cycle run, or re-running a segment after a mistake found
+    at cycle forty, means starting again from cycle zero. The deletion happens
+    in-cycle and is not reversible, so noticing afterwards is too late.
+
+    Counted in cycles rather than v2's `SAVE_RST_REGEX` date pattern, because
+    ackbar numbers cycles: a date regex existed there only because directories
+    were named by date.
+    """
+    keep_every = (config.get("cleanup") or {}).get("keep_every")
+    root = paths.sub(kind)
+    if not root.is_dir():
+        return
+    for entry in sorted(root.iterdir(), key=lambda p: p.name):
+        if not entry.is_dir() or not entry.name.isdigit():
+            continue
+        number = int(entry.name)
+        if number > drop:
+            continue
+        if keep_every and not number % keep_every:
+            continue
+        yield entry
 
 
 def _stats(site, paths, cycle):

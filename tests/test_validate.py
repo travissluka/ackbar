@@ -37,11 +37,17 @@ SITE = {
 FIXTURES = [
     "free_om1deg",
     "var_om1deg",
-    "fourd_om1deg",
     "letkf_om1deg",
     "envar_om1deg",
     "hybrid_om1deg",
 ]
+
+#: Not in `FIXTURES`, and this is the point rather than an oversight: a
+#: four-dimensional variational experiment is a configuration ACKBAR can build a
+#: graph for and cannot yet run, so `validate` is supposed to say so. Listing it
+#: as clean would assert the opposite. Move it back when phase 9 lands the FGAT
+#: analysis document.
+DEFERRED_FIXTURE = "fourd_om1deg"
 
 
 @pytest.fixture(scope="module")
@@ -143,6 +149,28 @@ class TestTheFixturesAreClean:
         assert main(["validate", "--offline", str(EXPERIMENTS / f"{name}.yaml")]) == 0
         assert "ok:" in capsys.readouterr().out
 
+    def test_a_window_nothing_can_solve_yet_is_refused_before_the_experiment_runs(
+            self, keys, schema):
+        """Where the refusal lands matters as much as that it exists.
+
+        `soca.var_config` already refuses this, but it refuses inside cycle 1's
+        `da` job. By then `create` and `start` have both succeeded and the
+        cycling forecast has run at 1.5x the model cost to write sub-window
+        states that nothing will read.
+        """
+        findings = offline(load(DEFERRED_FIXTURE, keys), schema)
+        assert [f.where for f in findings] == ["solver.window.type"]
+        assert "phase 9" in findings[0].message
+
+    def test_a_four_dimensional_letkf_is_not_caught_by_that(self, keys, schema):
+        # It is `config/soca/var.yaml` that cannot do this, and the LETKF does
+        # not read it. Refusing here on the window type alone would block a
+        # configuration that has no such problem.
+        config = load("letkf_om1deg", keys)
+        config["solver"]["window"] = {"type": "4d"}
+        config["forecast"] = {"slots": "PT12H"}
+        assert offline(config, schema) == []
+
 
 class TestStep1Configuration:
     def test_a_schema_violation_is_reported(self, keys, schema):
@@ -159,6 +187,24 @@ class TestStep1Configuration:
         found = offline(config, schema)
         assert [f.step for f in found] == [1]
         assert "500e3" in found[0].message
+
+    @pytest.mark.parametrize("where,value", [
+        ("start", "not-a-date"),
+        ("length", "Potato"),
+    ])
+    def test_a_date_the_schema_cannot_describe_is_reported_and_not_raised(
+            self, where, value, keys, schema):
+        """`format: date-time` is annotation-only and `pattern: '^P'` takes `Potato`.
+
+        Left to the parser downstream, a one-character typo in a date raised out
+        of the middle of `validate` with no config path and skipped every step
+        after it, which is the silently-partial report the command exists to
+        prevent.
+        """
+        config = load("var_om1deg", keys)
+        config["cycle"][where] = value
+        found = offline(config, schema)
+        assert [f.where for f in found if f.step == 1] == [f"cycle.{where}"]
 
 
 class TestStep2EveryJobsConfig:

@@ -50,8 +50,9 @@ to be cheap to define, reproducible, and directly comparable to one another.
   stages (open boundary forcing, grid-edge masking, domain-scoped observation culling) rather
   than a special mode, though it also carries a build-level constraint on how SOCA is compiled.
 - **Everything ackbar runs is pinned by ackbar.** The JEDI bundle and the forecast model are
-  submodules under `pkg/`, and each experiment records the exact commits and binaries that
-  produced it. Comparisons are only meaningful if the code is accounted for.
+  submodules under `pkg/`, and each experiment records the ackbar commit that produced it,
+  which pins all of them through their gitlinks. Comparisons are only meaningful if the code
+  is accounted for.
 - **Built to be monitored and healed**, because HPCs kill jobs for reasons unrelated to the
   science. Per-stage CPU and memory are harvested into the experiment directory, and a failed
   subgraph can be regenerated and resubmitted.

@@ -27,9 +27,13 @@ Two prior attempts exist and are studied here as references, not as code to inhe
 2. `~/work/soca-science-v3` - an unfinished Python/rocoto rewrite (`socasci` package).
    Good bones, never finished, targets a SOCA/MOM6 vintage from 2022.
 
-Development plan: get the latest MOM6-SIS2 from GFDL compiling first, prove the 1-degree
-(`OM_1deg`) global config runs, then build the DA cycling around it. `OM4_025` (quarter
-degree) is the target for real experiments; `OM_1deg` is the development and test config.
+The original development plan was to prove the 1-degree (`OM_1deg`) global config first and
+build the DA cycling around it. It did not go that way: a 24 hour forecast there is slow
+enough that iterating on it was the bottleneck, so the regional domains arrived early and
+`gom_25km` became where everything is proved. Today `gom_25km` is the plumbing domain and the
+whole of tier 3, `gom_12km` is where an answer that matters is computed, and `OM4_025`
+(quarter degree) remains the target for real experiments. `om_1deg`'s only live use is the
+tier 0/1 graph fixtures, which never run a model. See `docs/domains.md`.
 
 **Regional domains at various resolutions are in scope**, alongside the two global configs,
 and domain is a first-class configuration axis rather than a flag. Regional pulls in
@@ -101,7 +105,7 @@ module; and the executable is **`ice_ocean_SIS2/build/coupler_main`**, not `MOM6
 
 ### Configurations
 
-Under `ice_ocean_SIS2/`: `OM_1deg` (development target), `OM4_025`, `OM4_05`, `OM4_033`,
+Under `ice_ocean_SIS2/`: `OM_1deg`, `OM4_025`, `OM4_05`, `OM4_033`,
 `OM4_025.JRA`, plus small `Baltic*`/`SIS2*` cases useful for smoke tests.
 
 Input data is not in the repo; each config's `INPUT/` is symlinks through a `.datasets`
@@ -276,10 +280,6 @@ produced this experiment" answerable from the experiment.
 
 ## Open decisions
 
-- What a solver does with a missing or diverged ensemble member: fail the cycle, run degraded,
-  or replace from the mean. Different graph shapes and different science, so it is per
-  experiment. `ensemble.on_missing_member` is in the schema and read by no code, so the
-  behaviour today is "fail the cycle" whatever an experiment says.
 - How much of the workflow lives in a Python package versus in the job scripts it emits.
 - Ensemble geometry on rancor: 8 cores against an 8-PE model run means parallel members need
   fewer PEs each, or oversubscription.

@@ -223,10 +223,30 @@ def _check_window(config):
             f"to read. Set a sub-window cadence that divides the window "
             f"({_spell(window)})."
         )
+    # The run length is constrained by the model's clock whether or not any
+    # states are asked of it, so this half is checked before the cadence
+    # relations, which only exist once there are slots.
+    _check_coupling(config, "the forecast", cycle + overshoot)
+
     if step is None:
         return
     if step.total_seconds() <= 0:
         raise GraphError("forecast.slots must be a positive duration")
+
+    # Persistence hands one restart set forward and writes nothing in between,
+    # so it has nowhere to put a sub-window state. Refused rather than ignored:
+    # the forecast would exit 0 having written none of the states it declared,
+    # and the skip rule needs the sentinel *and* the outputs, so the task would
+    # be rerun forever instead of failing. That is the one configuration
+    # `model: persistence` exists to make cheap.
+    if (config.get("model") or {}).get("name") == "persistence":
+        raise GraphError(
+            f"forecast.slots ({config['forecast']['slots']}) asks for a state "
+            f"partway through a forecast, and model.persistence does not "
+            f"integrate: it hands one restart set forward unchanged. Bring the "
+            f"sub-window states up on a real model, or drop forecast.slots and "
+            f"the four-dimensional window with it."
+        )
 
     # The window has to fit inside the forecast that covers it, and a window
     # whose analysis reads a state *at* its own start needs it to fit with a
@@ -259,6 +279,38 @@ def _check_window(config):
                 f"forecast.slots ({config['forecast']['slots']}) does not divide "
                 f"{name} ({_spell(quantity)}), {why}"
             )
+
+    # Last, because a cadence that fails one of the relations above fails it for
+    # a reason the experiment's author can act on, and this one would otherwise
+    # report a coupling step they never chose.
+    _check_coupling(config, "forecast.slots", step)
+
+
+def _check_coupling(config, name, quantity):
+    """What the model's own clock will accept, asked before the job is written.
+
+    `coupler_main` refuses outright a run length that is not a whole number of
+    coupled steps, so a window whose half reaches past one lands as a FATAL at
+    job start, on every cycle. It is a quieter failure for the states:
+    intervals are tested at the bottom of the coupled loop and stamped with the
+    step time actually reached, so a cadence finer than the coupling writes on
+    the coupling step instead and the times asked for never exist at all. That
+    one is caught eventually, by `_claim_slot`, after the whole run has been
+    paid for, and blamed on `restart_interval`.
+
+    Only for a model that declares a coupling step, which leaves the stub and
+    persistence layers alone.
+    """
+    seconds = (config.get("model") or {}).get("coupling_seconds")
+    if not seconds or quantity is None:
+        return
+    if quantity.total_seconds() % seconds:
+        raise GraphError(
+            f"model.coupling_seconds ({seconds}) does not divide {name} "
+            f"({_spell(quantity)}). `coupler_main` runs a whole number of "
+            f"coupled steps and nothing else, so this is a FATAL at job start "
+            f"on every cycle rather than a slow drift."
+        )
 
 
 def _spell(delta):

@@ -91,6 +91,55 @@ def test_the_comment_carries_identity_back_out_of_accounting(monkeypatch):
     assert slurm.accounting([5])[5]["comment"] == "ackbar:e:1:da"
 
 
+def _array(*elements):
+    """`sacct --json` for one array: an object per element, each with its own id.
+
+    Only the element that happened to be allocated the base id is reported under
+    it, which is what makes keying on `job_id` wrong.
+    """
+    jobs = ",".join(
+        f'{{"job_id": {job_id}, "name": "e.1.forecast", '
+        f'"array": {{"job_id": 4, "task_id": {task}}}, '
+        f'"comment": {{"job": "ackbar:e:1:forecast"}}, '
+        f'"state": {{"current": ["{state}"], "reason": "None"}}}}'
+        for job_id, task, state in elements
+    )
+    return f'{{"jobs": [{jobs}]}}'
+
+
+def test_an_array_is_keyed_on_its_base_and_not_on_whichever_element_got_that_id(
+        monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake(
+        _array((8, 1, "COMPLETED"), (9, 2, "COMPLETED"), (4, 3, "COMPLETED"))))
+    assert set(slurm.accounting([4])) == {4}
+
+
+def test_one_failed_element_makes_the_whole_array_failed(monkeypatch):
+    """The element allocated the base id is not the array's answer.
+
+    Keyed on the element, a member array whose base-id element succeeded reports
+    `completed`, `submit._dependency` drops the edge as redundant rather than
+    missing, and a consumer of a member that was never written is released.
+    """
+    monkeypatch.setattr(slurm, "run", fake(
+        _array((8, 1, "FAILED"), (9, 2, "COMPLETED"), (4, 3, "COMPLETED"))))
+    assert slurm.accounting([4])[4]["state"] == "FAILED"
+    assert slurm.state_of([4]) == {4: "failed"}
+
+
+def test_an_element_still_running_outranks_one_that_finished(monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake(
+        _array((8, 1, "COMPLETED"), (4, 2, "RUNNING"))))
+    assert slurm.state_of([4]) == {4: "active"}
+
+
+def test_a_dependency_that_can_never_be_satisfied_is_not_hidden_by_a_sibling(
+        monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake(
+        f"4_1|PENDING|Priority\n4_2|PENDING|{slurm.NEVER_SATISFIED}\n"))
+    assert slurm.queue([4])[4][1] == slurm.NEVER_SATISFIED
+
+
 def test_unparseable_accounting_is_no_data_rather_than_a_crash(monkeypatch):
     monkeypatch.setattr(slurm, "run", fake("not json"))
     assert slurm.accounting([5]) == {}

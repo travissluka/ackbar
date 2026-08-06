@@ -52,6 +52,16 @@ def merge_keys(schema, path=(), found=None):
         for sub in schema.get(combinator) or []:
             merge_keys(sub, path, found)
 
+    # `then` and `else` carry `properties` and the schema already uses `if` in
+    # five places. A merge key added inside one and not collected here would be
+    # read as `None`, and the list it keys would replace wholesale instead of
+    # merging, which for `observations` means an experiment that quietly ships
+    # with only the observers its last layer restated.
+    for branch in ("then", "else"):
+        sub = schema.get(branch)
+        if isinstance(sub, dict):
+            merge_keys(sub, path, found)
+
     return found
 
 

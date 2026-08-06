@@ -309,8 +309,63 @@ class TestCadence:
         config["forecast"]["slots"] = "PT6H"
         # No new task and no new edge: what is four-dimensional is the
         # comparison, and the states are outputs of a forecast that already
-        # exists.
-        assert build_graph(config).nodes == build_graph(load("hybrid_om1deg", keys)).nodes
+        # exists. Compared as `to_dict`, which carries the edges: `Node` holds
+        # nothing about the window or the cadence, so comparing `.nodes` alone
+        # is an equality that holds for every possible value and establishes
+        # only that `build_graph` did not raise.
+        assert build_graph(config).to_dict() \
+            == build_graph(load("hybrid_om1deg", keys)).to_dict()
+
+    def test_a_forecast_the_coupled_clock_cannot_end_on_is_refused(self, keys):
+        """`coupler_main` runs a whole number of coupled steps and nothing else.
+
+        A two hour window on a domain coupling every two hours overshoots by an
+        hour, so the run is seven hours and the model refuses it outright. That
+        is a FATAL at job start on every cycle of the experiment, and nothing
+        before this said so.
+        """
+        config = load("hybrid_om1deg", keys)
+        assert config["model"]["coupling_seconds"] == 7200
+        config["cycle"]["length"] = "PT6H"
+        config["solver"]["window"] = {"type": "4d", "length": "PT2H"}
+        config["forecast"] = {"slots": "PT1H"}
+        with pytest.raises(GraphError, match="does not divide the forecast"):
+            build_graph(config)
+
+    def test_a_cadence_finer_than_the_coupling_step_is_refused(self, keys):
+        """The quieter half: these states are never written at all.
+
+        Intervals are tested at the bottom of the coupled loop and stamped with
+        the step actually reached, so an hourly cadence on a two-hourly coupling
+        writes on the even hours and the odd ones simply do not exist. Caught
+        without this only by `_claim_slot`, after the whole run is paid for, and
+        blamed there on `restart_interval`.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["forecast"] = {"slots": "PT1H"}
+        with pytest.raises(GraphError, match="does not divide forecast.slots"):
+            build_graph(config)
+
+    def test_asking_persistence_for_sub_window_states_is_refused(self, keys):
+        """It hands one set forward and writes nothing in between.
+
+        Ignored rather than refused, the forecast exits 0 having written none of
+        the states it declared, and the skip rule wants the sentinel *and* the
+        outputs, so the task reruns forever instead of failing. Bringing the DA
+        loop up cheaply on persistence is exactly what that layer is for.
+        """
+        config = load("stub_letkf", keys)
+        config["model"] = {"name": "persistence"}
+        config["forecast"] = {"slots": "PT6H"}
+        with pytest.raises(GraphError, match="does not integrate"):
+            build_graph(config)
+
+    def test_a_model_with_no_coupled_clock_is_left_alone(self, keys):
+        # The stub and persistence layers declare no coupling step, and a
+        # relation about a clock they do not have would refuse them for nothing.
+        config = load("stub_letkf", keys)
+        assert "coupling_seconds" not in config["model"]
+        build_graph(config)
 
     def test_a_cadence_that_misses_the_handoff_is_refused(self, keys):
         """The set the next cycle starts from is one of the forecast's intervals.
@@ -411,7 +466,12 @@ class TestScale:
 
         assert len(graph.cycles) == 50
         assert sum(n.jobs for n in graph.nodes) > 3000
-        assert elapsed < 5.0, f"took {elapsed:.1f}s"
+        # Wide on purpose. What this guards is an accidental quadratic, which
+        # would take minutes rather than seconds; a bound tight enough to also
+        # catch a constant-factor regression is a bound that flakes on a box
+        # running a tier 3 sweep beside it, and a flaky assertion in the
+        # every-commit suite teaches people to rerun rather than read.
+        assert elapsed < 30.0, f"took {elapsed:.1f}s"
 
     def test_it_is_deterministic_at_scale_too(self, keys):
         config = load("big_hybrid", keys)

@@ -118,9 +118,25 @@ def _merge_keyed(base, over, key, merge_keys, path):
         index[identity] = len(result)
         result.append(deepcopy(element))
 
+    seen = set()
     for i, element in enumerate(over):
         identity = _identity(element, key, path + (i,), base_side=False)
-        removing = isinstance(element, dict) and element.get(REMOVE) is True
+        # Checked on this side too. Without it the second element with an
+        # identity already used merges onto the first, so writing one observer's
+        # name twice by mistake silently folds two blocks into one and leaves
+        # the observer that was meant to get the second block with nothing. That
+        # is the class of typo the strict schema exists to catch, and there is
+        # no uniqueness constraint on the key to catch it later. The `$remove`
+        # form is worse: adding an element and removing it in the same list
+        # deletes what it just added.
+        if identity in seen:
+            raise MergeError(
+                f"duplicate {key!r} {identity!r} in the overriding list",
+                path + (i,),
+            )
+        seen.add(identity)
+
+        removing = _removing(element, key, path + (i,))
 
         if identity in index:
             at = index[identity]
@@ -138,6 +154,26 @@ def _merge_keyed(base, over, key, merge_keys, path):
             result.append(deepcopy(element))
 
     return [_strip_remove(e) for e in result if e is not None]
+
+
+def _removing(element, key, path):
+    """Whether this element is a removal, refusing a marker that is not a bool.
+
+    `$remove: 'true'` and `$remove: 1` used to be silent no-ops: the element
+    merged normally and `_strip_remove` then deleted the marker, so the output
+    carried no trace of a line that was meant to delete something. `false` is
+    allowed and means what it says.
+    """
+    if not isinstance(element, dict) or REMOVE not in element:
+        return False
+    value = element[REMOVE]
+    if not isinstance(value, bool):
+        raise MergeError(
+            f"{REMOVE} is {value!r}, and only a boolean removes. Anything else "
+            f"here reads as a removal and does nothing",
+            path,
+        )
+    return value
 
 
 def _identity(element, key, path, base_side):

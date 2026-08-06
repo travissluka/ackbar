@@ -169,9 +169,9 @@ requeues jobs that already succeeded, and they must skip rather than redo. That 
 hypothetical, it is what these measurements ran through.
 
 Things that are *not* the cause, checked so nobody checks them again: queue depth and
-`MinJobAge`. With 332 finished job records still held by the controller, an eight stage chain
-of `aftercorr` arrays transitioned in 1 to 2 seconds every time, no deferrals. Measure with
-`tools/slurm/measure-latency.sh` before changing scheduler settings.
+`MinJobAge`. With several hundred finished job records still held by the controller, an eight
+stage chain of `aftercorr` arrays transitioned in 1 to 2 seconds every time, no deferrals.
+Measure with `tools/slurm/measure-latency.sh` before changing scheduler settings.
 
 Accounting goes through slurmdbd into MySQL, so **`sacct` works for completed jobs**. That
 matters: the workflow engine should learn a job's fate from `sacct`, not from parsing

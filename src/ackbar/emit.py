@@ -29,10 +29,19 @@ import sys
 #: machine's toolchain setup, and spack's own shell code is not written to
 #: survive `set -u`. Guarding ACKBAR's lines is the point; failing inside
 #: somebody else's is not.
+#: The stack limit is here rather than in a site file because it is an
+#: assumption of the coupled model rather than of a machine: FMS puts large
+#: automatic arrays on the stack, v2 set this on every machine including its
+#: default, and FMS's own test harness refuses to run without it. Slurm gives a
+#: job whatever `RLIMIT_STACK` the slurmd inherited, so unset this presents as
+#: an unreproducible segfault at a resolution change rather than as a
+#: configuration error. `|| true` because a hard limit below unlimited makes
+#: this fail, and a job that can still run under the inherited limit should.
 PREAMBLE = """\
 export ACKBAR_ROOT={root}
 source "$ACKBAR_ROOT/site/activate.sh"
 set -euo pipefail
+ulimit -s unlimited || true
 """
 
 

@@ -16,8 +16,17 @@ from datetime import datetime, timedelta, timezone
 
 #: Weeks, days, hours, minutes, seconds. The negative lookaheads reject the
 #: degenerate forms "P" and "PT", which are valid-looking and mean nothing.
+#:
+#: Whole seconds only. `format_duration` truncates with `int()`, so a fractional
+#: second parsed here renders back as zero: `PT0.5S` round-tripped to
+#: `P0DT0H0M0S`. It can arrive without being written, too, since
+#: `forecast_overshoot` halves the window, and half a second lost between
+#: `{{forecast_length}}` and the seconds MOM6 is given is a forecast that stops
+#: short of the state the next cycle wants. Whole seconds is the whole of what a
+#: cycling experiment means, and it makes the parser and the formatter agree by
+#: construction.
 _DURATION = re.compile(
-    r"^P(?!$)(?:(\d+)W)?(?:(\d+)D)?(?:T(?!$)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$"
+    r"^P(?!$)(?:(\d+)W)?(?:(\d+)D)?(?:T(?!$)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$"
 )
 
 #: What JEDI expects to read back, and what ACKBAR writes everywhere.

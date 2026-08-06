@@ -22,14 +22,15 @@ from pathlib import Path
 
 import yaml
 
-from .config.jobtime import SYMBOL_NAMES, JobTimeError, render, symbols
+from .config.jobtime import (FOUR_D, SYMBOL_NAMES, JobTimeError, render,
+                             symbols, window_type)
 from .config.jobtime import TOKEN as JOBTIME_TOKEN
 from .config.jobtime import unresolved as unresolved_jobtime
 from .config.lint import ambiguous_numbers
 from .config.resolve import unresolved as unresolved_experiment
 from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
-from .duration import DurationError
+from .duration import DurationError, parse_duration, parse_instant
 from .graph import GraphError, build_graph, job_time_context, member_set
 
 #: The steps, in the order they run. Reported individually so that "what was
@@ -116,6 +117,26 @@ def _schema_step(config, schema):
     # the experiment-time pass has a hole in it.
     for where, value in unresolved_experiment(config):
         yield Finding(1, where, f"unsubstituted experiment-time token: {value!r}")
+
+    # The three values whose grammar the schema can only approximate. JSON
+    # Schema `format` is annotation-only unless a format checker is installed,
+    # and `pattern: '^P'` accepts `Potato`, so both reach the parser instead.
+    # `cycle.length` is caught later by `build_graph`; `cycle.start` was not
+    # caught anywhere: `parse_instant` raised out of the middle of this command,
+    # so a one-character typo in a date reported one line with no config path
+    # and skipped steps 2 through 6, which is the silently-partial report this
+    # command exists to prevent.
+    for where, parse in (("cycle.start", parse_instant),
+                         ("cycle.length", parse_duration),
+                         ("forecast.slots", parse_duration)):
+        section, _, leaf = where.partition(".")
+        text = (config.get(section) or {}).get(leaf)
+        if not isinstance(text, str):
+            continue
+        try:
+            parse(text)
+        except (DurationError, JobTimeError) as error:
+            yield Finding(1, where, str(error))
 
 
 def _template_step(root):
@@ -407,7 +428,25 @@ def _graph_step(config, graph):
             findings.append(Finding(6, f"{edge.parent} -> {edge.child}", (
                 "aftercorr between arrays with different index sets never fires"
             )))
+
+    # The analysis document a four-dimensional window needs does not exist yet,
+    # and `soca.var_config` refuses to build 3D-Var in its place. Asked here as
+    # well as there, because there is inside cycle 1's `da` job: without it,
+    # `create` and `start` both succeed, the cycling forecast pays 1.5x the
+    # model cost to write states nothing will read, and the experiment stops at
+    # the first analysis. That is the failure this command exists to move
+    # forward. Delete when phase 9 lands the document.
+    if window_type(config) in FOUR_D and _solver(config) not in ("none", "letkf"):
+        findings.append(Finding(6, "solver.window.type", (
+            f"is {window_type(config)!r} and config/soca/var.yaml builds 3D-Var. "
+            f"The sub-window states exist and the cost function that reads them "
+            f"does not yet; see phase 9 in docs/build-order.md"
+        )))
     return findings
+
+
+def _solver(config):
+    return (config.get("solver") or {}).get("name", "none")
 
 
 def _node(graph, node_id):

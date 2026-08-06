@@ -10,6 +10,14 @@ requires-python = ">=3.9"
 dependencies = [
     "pyyaml",
     "jsonschema",
+    # Imported at module scope by `ensemble.py` and `writeback.py`, and
+    # `cli.py` imports `run.py` imports `ensemble.py`, so these are hard
+    # imports of the command itself and not of the analysis path alone.
+    # Undeclared, the README's own "needs no scheduler, no JEDI and no model"
+    # recipe fails to collect a third of the suite anywhere spack-stack is not
+    # already on the path, which is exactly the machine it is addressed to.
+    "netCDF4",
+    "numpy",
 ]
 
 [project.optional-dependencies]

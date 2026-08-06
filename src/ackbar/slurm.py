@@ -107,8 +107,14 @@ def queue(job_ids=None):
         if not base.isdigit():
             continue
         # Worst state wins for an array: one pending element means the
-        # submission as a whole is not finished.
-        out.setdefault(int(base), (state, reason))
+        # submission as a whole is not finished, and one element that can never
+        # run means the submission is dead however healthy the rest look.
+        # `setdefault` would keep whichever row `squeue` happened to emit
+        # first, which hides a `DependencyNeverSatisfied` behind an ordinary
+        # `PENDING` and answers `active` for a submission that is partly dead.
+        key = int(base)
+        if key not in out or reason == NEVER_SATISFIED:
+            out[key] = (state, reason)
     return out
 
 
@@ -138,13 +144,40 @@ def accounting(job_ids):
         # older ones.
         if isinstance(current, list):
             current = current[0] if current else "UNKNOWN"
-        out[int(job["job_id"])] = {
+        record = {
             "state": current or "UNKNOWN",
             "reason": state.get("reason", ""),
             "comment": (job.get("comment") or {}).get("job", ""),
             "name": job.get("name", ""),
         }
+        # Keyed on the array *base*, which is what everything here asks about.
+        # `sacct --json` reports one object per array element, each carrying its
+        # own `job_id`; only the element that happened to be allocated the base
+        # id lands under the id the caller passed. Keyed on that, an array's
+        # answer is one arbitrary element's answer, so a member array with a
+        # failure in it reports whatever the base-id element did. `state_of`
+        # would then call it `completed` and `submit._dependency` would drop the
+        # edge as redundant, releasing a consumer of a member that was never
+        # written. That is the third case this module's docstring calls
+        # catastrophically wrong.
+        key = int((job.get("array") or {}).get("job_id") or job["job_id"])
+        if key not in out or _worse(record["state"], out[key]["state"]):
+            out[key] = record
     return out
+
+
+def _worse(state, than):
+    """Whether an array element's outcome should displace one already seen.
+
+    Anything that is not a success displaces a success, and an outright failure
+    displaces a state that is merely still running. One failed element makes the
+    array failed no matter what its siblings did.
+    """
+    if than in SUCCESS:
+        return state not in SUCCESS
+    if than in ACTIVE:
+        return state not in SUCCESS and state not in ACTIVE
+    return False
 
 
 def state_of(job_ids):
