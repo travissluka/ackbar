@@ -166,13 +166,19 @@ def test_scratch_is_removed_on_success_and_kept_on_failure(env):
 
 
 def test_a_task_with_no_body_yet_says_so_plainly(env):
-    # `forecast` is real for mom6sis2 now; `writeback` is not, and a stub body
-    # standing in for it silently would be worse than the error.
+    """A task in the data path with no implementation is an error, not a no-op.
+
+    `recenter` is the one left: it is LETKF's, it stands between the analysis
+    and writeback, and a stub body quietly standing in for it would mean every
+    member forecasting from an unrecentred analysis while the experiment looks
+    healthy the whole way through. `forecast`, `da` and `writeback` all have
+    real bodies now, and the deferred leaves say so through DEFERRED instead.
+    """
     config, site, paths = env
     config = json.loads(json.dumps(config))
     config["model"] = {"name": "mom6sis2"}
     with pytest.raises(run.TaskError, match="phase"):
-        run.run_task(config, site, paths, 1, "writeback", 1)
+        run.run_task(config, site, paths, 1, "recenter", 1)
 
 
 # --- cleanup -----------------------------------------------------------------
@@ -291,3 +297,121 @@ def test_every_cycle_leaves_a_stats_file(env):
     _, _, paths = env
     do(env, 2, "stats")
     assert json.loads(paths.stats_file(2).read_text())["cycle"] == 2
+
+
+# --- which body runs, and what it reads --------------------------------------
+#
+# The dispatch predicates, and `analysis_state` in particular. Everything about
+# a cycle that assimilated nothing runs through it, and it is the one place
+# where "produced nothing" and "had nothing to do" are told apart.
+
+@pytest.fixture
+def var(base, tmp_path):
+    """A variational experiment on a real model, with one staged observer."""
+    config = json.loads(json.dumps(base))
+    config["model"] = {"name": "persistence"}
+    config["solver"] = {"name": "variational"}
+    config.pop("ensemble", None)
+    site = {"scratch_root": str(tmp_path / "s"), "output_root": str(tmp_path / "o")}
+    return config, Paths.of(config, site).ensure()
+
+
+def stage(paths, cycle, present):
+    from ackbar import observations
+    observations.write(paths, cycle, [
+        {"name": "adt_3a", "required": False, "input": "/in.nc4",
+         "output": str(paths.cycle_out("obs_out", cycle) / "adt.nc4"),
+         "present": present},
+    ])
+
+
+@pytest.mark.parametrize("model,solver,task,expected", [
+    ("mom6sis2", "variational", "da", True),
+    ("persistence", "variational", "da", True),
+    # LETKF is a different application with a different document. Until it
+    # lands it has to reach the stub's "no implementation yet" rather than run
+    # the variational one.
+    ("mom6sis2", "letkf", "da", False),
+    ("mom6sis2", "variational", "writeback", False),
+    ("stub", "variational", "da", False),
+])
+def test_only_the_analyses_that_exist_are_dispatched(base, model, solver, task, expected):
+    config = json.loads(json.dumps(base))
+    config["model"] = {"name": model}
+    config["solver"] = {"name": solver}
+    assert run.real_analysis(config, task) is expected
+
+
+@pytest.mark.parametrize("model,expected", [
+    ("mom6sis2", True), ("persistence", True), ("stub", False),
+])
+def test_writeback_is_solver_independent(base, model, expected):
+    """It reads a state and a background and writes a restart set.
+
+    None of that depends on how the state was arrived at, so unlike the
+    analysis this asks about the model and nothing else.
+    """
+    for solver in ("variational", "letkf"):
+        config = json.loads(json.dumps(base))
+        config["model"] = {"name": model}
+        config["solver"] = {"name": solver}
+        assert run.real_writeback(config, "writeback") is expected
+        assert run.real_writeback(config, "forecast") is False
+
+
+def test_the_analysis_corrects_the_previous_cycles_forecast(var):
+    """Not `restart_source`, which with a solver names this task's own output."""
+    _, paths = var
+    assert run.analysis_background(paths, 3).name == "mem000"
+    assert run.analysis_background(paths, 3).parent == paths.cycle_out("rst", 2)
+
+
+def test_a_cycle_with_a_staged_observer_expects_an_analysis(var):
+    config, paths = var
+    stage(paths, 1, present=True)
+    state = run.analysis_state(config, paths, 1)
+    assert state.parent == paths.member_out("ana", 1, 0) / "analysis"
+    assert state.name.startswith("ocn.ana.an.")
+    # Writeback reads it, and its own output is the restart set's stamp.
+    inputs, outputs = run.task_io(config, paths, "writeback", 1, 0)
+    assert state in inputs
+    assert outputs == [paths.member_out("ana", 1, 0) / "coupler.res"]
+
+
+def test_a_cycle_that_assimilated_nothing_expects_no_analysis(var):
+    """The archive gap. Writeback hands the background across unchanged.
+
+    Declaring an output the analysis will never write would leave the skip rule
+    unable to tell a finished cycle from an unfinished one, forever.
+    """
+    config, paths = var
+    stage(paths, 1, present=False)
+    assert run.analysis_state(config, paths, 1) is None
+    assert run.task_io(config, paths, "da", 1, None)[1] == []
+    inputs, outputs = run.task_io(config, paths, "writeback", 1, 0)
+    assert inputs == [paths.member_out("rst", 0, 0) / "coupler.res"]
+    assert outputs == [paths.member_out("ana", 1, 0) / "coupler.res"]
+
+
+def test_before_the_observers_are_staged_nothing_is_declared(var):
+    """The skip rule must not fire on a task whose outputs are not yet knowable.
+
+    `da`'s outputs come from the realized list, and before `stage.obs` has run
+    there is no list. An empty declaration plus an existing sentinel is what
+    makes a healed cycle skip the analysis it was healed to redo.
+    """
+    config, paths = var
+    assert run.analysis_state(config, paths, 1) is None
+    assert run.task_io(config, paths, "da", 1, None)[1] == []
+
+
+def test_persistence_hands_a_real_restart_set_forward(var):
+    """`coupler.res` proves a restart set for persistence too.
+
+    Keyed off the stub's file name it would be `restart.stub`, and `cleanup`
+    would then refuse to reap on every cycle of every experiment, which is a log
+    line rather than a failure and a disk that fills over days.
+    """
+    config, _ = var
+    assert run.restart_stamp(config) == "coupler.res"
+    assert run.real_model(config, "forecast") is True

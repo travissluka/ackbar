@@ -1,0 +1,41 @@
+# Tier 3: 3DVar cycling with MOM6 in the loop. The phase 6 milestone.
+#
+# `tier3_var_persist` with the model put back, and nothing else changed. That is
+# the point of running both: everything the two have in common has already been
+# proved by the cheap one, so a failure here is about the model reading what the
+# analysis wrote.
+#
+# That handoff is the whole risk. Writeback edits a restart in place, and every
+# way of getting it wrong (the wrong variable, land written over, a staggered
+# grid off by a column, a checksum left claiming the old data) produces a file
+# MOM6 either refuses or, worse, integrates.
+#
+# Regional rather than global, which is a deliberate choice about what tier 3
+# tests: gom_25km costs 6 seconds a simulated day against 178 for om_1deg, and
+# the analysis path has no global-only behaviour left in it. What it does have
+# is regional-only behaviour, in `MOM_override.soca` and the open boundaries.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_var
+  description: phase 6, 3DVar cycling at gom_25km
+cycle:
+  # Twelve hour cycles from where the cold start leaves off. The domain's open
+  # boundary is a single frozen SODA snapshot, which is a known limit of this
+  # domain recorded in docs/domains.md and does not affect what this checks.
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+solver:
+  variational:
+    iterations:
+    - ninner: 3
+      gradient norm reduction: 1.0e-10

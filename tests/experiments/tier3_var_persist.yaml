@@ -1,0 +1,49 @@
+# Tier 3: 3DVar with the model taken out of the loop. The phase 6 milestone,
+# first half.
+#
+# `model: persistence` runs the whole DA cycle, analysis and writeback and
+# background handoff included, against a forecast that hands the state forward
+# unchanged. Everything SOCA touches is real: a real geometry off the domain's
+# gridspec, a real background out of a real restart set, a real analysis written
+# back into a real MOM6 restart. The only thing that does not happen is the
+# integration.
+#
+# It is here rather than as a step someone remembers to take because the DA loop
+# and the model fail in the same place, and separating them is the difference
+# between "the analysis is wrong" and "something in this cycle is wrong". It is
+# also fast enough to run before a commit, which the MOM6 version is not.
+#
+# Same domain, dates, initial condition and archive as `tier3_var`, so the two
+# differ in exactly one line and the difference between their results is the
+# model.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - model/persistence
+  - da/variational
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_var_persist
+  description: phase 6, 3DVar cycling at gom_25km with no model in the loop
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+vars:
+  # Synthetic, and it has to be: the bundle's own test observations are
+  # scattered over the world ocean and essentially none of them land in the
+  # Gulf, so a regional analysis reading them assimilates nothing and says so
+  # only by producing an increment of zero. See tools/obs-archive-osse.py, and
+  # the README beside the archive for what its values are and are not.
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+solver:
+  variational:
+    iterations:
+    # Three rather than the layer's ten. What this experiment tests is that the
+    # loop closes, not that it converges, and the inner iterations are most of
+    # its wall clock.
+    - ninner: 3
+      gradient norm reduction: 1.0e-10

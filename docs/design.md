@@ -789,8 +789,18 @@ Regional costs more than a different grid file. What it actually pulls in:
   `tools/soca-gridspec.sh` and recalibrate the diffusion, in that order.
 - **Observation culling to the domain.** v2 did this per cycle with `soca_domaincheck.py` and
   flagged it in its own source as a temporary fix that "new workflow should address in a more
-  effective manner". Cull at archive-build time instead, so the per-cycle path stays identical
-  across domains.
+  effective manner". Here it is **an offline stage keyed on domain**, like the gridspec and the
+  background error: run once against an archive, producing a domain-scoped archive that every
+  experiment on that domain then reads unchanged. That placement is what keeps the per-cycle
+  path identical across domains, and it is also what makes two experiments on one domain
+  comparable by construction rather than by inspection.
+
+  What it is owed *for* turns out not to be stability. A global observation file handed to a
+  regional domain does not break anything: SOCA runs, every out-of-domain observation fails QC,
+  and the cycle completes. It is owed so that the observation counts an experiment reports are
+  the counts it assimilated, so that a `Domain Check` rejection means what it says rather than
+  "outside the grid", and so that the archive is not orders of magnitude larger than the domain
+  needs.
 - **Domain-specific observation configuration.** v2 kept a parallel tree under
   `configs/soca/regional/hat10/obs/` where several observers genuinely differ from their
   global counterparts (for example ADT variants referenced to a different geoid). So observer

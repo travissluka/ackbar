@@ -206,12 +206,22 @@ tools/soca-gridspec.sh <domain>                                # the static stag
 tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <slug>  # the IC stage
 tools/soca-diffusion.sh <domain>                               # for a DA experiment
 tools/soca-dirac.sh <domain>                                   # and check it
+tools/obs-archive-osse.py --domain <domain> ...                # observations that reach it
 ackbar validate <experiment>.yaml
 ```
 
-The last two are only needed by an experiment whose `da` layer is `variational`
-or `hybrid`; a free run names no background error. See
-[`background-error.md`](background-error.md).
+The last three are only needed by an experiment whose `da` layer is
+`variational` or `hybrid`; a free run names no background error and assimilates
+nothing. See [`background-error.md`](background-error.md) and
+[`analysis.md`](analysis.md).
+
+**Observations have to be built for the domain, and this is quiet when it is
+wrong.** A global observation file handed to a regional domain does not fail:
+SOCA runs, every observation outside the grid fails its `Domain Check`, and the
+cycle completes with an analysis that assimilated nothing. The only symptom is
+an increment of zero. `obs-archive-osse.py` generates from the domain's own
+gridspec; a real archive needs the domain-scoped culling stage described in
+Domains in [`design.md`](design.md).
 
 `ackbar validate` step 3 stats every one of those paths, so a stage that has not
 been run is a message naming the directory rather than a job that fails an hour

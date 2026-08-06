@@ -269,17 +269,47 @@ Static B and analysis-to-restart writeback.
 - **Prerequisite spike:** IAU versus direct restart write, run *before* this phase, not inside
   it. Closed: `soca_checkpoint_model.x` does not exist in the pinned SOCA, so writeback is a
   python direct write.
-- **Done already:** the background error's correlation, as an offline stage rather than as a
-  task. `tools/soca-diffusion.sh` calibrates it and `tools/soca-dirac.sh` checks it, both keyed
-  on domain. See [`background-error.md`](background-error.md).
-- **Build:** the DA task and the writeback task. The per cycle vertical B calibration is a
-  measured improvement on the offline one rather than a prerequisite for it, so it is not in
-  this phase.
+- **Build:** the background error's correlation as an offline stage, the DA task, the writeback
+  task, and `model: persistence`. The per cycle vertical B calibration is a measured
+  improvement on the offline one rather than a prerequisite for it, so it is not in this phase;
+  `b.vt` is in the graph and deferred, and what closes it is the vertical `filepath` naming a
+  per-cycle file instead of a static one.
+- **Test:** tier 3, `tests/test_tier3_var.py`, two experiments at OM_1deg. Tiers 0 through 2
+  keep passing, plus `test_soca.py`, `test_writeback.py` and `test_persistence.py`.
 - **Order within the phase:** bring it up on `model: persistence` first. That gives the full DA
   loop, including writeback and background handoff, at no model cost, and a baseline to score
   against once MOM6 is back in the loop. Then switch to `model: mom6sis2`.
 - **Done when:** persistence 3DVar cycles and scores against the free run, and the same
   experiment with MOM6 in the loop does too.
+
+The entry points are [`background-error.md`](background-error.md) for the B and
+[`analysis.md`](analysis.md) for the two tasks. Four things this phase settled, all of them
+about a JEDI configuration that is wrong by *omission*, which is the expensive kind: JEDI has
+no parse-and-exit, so each of these was found by an application that had already read a
+background and built every block.
+
+**A covariance's `linear variable change` needs `input variables`.** Without it,
+`oops::ModelSpaceCovarianceBase` holds a null pointer and dereferences it the first time it
+evaluates Jb. Both sources set it, and both set it to the analysis variables, which is why
+ACKBAR builds it rather than asking a layer to state them a third time.
+
+**`output` is what makes the departures complete.** `CostJo` saves `oman` only on the final
+cost evaluation, and `oops::Variational` runs one only when something asks for output. An
+analysis with no output section writes `ombg`, no `oman`, and no message about either. This is
+the case the schema comment about departure diagnostics was written for, before it was known
+which key carried them.
+
+**A dropped checksum is better than a disabled one.** MOM6 aborts when a restart's `checksum`
+attribute no longer describes the data, which is exactly what editing one in place produces.
+`RESTART_CHECKSUMS_REQUIRED = False` was the expected fix and is the wrong one: writeback drops
+the attribute from the three variables it writes, and every other variable in the file keeps
+its integrity check.
+
+**A regional analysis still needs domain-scoped observation culling**, and the reason is not the
+one the design predicted. Global observation files do not break a regional domain: SOCA runs,
+every out-of-domain observation fails QC, and the cycle completes. What it produces is an
+analysis with nothing in it, so the culling is owed for the sake of the *observation counts*,
+not for stability. That is why phase 6 is tested at OM_1deg.
 
 ## Phase 7. LETKF
 
@@ -319,5 +349,5 @@ they would break rather than by when they are convenient.
 | ~~Symmetric memory: how SOCA's own MOM6 is compiled for regional~~ | ~~phase 4~~ | **Answered: SOCA's is non-symmetric, the forecast model's is symmetric, and they are not going to be reconciled yet.** It bites earlier than the restart shapes it was expected to: MOM6 refuses to *configure* Flather OBCs in a non-symmetric build, so every SOCA application aborts inside `soca_geom_init` on a regional domain. Worked around per domain by `MOM_override.soca`, which switches the segments off for SOCA only; the grid is the same grid either way and the grid is all SOCA wants. Rebuilding SOCA's MOM6 with symmetric memory is still the real fix, and it is still a build-level decision. See `docs/domains.md`. |
 | ~~MOM6 back-compat parameter pins (`EQN_OF_STATE = "WRIGHT"` and friends)~~ | ~~phase 4's offline IC~~ | **Answered: do not pin them, and turn the bug flags off instead.** Neither case sets `EQN_OF_STATE`, so both inherit the current `WRIGHT_FULL`. What did need deciding is the other direction: MOM6-examples' `OM_1deg` *enables* seven MOM and four SIS bug-retention flags whose defaults are now off, to protect its own regression answers. ACKBAR's overrides turn them off, which does invalidate initial conditions produced before that, and the smoke ICs are cheap to rebuild. |
 | ~~A cheap parse-and-exit path in SOCA or OOPS~~ | ~~phase 1~~ | **Answered: no.** It existed once but not at the application level any more, and only some components validate their own config. `validate` therefore has six steps, not seven, and a bad JEDI config is found when the executable runs. See Configuration validation in `design.md` for what carries that weight instead. |
-| IAU versus direct restart write | phase 6 | Decides what the writeback task is. Resolve by spike, not on paper. |
+| ~~IAU versus direct restart write~~ | ~~phase 6~~ | **Answered: direct write, and it was not a choice.** `soca_checkpoint_model.x` does not exist in the pinned SOCA, so writeback is python editing a copy of the background. IAU remains an alternate implementation behind the same graph edge rather than a different graph. See [`analysis.md`](analysis.md). |
 | `srun` and PMI on rancor | with phase 4 | Job steps and per-step accounting differ between `mpiexec` and `srun`. |

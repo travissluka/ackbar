@@ -131,6 +131,13 @@ solver:
     # than the bundle example's 10: the example is a 25 level toy and v2 is a
     # real configuration. `kst` is left at the operator's defaults, commented
     # out in v2 as well.
+    #
+    # `input variables` and `output variables` belong here and are absent on
+    # purpose: both are the analysis variables, which are already stated once
+    # above, and `ackbar/soca.py` fills them in. They are not optional. Without
+    # `input variables`, `oops::ModelSpaceCovarianceBase` holds a null pointer
+    # that it dereferences the first time it evaluates Jb, which is after every
+    # block has been built and reported.
     linear variable change:
       linear variable changes:
       - linear variable change name: BalanceSOCA

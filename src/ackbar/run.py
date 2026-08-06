@@ -25,7 +25,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ledger, mom6sis2, observations, soca
+from . import ledger, mom6sis2, observations, persistence, soca, writeback
 from .graph.build import member_set
 
 #: Faults the stub can inject, each named for the terminal state it produces.
@@ -132,7 +132,18 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: They run rather than being cut from the graph on purpose. The edges are the
 #: part that is hard to get right, and a phase that adds a body should not also
 #: be the phase that first discovers its dependencies were wrong.
-DEFERRED = ("post.obs", "post.state", "verify")
+#:
+#: `b.vt` is here for a reason worth stating, because it is the one entry that
+#: is in the data path on paper. The vertical background error scales *are*
+#: calibrated, offline and once, by `tools/soca-diffusion.sh`, and the analysis
+#: reads that product out of the domain's static directory. Recalibrating them
+#: every cycle against the current mixed layer is a measured improvement on
+#: that, not a prerequisite for it, so until it lands this task genuinely
+#: produces nothing anything reads. What closes it is the vertical `filepath` in
+#: `config/layers/da/variational.yaml` naming a per-cycle file instead of a
+#: static one; at that moment this entry has to go, and the analysis would fail
+#: on a missing input rather than silently reading last month's mixed layer.
+DEFERRED = ("b.vt", "post.obs", "post.state", "verify")
 
 
 def deferred_task(config, task):
@@ -145,16 +156,45 @@ def deferred_task(config, task):
     return config["model"]["name"] != "stub" and task in DEFERRED
 
 
-def real_model(config, task):
-    """Whether this exact job runs a model binary rather than the stub.
+#: Models whose restart set is a real MOM6 one: written by MOM6, on the domain's
+#: own grid, readable by SOCA. `persistence` is in here because it does not
+#: produce a restart set of its own kind, it hands MOM6's along, which is
+#: exactly what makes it useful for bringing the analysis path up without paying
+#: for the model.
+REAL_STATE = ("mom6sis2", "persistence")
 
-    Only `forecast` so far. `forecast.ext` is the same executable with a
-    different diag_table and a different product (diagnostics to score, not a
-    restart set anything reads), and it arrives with the phase that scores
-    them; until then it falls through to the stub's "no implementation yet",
-    which says so.
+
+def real_model(config, task):
+    """Whether this exact job runs a forecast rather than the stub.
+
+    Only `forecast`. `forecast.ext` is the same executable with a different
+    diag_table and a different product (diagnostics to score, not a restart set
+    anything reads), and it arrives with the phase that scores them; until then
+    it falls through to the stub's "no implementation yet", which says so.
     """
-    return config["model"]["name"] == "mom6sis2" and task == "forecast"
+    return config["model"]["name"] in REAL_STATE and task == "forecast"
+
+
+def real_analysis(config, task):
+    """Whether this job runs the variational analysis.
+
+    LETKF is deliberately not here: it is a different application with a
+    different document, and until that lands it falls through to the stub, which
+    says it has no implementation rather than running the wrong one.
+    """
+    return (task == "da"
+            and config["model"]["name"] in REAL_STATE
+            and config.get("solver", {}).get("name") == "variational")
+
+
+def real_writeback(config, task):
+    """Whether this job builds the analysed restart set.
+
+    Solver-independent, unlike the analysis itself: writeback reads a state and
+    a background and writes a restart set, and none of that depends on how the
+    state was arrived at.
+    """
+    return task == "writeback" and config["model"]["name"] in REAL_STATE
 
 
 def real_observations(config, task):
@@ -171,7 +211,7 @@ def real_observations(config, task):
         return False
     if task == "stage.obs":
         return True
-    return task == "hofx" and config["model"]["name"] == "mom6sis2"
+    return task == "hofx" and config["model"]["name"] in REAL_STATE
 
 
 def background(config, paths, cycle):
@@ -188,6 +228,17 @@ def background(config, paths, cycle):
     return restart_source(config, paths, cycle, 0)
 
 
+def analysis_background(paths, cycle, member=0):
+    """The state the analysis corrects: the previous cycle's forecast.
+
+    Always `rst/<n-1>`, and deliberately not `restart_source`. With an analysis
+    configured that function answers a different question, where the *forecast*
+    starts, and its answer is this task's own downstream output. Reading it here
+    would make the analysis correct the analysis.
+    """
+    return paths.member_out("rst", cycle - 1, member)
+
+
 def restart_stamp(config):
     """The one file whose presence means a member's restart set is whole.
 
@@ -196,7 +247,7 @@ def restart_stamp(config):
     the model's are different files, and hardcoding either is a cleanup that
     silently refuses forever under the other one.
     """
-    return mom6sis2.STAMP if config["model"]["name"] == "mom6sis2" else "restart.stub"
+    return mom6sis2.STAMP if config["model"]["name"] in REAL_STATE else "restart.stub"
 
 
 def task_io(config, paths, task, cycle, member):
@@ -205,9 +256,78 @@ def task_io(config, paths, task, cycle, member):
         stamp = restart_stamp(config)
         source = restart_source(config, paths, cycle, member)
         return [source / stamp], [paths.member_out("rst", cycle, member) / stamp]
+    if real_analysis(config, task):
+        return _analysis_io(config, paths, cycle)
+    if real_writeback(config, task):
+        return _writeback_io(config, paths, cycle, member)
     if real_observations(config, task):
         return _observation_io(config, paths, task, cycle)
     return stub_io(config, paths, task, cycle, member)
+
+
+def analysis_state(config, paths, cycle, member=0):
+    """The analysis `da` writes and `writeback` reads, or None if it wrote none.
+
+    None when the cycle assimilated nothing, which is a real state of a real
+    experiment rather than a failure: the analysis in a window with no
+    observations is the background. Answered from the realized observer list, so
+    that "was there anything to assimilate" is decided once, by `stage.obs`, and
+    read everywhere else.
+    """
+    if not _assimilated(config, paths, cycle):
+        return None
+    return analysis_dir(paths, cycle, member) / soca.analysis_file(config, cycle)
+
+
+def analysis_dir(paths, cycle, member=0):
+    """Where the analysis application's own products go.
+
+    Inside the member's analysed restart set rather than beside its files. See
+    `soca.PRODUCTS` for why that is a directory and not a naming convention.
+    """
+    return paths.member_out("ana", cycle, member) / soca.PRODUCTS
+
+
+def _assimilated(config, paths, cycle):
+    if not paths.observer_list(cycle).exists():
+        return False
+    return any(record["present"] for record in observations.read(paths, cycle))
+
+
+def _analysis_io(config, paths, cycle):
+    """What the analysis reads and writes.
+
+    The outputs come from the realized observer list for the same reason hofx's
+    do: the configuration names every observer and only the staged ones ran, and
+    before that list exists there is nothing to declare, which is exactly when
+    the skip rule must not fire.
+    """
+    member = member_set(config)[0]
+    inputs = [analysis_background(paths, cycle, member) / restart_stamp(config),
+              paths.observer_list(cycle)]
+    state = analysis_state(config, paths, cycle, member)
+    if state is None:
+        return inputs, []
+
+    outputs = [state] + [Path(record["output"])
+                         for record in observations.read(paths, cycle)
+                         if record["present"]]
+    return inputs, outputs
+
+
+def _writeback_io(config, paths, cycle, member):
+    """What writeback reads and writes.
+
+    Its output is a whole restart set and its proof is the same file the model's
+    own is: `coupler.res`, written last. Declaring the directory instead would
+    make a half-copied set look finished.
+    """
+    stamp = restart_stamp(config)
+    inputs = [analysis_background(paths, cycle, member) / stamp]
+    state = analysis_state(config, paths, cycle, member)
+    if state is not None:
+        inputs.append(state)
+    return inputs, [paths.member_out("ana", cycle, member) / stamp]
 
 
 def _observation_io(config, paths, task, cycle):
@@ -260,6 +380,10 @@ def run_task(config, site, paths, cycle, task, member=None):
         _stats(site, paths, cycle)
     elif real_model(config, task):
         _forecast(config, site, paths, cycle, task, member)
+    elif real_analysis(config, task):
+        _analysis(config, site, paths, cycle, task)
+    elif real_writeback(config, task):
+        _writeback(config, paths, cycle, task, member)
     elif task == "stage.obs" and real_observations(config, task):
         _stage_obs(config, paths, cycle)
     elif task == "hofx" and real_observations(config, task):
@@ -464,18 +588,53 @@ def _requeue(cycle, task):
 # --- the real model ----------------------------------------------------------
 
 def _forecast(config, site, paths, cycle, task, member):
-    """One MOM6-SIS2 integration.
+    """One integration, or one state handed forward.
 
     The input check the stub does is inside the model module instead, because a
     restart *set* is complete or not, which is a different question from whether
     a list of files exists, and the model has to answer it before it builds a
     run directory around them.
     """
+    source = restart_source(config, paths, cycle, member)
+    target = paths.member_out("rst", cycle, member)
     try:
-        mom6sis2.forecast(
-            config, site, paths, cycle, task, member,
-            source=restart_source(config, paths, cycle, member),
-            target=paths.member_out("rst", cycle, member),
+        if config["model"]["name"] == "persistence":
+            persistence.forecast(config, paths, cycle, task, member,
+                                 source=source, target=target)
+        else:
+            mom6sis2.forecast(config, site, paths, cycle, task, member,
+                              source=source, target=target)
+    except mom6sis2.ModelError as error:
+        raise TaskError(f"{cycle}.{task} member {member}: {error}") from error
+
+
+# --- the analysis ------------------------------------------------------------
+
+def _analysis(config, site, paths, cycle, task):
+    """Solve for this cycle's analysis and its departures."""
+    member = member_set(config)[0]
+    try:
+        written = soca.analysis(
+            config, site, paths, cycle, task,
+            background=analysis_background(paths, cycle, member),
+            observers=observations.selected(config, paths, cycle),
+            target=analysis_dir(paths, cycle, member),
+        )
+    except (mom6sis2.ModelError, observations.ObservationError) as error:
+        raise TaskError(f"{cycle}.{task}: {error}") from error
+
+    for path in written:
+        print(f"ackbar: wrote {path}")
+
+
+def _writeback(config, paths, cycle, task, member):
+    """Turn this cycle's analysis into the restart set the forecast reads."""
+    try:
+        writeback.writeback(
+            config, paths, cycle, member,
+            background=analysis_background(paths, cycle, member),
+            analysis=analysis_state(config, paths, cycle, member),
+            target=paths.member_out("ana", cycle, member),
         )
     except mom6sis2.ModelError as error:
         raise TaskError(f"{cycle}.{task} member {member}: {error}") from error

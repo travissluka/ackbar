@@ -141,6 +141,158 @@ def test_a_model_layer_missing_a_value_says_so_rather_than_emitting_nothing(conf
         soca.hofx_config(config, 1, [observer()], background=Path("/rst/0"))
 
 
+# --- the analysis's configuration --------------------------------------------
+
+SOLVER = {
+    "name": "variational",
+    "analysis variables": ["sea_water_potential_temperature",
+                           "sea_water_salinity",
+                           "sea_surface_height_above_geoid"],
+    "background variables": ["sea_water_potential_temperature",
+                             "sea_water_salinity",
+                             "sea_surface_height_above_geoid",
+                             "sea_water_cell_thickness",
+                             "ocean_mixed_layer_thickness"],
+    "background error": {
+        "covariance model": "SABER",
+        "saber central block": {"saber block name": "diffusion"},
+        "linear variable change": {
+            "linear variable changes": [
+                {"linear variable change name": "BalanceSOCA"},
+            ],
+        },
+    },
+    "variational": {
+        "minimizer": {"algorithm": "RPCG"},
+        "iterations": [{"ninner": 10, "gradient norm reduction": 1.0e-10}],
+    },
+}
+
+
+@pytest.fixture
+def var(config):
+    return dict(config, solver=dict(SOLVER))
+
+
+def test_the_analysis_reads_the_background_error_the_layer_describes(var):
+    document = soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    error = document["cost function"]["background error"]
+    assert error["saber central block"] == SOLVER["background error"]["saber central block"]
+
+
+def test_the_balance_operators_variable_lists_are_filled_in(var):
+    """Absent from the layer, and not optional.
+
+    Without `input variables`, `oops::ModelSpaceCovarianceBase` holds a null
+    pointer and dereferences it the first time it evaluates Jb, which is after
+    the background has been read and every saber block reported. The answer is
+    always the analysis variables, so it is built rather than stated a third
+    time.
+    """
+    document = soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    change = document["cost function"]["background error"]["linear variable change"]
+    assert change["input variables"] == SOLVER["analysis variables"]
+    assert change["output variables"] == SOLVER["analysis variables"]
+    # The layer's own content survives beside them.
+    assert change["linear variable changes"][0]["linear variable change name"] == "BalanceSOCA"
+
+
+def test_the_layer_is_not_mutated_by_being_read(var):
+    """`var_config` runs once per cycle in a job that also reads the config.
+
+    A builder that edited the config in place would leave every later cycle
+    reading a document assembled from an earlier one's leftovers.
+    """
+    soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    assert "input variables" not in var["solver"]["background error"]["linear variable change"]
+    assert "geometry" not in var["solver"]["variational"]["iterations"][0]
+
+
+def test_every_inner_loop_gets_a_geometry(var):
+    """`CostFunction::linearize` reads one per outer iteration and throws
+    without it. It is the outer geometry: no multi-resolution analysis here."""
+    var["solver"]["variational"]["iterations"] = [{"ninner": 5}, {"ninner": 3}]
+    document = soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    outer = document["cost function"]["geometry"]
+    assert [entry["geometry"] for entry in document["variational"]["iterations"]] == \
+        [outer, outer]
+
+
+def test_the_background_is_the_state_it_was_handed_not_the_analysis(var):
+    document = soca.var_config(var, 2, [observer()],
+                               background=Path("/out/e/rst/1/mem000"))
+    background = document["cost function"]["background"]
+    assert background["basename"] == "/out/e/rst/1/mem000/"
+    assert background["date"] == "2018-04-16T00:00:00Z"
+    # The superset, because the background error blocks read fields the analysis
+    # never solves for.
+    assert background["state variables"] == SOLVER["background variables"]
+    assert document["cost function"]["analysis variables"] == SOLVER["analysis variables"]
+
+
+def test_an_analysis_is_written_and_so_is_the_increment(var):
+    """Both, and the analysis for two reasons rather than one.
+
+    `oops::Variational` runs its final cost evaluation only when something asks
+    for output, and `CostJo` saves `oman` on that evaluation and nowhere else.
+    An analysis configured without an output therefore writes `ombg`, no `oman`,
+    and no complaint.
+    """
+    document = soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    assert document["output"] == {"datadir": "out", "exp": "ana", "type": "an",
+                                  "date colons": False}
+    written = document["final"]["increment"]["output"]
+    # `state component`, because a ControlIncrement hands each of its three
+    # parts its own subsection and would otherwise find no `datadir`.
+    assert written["state component"]["type"] == "incr"
+
+
+def test_the_file_the_analysis_writes_is_the_file_writeback_opens(var):
+    """One construction, used by both ends.
+
+    SOCA builds the name from `datadir`, `exp`, `type` and a date format, and
+    two spellings of that is a writeback that finds nothing and says the cycle
+    assimilated nothing.
+    """
+    document = soca.var_config(var, 2, [observer()], background=Path("/rst/1"))
+    assert soca.analysis_file(var, 2) == "ocn.ana.an.20180416T000000Z.nc"
+    assert document["output"]["exp"] == soca.ANALYSIS[0]
+
+
+def test_the_window_is_the_cycles_own(var):
+    document = soca.var_config(var, 2, [observer()], background=Path("/rst/1"))
+    assert document["cost function"]["time window"] == {
+        "begin": "2018-04-15T12:00:00Z", "length": "P1DT0H0M0S"}
+
+
+def test_a_solver_missing_a_value_says_so_rather_than_emitting_nothing(var):
+    del var["solver"]["background error"]
+    with pytest.raises(ModelError, match="background error"):
+        soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+
+
+def test_a_variational_section_with_no_outer_loop_is_refused(var):
+    # The application would run, return the background, and write an analysis
+    # equal to it.
+    var["solver"]["variational"] = {"minimizer": {"algorithm": "RPCG"},
+                                    "iterations": []}
+    with pytest.raises(ModelError, match="no outer loop"):
+        soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+
+
+def test_a_cycle_with_no_observers_is_not_an_analysis(var, paths, capsys):
+    """The archive gap, at the analysis rather than at hofx.
+
+    The analysis in a window with nothing in it is the background, and running
+    the minimizer against an empty observer set to reach that answer is the same
+    result at the price of a whole cycle's risk.
+    """
+    assert soca.analysis(var, {}, paths, 1, "da", background=Path("/rst/0"),
+                         observers=[], target=paths.member_out("ana", 1, 0)) == []
+    assert "no observers" in capsys.readouterr().out
+    assert not paths.scratch(1, "da").exists()
+
+
 # --- the run directory -------------------------------------------------------
 
 def test_the_run_directory_gets_the_cases_own_grid_files(config, paths, tmp_path):
@@ -235,7 +387,7 @@ def test_output_reaches_the_experiment_once_the_application_has_exited(config, p
 
 def test_an_application_that_exits_zero_writing_nothing_still_fails(config, paths):
     local = paths.scratch(1, "hofx") / "out" / "e.adt.nc4"
-    with pytest.raises(ModelError, match="no ombg"):
+    with pytest.raises(ModelError, match="wrote no "):
         soca.commit([(local, paths.cycle_out("obs_out", 1) / "e.adt.nc4")])
 
 
@@ -250,23 +402,52 @@ def test_no_observers_is_not_a_failure(config, paths, capsys):
 
 # --- the real layers ---------------------------------------------------------
 
+def shipped(name):
+    """One of the committed experiments, resolved the way `create` resolves it."""
+    from ackbar.config.layers import merge_layers, resolve_layers
+    from ackbar.config.resolve import resolve
+    from ackbar.config.schema import load_schema, merge_keys
+
+    repo = Path(__file__).resolve().parents[1]
+    layers = resolve_layers(repo / "tests/experiments" / name, repo / "config/layers")
+    return repo, resolve(merge_layers(layers, merge_keys(load_schema())), {
+        "scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static", "root": str(repo),
+    })
+
+
+def test_the_shipped_layers_produce_an_analysis_soca_would_accept(tmp_path):
+    """The variational layer, not a fixture, through the whole builder.
+
+    Everything `soca_var.x` reads is either here or in that layer, so a key
+    neither of them sets is discovered by an application that has already
+    allocated eight PEs and read a background.
+    """
+    repo, merged = shipped("tier3_var.yaml")
+    document = soca.var_config(merged, 1, [observer()], background=Path("/rst/0"))
+    reread = yaml.safe_load(yaml.safe_dump(document))
+
+    cost = reread["cost function"]
+    assert cost["cost type"] == "3D-Var"
+    assert cost["geometry"]["fields metadata"].startswith(str(repo))
+    assert cost["background"]["date"] == "2015-01-05T01:00:00Z"
+    # The B is read from the domain's static stage, and `filepath` is a stem.
+    groups = cost["background error"]["saber central block"]["read"]["groups"]
+    assert groups[0]["horizontal"]["filepath"] == "/static/static/gom_25km/diffusion/hz"
+    assert groups[0]["vertical"]["levels"] == 36
+    # An integer, not the string the substitution pass started with: eckit does
+    # not coerce, and `levels: "75"` is a type error inside saber.
+    assert isinstance(groups[0]["vertical"]["levels"], int)
+    assert reread["variational"]["iterations"][0]["geometry"] == cost["geometry"]
+
+
 def test_the_shipped_layers_produce_a_document_soca_would_accept(tmp_path):
     """The config files, not a fixture: every key SOCA needs is set by a layer.
 
     A missing one is caught here rather than by an application that has already
     read a grid.
     """
-    from ackbar.config.layers import merge_layers, resolve_layers
-    from ackbar.config.resolve import resolve
-    from ackbar.config.schema import load_schema, merge_keys
-
-    repo = Path(__file__).resolve().parents[1]
-    layers = resolve_layers(repo / "tests/experiments/tier3_hofx.yaml",
-                            repo / "config/layers")
-    merged = resolve(merge_layers(layers, merge_keys(load_schema())), {
-        "scratch_root": "/scratch", "output_root": "/out",
-        "static_root": "/static", "root": str(repo),
-    })
+    repo, merged = shipped("tier3_hofx.yaml")
     document = soca.hofx_config(merged, 1, [observer()], background=Path("/rst/0"))
     # Round trip, because what the application reads is the file and not the
     # dictionary, and an unserializable value fails at the last moment.
