@@ -63,6 +63,16 @@ class Paths:
     def member_out(self, kind, cycle, member):
         return self.cycle_out(kind, cycle) / member_dir(member)
 
+    def observer_list(self, cycle):
+        """Which observers this cycle actually ran, and what they read.
+
+        Beside the observation output rather than under `cfg/`, because it is a
+        product of the cycle and not of the configuration: the same experiment
+        run over a different archive writes a different one. See
+        `ackbar/observations.py` for why it is written at all.
+        """
+        return self.cycle_out("obs_out", cycle) / "observers.json"
+
     # --- one job -------------------------------------------------------------
 
     def job_script(self, cycle, task):

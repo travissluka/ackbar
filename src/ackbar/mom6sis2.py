@@ -286,12 +286,17 @@ def launch(config, site, run, task):
         )
 
 
-def keep_traces(run, logs, task, member):
-    """Copy the model's own small logs out of scratch, next to the job's log.
+def keep_traces(run, logs, task, member, names=("model.log",) + TRACES):
+    """Copy an executable's own small logs out of scratch, next to the job's log.
 
     Named with the job id where there is one, for the same reason `--output`
     is: a healed attempt must land beside the failed one rather than overwrite
     the evidence of why it was healed.
+
+    *names* is a parameter because SOCA leaves different files behind than the
+    model does, and what is worth having one copy of is the naming rather than
+    the list. Two spellings of the attempt stamp would put a healed forecast's
+    trace and a healed hofx's trace in different places.
     """
     attempt = os.environ.get("SLURM_ARRAY_JOB_ID") or os.environ.get("SLURM_JOB_ID")
     index = os.environ.get("SLURM_ARRAY_TASK_ID")
@@ -299,7 +304,7 @@ def keep_traces(run, logs, task, member):
     stem = task if member is None else f"{task}.{member_dir(member)}"
 
     logs.mkdir(parents=True, exist_ok=True)
-    for name in ("model.log",) + TRACES:
+    for name in names:
         source = run / name
         if source.exists():
             shutil.copyfile(source, logs / f"{stem}{stamp}.{name}")

@@ -8,9 +8,10 @@ A workflow for running cycling ocean data assimilation experiments with
 Status: **early implementation.** The model and JEDI builds work. The configuration core (layer
 merge, schema validation, substitution, blame), the task graph (generation, the job-time symbol
 set, `ackbar validate`) and the workflow engine (job emission, submission, the ledger,
-daemon-free cycling) are in, and cycle end to end against a real Slurm with a stub model. No
-science runs through it yet: the forecast, analysis and observation tasks arrive with their
-phases. See [`docs/build-order.md`](docs/build-order.md).
+daemon-free cycling) are in, and cycle end to end against a real Slurm with a stub model. On
+the real model, a free run cycles MOM6-SIS2 and hofx evaluates observations against its
+background. The analysis and everything that follows from it arrive with their phases. See
+[`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
 
@@ -68,6 +69,8 @@ to be cheap to define, reproducible, and directly comparable to one another.
 build-model.sh     build MOM6-SIS2
 build-jedi.sh      build the JEDI bundle
 config/layers/     configuration layers experiments inherit from
+config/model/      files a model needs that are ackbar's rather than the case's
+config/obs/        files the observers need, shared across observer layers
 config/schema/     ackbar's own schema, which also declares how lists merge
 docs/              design and reference documentation
 pkg/jedi/          the JEDI bundle: CMakeLists plus one submodule per repo
@@ -78,6 +81,8 @@ tests/             tiers 0 and 1: no scheduler, no JEDI, no model
 tests/goldens/     task graphs, pinned per configuration shape
 tests/test_tier2.py  tier 2: the workflow end to end on a real Slurm
 tools/slurm/       local single-node Slurm configuration and its two profiles
+tools/soca-gridspec.sh     build a domain's SOCA geometry, the static stage
+tools/obs-archive-smoke.py build a small observation archive to develop against
 ```
 
 Everything machine-specific (where spack-stack lives, which filesystems hold scratch and
@@ -124,14 +129,20 @@ it is eligible again. `ACKBAR_TIER2_FAST=1` skips the requeue case for iterating
 wrong thing to run before a commit, since requeue is the one fault the scheduler inflicts on
 its own without being asked.
 
-Tier 3 runs the real model. It cycles `OM_1deg` for three cycles, then does it again killing a
-forecast mid-integration, and asserts the healed restarts are bit-identical to the ones the
-undisturbed run wrote. About fifteen minutes and two gigabytes, so it is opt-in, and it needs a
-built `coupler_main` and the offline initial condition the experiment names.
+Tier 3 runs the real model, and there are two of them. `test_tier3.py` cycles `OM_1deg` for
+three cycles, then does it again killing a forecast mid-integration, and asserts the healed
+restarts are bit-identical to the ones the undisturbed run wrote: about fifteen minutes and two
+gigabytes. `test_tier3_hofx.py` adds observers to the same free run and evaluates them against
+each cycle's background, over an archive with a deliberate hole in it, and asserts the missing
+file drops one observer rather than the cycle: about ten minutes.
+
+Both are opt-in and need the built `coupler_main`, the offline initial condition the experiment
+names, and, for hofx, SOCA and the domain's static stage.
 
 ```bash
 source site/activate.sh
-ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3.py
+tools/soca-gridspec.sh OM_1deg              # once per domain, and after a bundle bump
+ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3.py tests/test_tier3_hofx.py
 ```
 
 Anything that resolves a configuration needs the site layer, because that is where the scratch

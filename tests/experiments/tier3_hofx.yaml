@@ -1,0 +1,37 @@
+# Tier 3: the observation path on the real model. The phase 5 milestone.
+#
+# The phase 4 free run with observers added, and nothing else changed. Still
+# `solver: none`, so the restart handoff is still forecast(n) -> forecast(n+1)
+# and hofx hangs off the side of it: an evaluation of the background that
+# produces the same ombg a DA run gets from the analysis application itself.
+#
+# Cycle 1's hofx evaluates `rst/0`, the materialized initial condition, because
+# that is what "the background" means in the first cycle. It is the one place
+# where the first cycle looks different, and it is different in what it reads
+# rather than in what it does.
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/none
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_hofx
+  description: phase 5, hofx over a free run at OM_1deg
+cycle:
+  start: '1958-01-01T12:00:00Z'
+  length: PT12H
+  count: 3
+vars:
+  # The observation archive: an offline stage, keyed on source and period, and
+  # named in full by the experiment for the same reason the initial condition
+  # is. An OSSE experiment and a real-observation experiment over the identical
+  # period differ in exactly this line. The observer layers append their own
+  # cycle directory beneath it, so this names the archive and not a window.
+  #
+  # `soca-test-smoke` is retimed bundle test data. See the README beside it:
+  # every departure it produces is meaningless, and it is here because the
+  # machinery under test is the staging, the dropping and the evaluation.
+  obs_dir: $(static_root)/obs/soca-test-smoke/1958
+model:
+  initial_condition: $(static_root)/ic/om_1deg/woa13-smoke/19580101T12

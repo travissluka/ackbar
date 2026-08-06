@@ -23,8 +23,9 @@ import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from . import ledger, mom6sis2
+from . import ledger, mom6sis2, observations, soca
 from .graph.build import member_set
 
 #: Faults the stub can inject, each named for the terminal state it produces.
@@ -131,7 +132,7 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: They run rather than being cut from the graph on purpose. The edges are the
 #: part that is hard to get right, and a phase that adds a body should not also
 #: be the phase that first discovers its dependencies were wrong.
-DEFERRED = ("stage.obs", "post.obs", "post.state", "verify")
+DEFERRED = ("post.obs", "post.state", "verify")
 
 
 def deferred_task(config, task):
@@ -156,6 +157,37 @@ def real_model(config, task):
     return config["model"]["name"] == "mom6sis2" and task == "forecast"
 
 
+def real_observations(config, task):
+    """Whether this job runs the real observation path rather than the stub.
+
+    Two different answers, because the two tasks depend on different things.
+    `stage.obs` is real under any model but the stub: deciding which observers
+    have a file for this window is a file check and a written list, and nothing
+    in it is model specific. `hofx` is real only under mom6sis2, because it
+    evaluates a background that SOCA has to be able to read, and under any other
+    model it falls through to the stub's "no implementation yet", which says so.
+    """
+    if config["model"]["name"] == "stub":
+        return False
+    if task == "stage.obs":
+        return True
+    return task == "hofx" and config["model"]["name"] == "mom6sis2"
+
+
+def background(config, paths, cycle):
+    """The state hofx evaluates against: the previous cycle's forecast.
+
+    `restart_source` rather than a second spelling of the same path, so that the
+    state hofx reads and the state the next forecast starts from cannot drift
+    apart. hofx exists only where there is no analysis, so this is always the
+    restart set handed straight across, and for cycle 1 it is `rst/0`, the
+    materialized initial condition. There is no member index: an experiment with
+    no analysis and no ensemble has one member, and an ensemble hofx is the
+    ensemble phase's problem.
+    """
+    return restart_source(config, paths, cycle, 0)
+
+
 def restart_stamp(config):
     """The one file whose presence means a member's restart set is whole.
 
@@ -173,7 +205,35 @@ def task_io(config, paths, task, cycle, member):
         stamp = restart_stamp(config)
         source = restart_source(config, paths, cycle, member)
         return [source / stamp], [paths.member_out("rst", cycle, member) / stamp]
+    if real_observations(config, task):
+        return _observation_io(config, paths, task, cycle)
     return stub_io(config, paths, task, cycle, member)
+
+
+def _observation_io(config, paths, task, cycle):
+    """What the observation tasks read and write.
+
+    `stage.obs` deliberately declares no inputs. Its whole job is that an
+    observation file may or may not be there, so a missing one is the normal
+    case rather than a reason to refuse to start, and it is the realized list
+    that records which way it went.
+
+    hofx's outputs come from that list rather than from the configuration,
+    because the configuration names every observer and only the staged ones ran.
+    Before the list exists there is nothing to declare, which is exactly when
+    the skip rule must not fire.
+    """
+    if task == "stage.obs":
+        return [], [paths.observer_list(cycle)]
+
+    inputs = [background(config, paths, cycle) / restart_stamp(config),
+              paths.observer_list(cycle)]
+    if not paths.observer_list(cycle).exists():
+        return inputs, []
+    outputs = [Path(record["output"])
+               for record in observations.read(paths, cycle)
+               if record["present"]]
+    return inputs, outputs
 
 
 def run_task(config, site, paths, cycle, task, member=None):
@@ -200,6 +260,10 @@ def run_task(config, site, paths, cycle, task, member=None):
         _stats(site, paths, cycle)
     elif real_model(config, task):
         _forecast(config, site, paths, cycle, task, member)
+    elif task == "stage.obs" and real_observations(config, task):
+        _stage_obs(config, paths, cycle)
+    elif task == "hofx" and real_observations(config, task):
+        _hofx(config, site, paths, cycle, task)
     elif deferred_task(config, task):
         print(f"ackbar: {cycle}.{task} has no body yet and writes nothing that "
               f"anything reads; see DEFERRED in ackbar/run.py")
@@ -415,6 +479,45 @@ def _forecast(config, site, paths, cycle, task, member):
         )
     except mom6sis2.ModelError as error:
         raise TaskError(f"{cycle}.{task} member {member}: {error}") from error
+
+
+# --- observations ------------------------------------------------------------
+
+def _stage_obs(config, paths, cycle):
+    """Decide this cycle's observer set and write the list that records it.
+
+    Exits 0 having dropped every observer if the archive has nothing for this
+    window. That is deliberate: a gap is a property of the archive, the cycle
+    after it is unaffected, and failing here would stop a fifty cycle experiment
+    over a real record. An observer marked `required` is how an experiment says
+    that its own gap is not acceptable.
+    """
+    try:
+        records = observations.realize(config, paths, cycle)
+    except observations.ObservationError as error:
+        raise TaskError(f"{cycle}.stage.obs: {error}") from error
+
+    dropped = [r["name"] for r in records if not r["present"]]
+    print(f"ackbar: cycle {cycle} staged "
+          f"{sum(1 for r in records if r['present'])}/{len(records)} observer(s) "
+          f"-> {paths.observer_list(cycle)}")
+    for name in dropped:
+        print(f"ackbar:   dropped {name}, no input file for this window")
+
+
+def _hofx(config, site, paths, cycle, task):
+    """Evaluate the staged observers against this cycle's background."""
+    try:
+        written = soca.hofx(
+            config, site, paths, cycle, task,
+            background=background(config, paths, cycle),
+            observers=observations.selected(config, paths, cycle),
+        )
+    except (mom6sis2.ModelError, observations.ObservationError) as error:
+        raise TaskError(f"{cycle}.{task}: {error}") from error
+
+    for path in written:
+        print(f"ackbar: wrote {path}")
 
 
 # --- the tasks that are real from day one ------------------------------------

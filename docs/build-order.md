@@ -226,12 +226,30 @@ reading those configs:
 - **`observation alias file` is valid on both operators and filters**, which is why the same key
   appears in different places in ported configs without either being wrong.
 
-Two relative paths need somewhere to live and something to stage them: `obsop_name_map.yml` in
-the sst layer and `fields metadata` in the model layer. Both currently exist only under
-`soca/test/`, so ACKBAR needs its own copies. Note that `validate` cannot catch either, since
-step 3 stats absolute paths and these resolve against the run directory. That makes them the
-first inputs whose absence is a runtime failure rather than a pre-submission one, which is an
-argument for staging them the way the model's base case is staged rather than by hand.
+`obsop_name_map.yml` and the model layer's `fields metadata` are ACKBAR's own copies, under
+`config/obs/` and `config/model/mom6sis2/`, and they are named **absolutely** rather than by
+the relative name the JEDI examples use. That was the whole fix, and nothing needed staging. A
+relative path resolves against the run directory, so the only thing that can notice its absence
+is the job that fails on it; an absolute one is stated by a layer, stat'd by `validate` step 3,
+and rejected before submission. The rule generalizes: a JEDI config key naming a file ACKBAR
+ships should carry the absolute path, since every application here opens either.
+
+The other thing this phase turned up is that **SOCA's geometry is an offline product, and
+getting one out of a stock MOM6-examples case is not obvious**. Three requirements, none of
+which announce themselves:
+
+- The namelist handed to `mom6_input_nml` must not be called `input.nml`. SOCA copies it to
+  that name in the working directory and asserts the source was something else.
+- `parameter_filename` inside it is relative, so `MOM_input` and `MOM_override` have to be in
+  the run directory. They are linked from the model's own case, which is what makes the grid
+  SOCA analyses on and the grid the model integrates the same grid.
+- A `diag_table` must exist even though nothing here writes a diagnostic. FMS reads one during
+  `initialize_MOM`, and its absence surfaces as a segfault inside the geometry constructor
+  rather than as a message about a missing file.
+
+`tools/soca-gridspec.sh` encodes all three for the offline stage and `ackbar/soca.py` for the
+run directory. Phases 6 and 7 need the same geometry and should build on that rather than on a
+second recipe.
 
 ## Phase 6. Variational, static B, 3D
 
