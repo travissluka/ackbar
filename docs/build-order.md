@@ -466,9 +466,27 @@ run: `forecast.slots`, one model run that dumps a state at each interval,
 document is given, and makes the cycling forecast overshoot by half of itself when the type is
 `fgat` or `4d`.
 
-What is left is the analysis end. No document builds an FGAT or a 4D cost function yet, so
-`soca.var_config` refuses those two types rather than quietly building 3D-Var over a trajectory
-the experiment has already paid an extra half window of model for. Item 5 below is that document.
+The analysis end is built too. `config/soca/varfgat.yaml` and `config/soca/var4d.yaml` are
+siblings of `var.yaml` rather than branches inside it, and `soca.cost_template` chooses between
+the three. The state placement below was implemented from this section and then found to agree
+with it exactly, which is the confirmation the section was written to provide.
+
+Two things it did not anticipate, both found by running it:
+
+**The first cycle of a four-dimensional experiment has no trajectory,** because nothing ran before
+it to write one. Its background is the staged initial condition and its window holds one state, so
+it solves 3D-Var, which is what either cost function degenerates to over a single state. The
+document is named for what was solved rather than for what the experiment is configured as, so
+`da.<jobid>.var.yaml` in cycle 1 and `da.<jobid>.varfgat.yaml` after it are the record of which
+cost function each cycle actually used. `cost_template` distinguishes "there is no predecessor"
+from "the predecessor wrote nothing", and only the first falls back.
+
+**`4d` over a static B cannot exist**, and refusing it is permanent rather than owed. A
+4D-Ens-Var's four dimensions are its ensemble's: members are read as trajectories and the
+covariance at each sub-window is their spread there. Carrying a static B across the window instead
+needs a linear model, and SOCA has `Identity` and the HTLM, neither of which is a tangent linear
+ocean. `graph.build._check_four_d_covariance` refuses it before the forecast pays for it. FGAT
+takes any covariance, because it solves one increment at the midpoint.
 
 `tests/test_tier3_gom.py` asks the three questions that were actually open, all of them about the
 model rather than the solver, and all of them on a free run because that is the cheapest place a

@@ -1,0 +1,64 @@
+# Tier 3: 4D-Ens-Var at gom_25km, where the covariance itself has a time
+# dimension.
+#
+# The second and last of the new methods that earns a real model, and for a
+# different reason than `tier3_fgat`. There the model is what writes the
+# trajectory the analysis reads. Here the *ensemble* is a set of trajectories,
+# one per member, and there is no way to fake them: `model/persistence` writes
+# nothing partway through a forecast, so a persistence ensemble has no
+# sub-window states for the covariance to be sampled at.
+#
+# What only this run can say is that `soca_var.x` accepts the document. Every
+# member is read as a `states` list and `oops::DataSetBase` asserts that all of
+# them have the same number of times, so a member short one slot fails inside
+# the application. Nothing upstream can see that.
+#
+# Four members rather than `tier3_hybrid`'s six, and this is the whole cost
+# control. A 4D window makes every forecast 1.5x as long, so six members would
+# be nine cycling forecasts' worth of model a cycle. Four members plus the
+# control is five, at 18 hours each. The covariance is worse for it and no claim
+# here depends on the covariance being good; `tier3_letkf` says at length what
+# an ensemble this small and this forced is and is not.
+#
+# PT12H cycles, PT12H window centred on the analysis time, PT3H sub-windows. The
+# background and every member carry five states, at 07, 10, 13, 16 and 19Z
+# around a 13Z analysis.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - da/envar
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_4denvar
+  description: 4D-Ens-Var cycling at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+solver:
+  window:
+    type: '4d'
+  variational:
+    iterations:
+    - ninner: 3
+      gradient norm reduction: 1.0e-10
+forecast:
+  slots: PT3H
+ensemble:
+  size: 4
+  control: true
+  # `none`, so the members run free and are recentred. An LETKF beside this
+  # would double the analysis cost to test something `tier3_hybrid` already
+  # tests, and what is under test here is the covariance's time dimension.
+  source: none
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+cleanup:
+  keep_cycles: 2

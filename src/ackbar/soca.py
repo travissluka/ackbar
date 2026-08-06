@@ -95,16 +95,19 @@ APPLICATIONS = {
     # what says which cost function a cycle actually solved, and that is not
     # recoverable afterwards from the log of a solve that ran fine.
     "varfgat": "soca_var.x",
+    # And the third, for the same reason. All three are `soca_var.x`; which cost
+    # function a cycle solved is a property of the document it was handed, and
+    # the name is what makes that answerable from the trace afterwards.
+    "var4d": "soca_var.x",
     "letkf": "soca_letkf.x",
     "recenter": "soca_ensrecenter.x",
 }
 
-#: Which template each window type builds its analysis from. `4d` is absent
-#: rather than mapped: 4D-Ens-Var takes its background as a list of states and
-#: its ensemble as one trajectory per member, so it is a different document
-#: shape rather than a different `cost type` inside this one. `var_config`
-#: refuses it by name.
-COST_TEMPLATE = {"3d": "var", "fgat": "varfgat"}
+#: Which template each window type builds its analysis from. Three siblings
+#: rather than one file with branches in it, because `4d` is not `3d` with a
+#: different cost type: its background is a list of states and its ensemble is
+#: one trajectory per member.
+COST_TEMPLATE = {"3d": "var", "fgat": "varfgat", "4d": "var4d"}
 
 
 def cost_template(config, trajectory):
@@ -113,10 +116,12 @@ def cost_template(config, trajectory):
     The window type, except for the first cycle of a four-dimensional
     experiment, which has no trajectory because nothing ran before it to write
     one. Its background is the staged initial condition and its window holds
-    exactly one state, which is 3D-Var: FGAT compares each observation against
-    the state nearest its own time, and when there is one state that is the same
-    comparison. Solving it as FGAT over a single-entry pseudo model would step
-    off the end of the list on the first observation.
+    exactly one state, which is 3D-Var: a four-dimensional cost function
+    compares each observation against the state nearest its own time, and when
+    there is one state that is the same comparison. Solving it as FGAT over a
+    single-entry pseudo model would step off the end of the list on the first
+    observation, and as 4D-Ens-Var it would be an ensemble with one sub-window,
+    which is a 3D-EnVar spelled at three times the cost.
 
     *trajectory* distinguishes the two cases it has to. `None` is "there is no
     predecessor", which is a fact about cycle 1 and is what this reads. An empty
@@ -124,7 +129,7 @@ def cost_template(config, trajectory):
     refused in `_trajectory` rather than quietly solved as 3D-Var.
     """
     window = window_type(config)
-    if window == "fgat" and trajectory is None:
+    if window in FOUR_D and trajectory is None:
         return "var"
     return COST_TEMPLATE.get(window)
 
@@ -680,38 +685,87 @@ def var_config(config, cycle, observers, *, background, ensemble=None,
     window = window_type(config)
     name = cost_template(config, trajectory)
     if name is None:
-        # 4D-Ens-Var, which this document cannot become by changing its cost
-        # type: its background is a list of states and its ensemble is one
-        # trajectory per member. Refused rather than quietly built as something
-        # else, because an experiment that asked for `4d` has already paid the
-        # extra half window of model and would get an analysis nobody chose.
         raise ModelError(
-            f"solver.window.type is {window!r}, and neither config/soca/var.yaml "
-            f"nor config/soca/varfgat.yaml builds 4D-Ens-Var. The sub-window "
-            f"states exist and the cost function that reads them as an ensemble "
-            f"does not yet; see phase 9 in docs/build-order.md."
+            f"solver.window.type is {window!r}, which nothing builds. The "
+            f"three that do are {', '.join(sorted(COST_TEMPLATE))}."
         )
 
     variables = list(_require(solver, "analysis variables"))
     geometry = _geometry(model)
     restart = _restart(model)
-    slots = {}
-    if name == "varfgat":
-        slots = _trajectory(config, cycle, trajectory, restart)
+    background_variables = list(_require(solver, "background variables"))
+
+    # The background is the one part whose *shape* differs between the three.
+    # 3D-Var and FGAT correct a single state and name it by directory; a
+    # 4D-Ens-Var has one per sub-window and there is no single state to name.
+    if name == "var4d":
+        states = _window_states(
+            config, cycle, trajectory, restart, background_variables)
+        shaped = {
+            "SUBWINDOW": format_duration(slot_length(config)),
+            "BACKGROUND_STATES": states,
+            # One write configuration per sub-window, because the increment is
+            # one per sub-window. `output` above is not: it is enrolled as a
+            # `StateWriter` post-processor and is handed one state at a time,
+            # while the increment goes through `ControlIncrement::write` into
+            # `DataSetBase::write`, which asserts `confs.size() == ntimes_` and
+            # otherwise asserts there is exactly one time.
+            #
+            # SOCA's own `4denvar` test hides this by having no `final` block at
+            # all, so it never writes an increment. Dropping ours would be the
+            # smaller change and the wrong one: the increment is the one field
+            # that answers "did this cycle do anything" without comparing two
+            # experiments.
+            #
+            # The entries are identical. `soca_genfilename` dates each file from
+            # the state it is writing, so five copies of one configuration
+            # produce five differently named files, and the one at the analysis
+            # time is the one `writeback` reads.
+            "INCREMENT_STATES": [_written(INCREMENT) for _ in states],
+        }
+    else:
+        shaped = {
+            "BACKGROUND_DIR": _basename(background),
+            "RESTART_FILE": restart,
+            "BACKGROUND_VARIABLES": background_variables,
+            "INCREMENT_OUTPUT": _written(INCREMENT),
+        }
+        if name == "varfgat":
+            shaped.update(_trajectory(config, cycle, trajectory, restart))
 
     return build_document(name, config, cycle, {
         "GEOMETRY": geometry,
         "ANALYSIS_VARIABLES": variables,
-        "BACKGROUND_DIR": _basename(background),
-        "RESTART_FILE": restart,
-        "BACKGROUND_VARIABLES": list(_require(solver, "background variables")),
         "BACKGROUND_ERROR": background_error(solver, variables, ensemble=ensemble),
         "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
         "VARIATIONAL": _variational(solver, geometry),
         "ANALYSIS_OUTPUT": _written(ANALYSIS),
-        "INCREMENT_OUTPUT": _written(INCREMENT),
-        **slots,
+        **shaped,
     }, templates=templates)
+
+
+def _window_states(config, cycle, trajectory, restart, variables):
+    """The background of a 4D-Ens-Var: one state per sub-window boundary.
+
+    Every slot including the window's own start, which is where this differs
+    from the pseudo model's list in `_trajectory`. There the states are what a
+    model steps *to* and the start is what it steps *from*; here nothing is
+    being stepped, and the first sub-window's observations are compared against
+    the state at the start.
+    """
+    if not trajectory:
+        raise ModelError(
+            f"solver.window.type is '4d', so cycle {cycle}'s background is one "
+            f"state per sub-window, and no trajectory was supplied. The "
+            f"forecast writes those states at `forecast.slots`."
+        )
+    return [{
+        "read_from_file": 1,
+        "date": format_instant(when),
+        "basename": _basename(directory),
+        "ocn_filename": restart,
+        "state variables": list(variables),
+    } for when, directory in sorted(trajectory.items())]
 
 
 def _trajectory(config, cycle, trajectory, restart):
@@ -950,6 +1004,37 @@ def member_states(locate, members, *, date, variables):
             "state variables": list(variables),
         })
     return states
+
+
+def member_trajectories(locate, members, *, slots, variables):
+    """One *trajectory* per member, for 4D-Ens-Var's ensemble covariance.
+
+    `member_states`'s four-dimensional form, and the same list-not-template
+    reasoning applies: `oops::DataSetBase` numbers members by position in the
+    list it was handed. What changes is that each element carries a `states`
+    list instead of being a state, because the covariance at each sub-window is
+    the ensemble's spread there.
+
+    *locate* takes a member and a valid time. *slots* is every sub-window
+    boundary including the window's own start, which is where this differs from
+    the pseudo model's list in `varfgat.yaml`: those states are what a model
+    steps *to* and start one step in, and these are what the observations in
+    each sub-window are compared against, so the first sub-window needs the one
+    at the start.
+
+    Every member gets the same times, which oops asserts rather than tolerates:
+    a member short one slot would otherwise contribute a covariance sampled over
+    a shorter window than the rest.
+    """
+    return [{
+        "states": [{
+            "basename": f"{Path(locate(member, when)).parent}{os.sep}",
+            "ocn_filename": Path(locate(member, when)).name,
+            "read_from_file": 1,
+            "date": format_instant(when),
+            "state variables": list(variables),
+        } for when in sorted(slots)],
+    } for member in sorted(members)]
 
 
 def _variational(solver, geometry):

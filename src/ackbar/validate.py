@@ -22,8 +22,7 @@ from pathlib import Path
 
 import yaml
 
-from .config.jobtime import (FOUR_D, SYMBOL_NAMES, JobTimeError, render,
-                             symbols, window_type)
+from .config.jobtime import SYMBOL_NAMES, JobTimeError, render, symbols
 from .config.jobtime import TOKEN as JOBTIME_TOKEN
 from .config.jobtime import unresolved as unresolved_jobtime
 from .config.lint import ambiguous_numbers
@@ -432,20 +431,13 @@ def _graph_step(config, graph):
                 "aftercorr between arrays with different index sets never fires"
             )))
 
-    # 4D-Ens-Var does not exist yet, and `soca.var_config` refuses to build
-    # something else in its place. Asked here as well as there, because there is
-    # inside cycle 1's `da` job: without it, `create` and `start` both succeed,
-    # the cycling forecast pays 1.5x the model cost to write states nothing will
-    # read, and the experiment stops at the first analysis. That is the failure
-    # this command exists to move forward. `fgat` is built and is not refused.
-    # Delete the rest when 4D-Ens-Var lands.
-    if window_type(config) == "4d" and _solver(config) not in ("none", "letkf"):
-        findings.append(Finding(6, "solver.window.type", (
-            "is '4d' and nothing builds 4D-Ens-Var yet. The sub-window states "
-            "exist and the cost function that reads them as an ensemble does "
-            "not; see phase 9 in docs/build-order.md. `fgat` is available and "
-            "reads the same states"
-        )))
+    # Every window type builds now, so the phase gate that used to sit here is
+    # gone rather than narrowed. What replaced it is a check that cannot be
+    # deleted by implementing something: `graph.build._check_four_d_covariance`
+    # refuses `4d` over a static B, because 4D-Ens-Var's four dimensions are the
+    # ensemble's and carrying a static B across the window needs a linear model
+    # SOCA does not have for the ocean. That one runs at graph build, which is
+    # earlier than here and earlier than the forecast that would pay for it.
     return findings
 
 

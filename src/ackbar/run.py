@@ -993,11 +993,29 @@ def _covariance_ensemble(config, paths, cycle):
                                    stamp=restart_stamp(config))
 
     restart = _require_restart(config)
+    variables = config["solver"]["background variables"]
+
+    # 4D-Ens-Var reads every member as a trajectory, because its covariance at
+    # each sub-window is the ensemble's spread *there*. The states are the ones
+    # the previous cycle's forecast already wrote for every member: `forecast`
+    # is a member-level array and `mom6_restart_interval` is the slot cadence,
+    # so the ensemble half of a 4D window costs storage rather than model.
+    #
+    # Cycle 1 has no trajectory and solves 3D, so it takes the branch below and
+    # reads the staged ensemble initial condition, one state per member.
+    if window_type(config) == "4d" and cycle > 1:
+        return soca.member_trajectories(
+            lambda member, when: paths.slot_out(cycle - 1, member, when) / restart,
+            members,
+            slots=slot_times(config, cycle - 1),
+            variables=variables,
+        )
+
     return soca.member_states(
         lambda member: analysis_background(paths, cycle, member) / restart,
         members,
         date=cycle_time(config, cycle).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        variables=config["solver"]["background variables"],
+        variables=variables,
     )
 
 

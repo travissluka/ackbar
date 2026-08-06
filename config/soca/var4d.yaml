@@ -1,0 +1,84 @@
+# soca_var.x: 4D-Ens-Var, where the covariance itself has a time dimension.
+#
+# The third sibling of `config/soca/var.yaml`, and the one that is not that file
+# with a comparison moved. `varfgat.yaml` solves one increment at the centre of
+# the window against a trajectory; this solves an increment *per sub-window*,
+# and what relates them is the ensemble rather than a linear model.
+#
+# That is why `graph.build._check_four_d_covariance` refuses a static B here
+# permanently rather than pending an implementation: the four dimensions of a
+# 4D-Ens-Var are the ensemble's. Its members are read as trajectories and the
+# covariance at each sub-window is their spread there. A static B has no time
+# dimension to offer, and propagating one across the window instead is what
+# needs a tangent linear model.
+
+cost function:
+  cost type: 4D-Ens-Var
+
+  time window:
+    begin: '{{window_begin}}'
+    length: '{{window_length}}'
+
+  # How the window is divided, which is `forecast.slots`. The background and
+  # every member carry one state per sub-window boundary, so a `subwindow` that
+  # disagreed with the spacing of those states would ask for a time no file is
+  # dated at. `graph.build._check_window` is what holds the two together.
+  subwindow: $(SUBWINDOW)
+
+  # False, and it is a decomposition choice rather than a science one. True
+  # gives each sub-window its own communicator, which needs the ranks to divide
+  # by the number of sub-windows and is worth having when the model is the cost.
+  # Here the states are already on disk and the cost is reading them, so the
+  # ranks are better spent on the geometry. SOCA's own `4denvar` test says false
+  # for the same reason.
+  parallel subwindows: false
+
+  analysis variables: $(ANALYSIS_VARIABLES)
+
+  geometry: $(GEOMETRY)
+
+  # A list, not a state. This is the difference that makes the document a
+  # different document: there is no single background to correct, there is one
+  # per sub-window, and the increment is solved against all of them at once.
+  #
+  # The window's own start *is* among these, unlike `varfgat.yaml`'s pseudo
+  # model. There the list is what a model steps through and the start is where
+  # it steps from; here it is not a trajectory being walked, it is the set of
+  # states the observations in each sub-window are compared against, and the
+  # first sub-window's is the one at the start.
+  background:
+    states: $(BACKGROUND_STATES)
+
+  # `ensemble` or `hybrid`, and every member is a trajectory rather than a
+  # state. `oops::DataSetBase` reads each element of `members` and expands its
+  # `states` list, asserting that every member has the same number of them, so a
+  # member missing one slot fails there rather than producing a covariance
+  # sampled over a shorter window than the others.
+  background error: $(BACKGROUND_ERROR)
+
+  observations:
+    observers: $(OBSERVERS)
+
+variational: $(VARIATIONAL)
+
+# One configuration, unlike the increment below, and the difference is which
+# oops path each takes. This is enrolled as a `StateWriter` post-processor and
+# is handed one state at a time as the last evaluation walks the window, so it
+# writes a file per sub-window from a single block. `soca_genfilename` dates
+# each from the state it is given, and the one at the analysis time is the one
+# `writeback` reads.
+output: $(ANALYSIS_OUTPUT)
+
+final:
+  increment:
+    output:
+      # A `states` list sized to the number of sub-windows, because a 4D
+      # increment is one per sub-window. `ControlIncrement::write` reaches
+      # `DataSetBase::write`, which takes the `states` branch only when the key
+      # is present and otherwise asserts there is exactly one time.
+      #
+      # SOCA's `4denvar` test has no `final` block at all and so never finds
+      # this. The entries are identical; what makes the files differ is the date
+      # of the increment each one writes.
+      state component:
+        states: $(INCREMENT_STATES)

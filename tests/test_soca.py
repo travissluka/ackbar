@@ -283,13 +283,13 @@ def test_a_window_no_document_builds_is_refused_not_ignored(var):
     model bill for a trajectory nothing reads and an analysis nobody chose, and
     neither leaves a mark in the output.
 
-    `4d` rather than `fgat`, which is now built: 4D-Ens-Var takes its background
-    as a list of states and its ensemble as one trajectory per member, so it is
-    a different document and not a different `cost type` in this one.
+    All three real window types build now, so this is the guard against a fourth
+    arriving in the schema without a document behind it.
     """
-    var["solver"]["window"] = {"type": "4d"}
-    with pytest.raises(ModelError, match="4D-Ens-Var"):
-        soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    var["solver"]["window"] = {"type": "5d"}
+    with pytest.raises(ModelError, match="nothing builds"):
+        soca.var_config(var, 2, [observer()], background=Path("/rst/1"),
+                        trajectory={})
 
 
 # --- FGAT ---------------------------------------------------------------------
@@ -386,6 +386,135 @@ def test_the_first_cycle_of_an_fgat_experiment_solves_3dvar(var):
     # And valid at the cycle's own time, not at the window's start: `rst/0` is
     # the initial condition and `cycle.start` has to equal its valid time.
     assert document["cost function"]["background"]["date"] == "2018-04-15T00:00:00Z"
+
+
+def test_4d_ens_var_takes_its_background_as_one_state_per_subwindow(var):
+    """The difference that makes it a different document rather than a cost type.
+
+    3D-Var and FGAT correct a single state, named by directory. A 4D-Ens-Var has
+    one per sub-window and there is no single state to name, so the background
+    is a list and the restart filename and the background variables move inside
+    its entries.
+
+    The window's own start *is* among them, unlike the pseudo model's list: it
+    is not a trajectory being walked, it is the set of states each sub-window's
+    observations are compared against, and the first sub-window's is the one at
+    the start.
+    """
+    var["solver"]["window"] = {"type": "4d"}
+    var["solver"]["covariance"] = "ensemble"
+    var["solver"]["ensemble error"] = {
+        "localization": {"localization method": "SABER"},
+    }
+    var.setdefault("forecast", {})["slots"] = "PT6H"
+    document = soca.var_config(
+        var, 2, [observer()], background=Path("/unused"),
+        ensemble=[{"states": []}], trajectory=trajectory(var))
+
+    cost = document["cost function"]
+    assert cost["cost type"] == "4D-Ens-Var"
+    assert cost["subwindow"] == "P0DT6H0M0S"
+    assert "background error" in cost
+    assert "model" not in cost
+
+    dates = [state["date"] for state in cost["background"]["states"]]
+    assert dates == ["2018-04-15T12:00:00Z", "2018-04-15T18:00:00Z",
+                     "2018-04-16T00:00:00Z", "2018-04-16T06:00:00Z",
+                     "2018-04-16T12:00:00Z"]
+    assert cost["time window"]["begin"] == dates[0]
+    for state in cost["background"]["states"]:
+        assert state["ocn_filename"] == "MOM.res.nc"
+        assert state["state variables"] == var["solver"]["background variables"]
+
+
+def test_the_4d_increment_is_written_once_per_subwindow(var):
+    """`ControlIncrement::write` asserts the count, and SOCA's own test misses it.
+
+    A 4D increment is one per sub-window, and `DataSetBase::write` takes its
+    `states` branch only when that key is present; without it, it asserts there
+    is exactly one time and aborts after the solve has finished. SOCA's
+    `4denvar` test has no `final` block at all, so it never writes an increment
+    and never reaches the assertion.
+
+    The analysis `output` is not a list, and that asymmetry is oops's: it is
+    enrolled as a `StateWriter` post-processor and handed one state at a time,
+    so one block writes a file per sub-window.
+    """
+    var["solver"]["window"] = {"type": "4d"}
+    var["solver"]["covariance"] = "ensemble"
+    var["solver"]["ensemble error"] = {
+        "localization": {"localization method": "SABER"},
+    }
+    var.setdefault("forecast", {})["slots"] = "PT6H"
+    document = soca.var_config(
+        var, 2, [observer()], background=Path("/unused"),
+        ensemble=[{"states": []}], trajectory=trajectory(var))
+
+    written = document["final"]["increment"]["output"]["state component"]
+    assert len(written["states"]) == 5
+    assert {entry["exp"] for entry in written["states"]} == {soca.INCREMENT[0]}
+    assert "states" not in document["output"]
+
+
+def test_4d_hybrid_is_the_4d_document_with_a_weighted_static_component(var):
+    """The one combination that needed no new code, asserted rather than assumed.
+
+    A 4D hybrid is `4d` with `covariance: hybrid`, and `background_error`
+    already builds weighted components; what changed underneath it is only that
+    the ensemble entries are trajectories now. SOCA's own `4dhybenvar` test has
+    this exact shape.
+
+    The static component is genuinely three-dimensional and is applied
+    identically at every sub-window, because there is no linear model to
+    propagate it. That is what the ctest does and it is not a bug, but it does
+    mean a 4D hybrid's static half is not four-dimensional, which is worth
+    knowing before reading a comparison against the ensemble half.
+    """
+    var["solver"]["window"] = {"type": "4d"}
+    var["solver"]["covariance"] = "hybrid"
+    var["solver"]["hybrid weights"] = {"static": 0.5, "ensemble": 0.5}
+    var["solver"]["ensemble error"] = {
+        "localization": {"localization method": "SABER"},
+    }
+    var.setdefault("forecast", {})["slots"] = "PT6H"
+    document = soca.var_config(
+        var, 2, [observer()], background=Path("/unused"),
+        ensemble=[{"states": []}], trajectory=trajectory(var))
+
+    cost = document["cost function"]
+    assert cost["cost type"] == "4D-Ens-Var"
+    error = cost["background error"]
+    assert error["covariance model"] == "hybrid"
+    static, ensemble = error["components"]
+    assert static["covariance"]["covariance model"] == "SABER"
+    assert ensemble["covariance"]["covariance model"] == "ensemble"
+    # The background is still one state per sub-window: the covariance changed,
+    # not the cost function.
+    assert len(cost["background"]["states"]) == 5
+
+
+def test_a_four_d_ensemble_member_is_a_trajectory_not_a_state():
+    """`oops::DataSetBase` expands each member's `states` and asserts they match.
+
+    So a member short one slot fails there rather than contributing a covariance
+    sampled over a shorter window than the rest. An explicit list rather than
+    `members from template`, for the reason `member_states` gives: oops numbers
+    members by position, so a template's `%mem%` and the index a member is
+    written out as disagree exactly when a member is missing.
+    """
+    from datetime import datetime, timezone
+
+    slots = [datetime(2018, 4, 15, hour, tzinfo=timezone.utc)
+             for hour in (12, 18)]
+    built = soca.member_trajectories(
+        lambda member, when: Path(f"/out/{member:03d}/{when:%H}/MOM.res.nc"),
+        (1, 3), slots=slots, variables=["sea_water_salinity"])
+
+    assert len(built) == 2
+    assert all(len(entry["states"]) == 2 for entry in built)
+    assert [state["basename"] for state in built[0]["states"]] == \
+        ["/out/001/12/", "/out/001/18/"]
+    assert built[1]["states"][0]["date"] == "2018-04-15T12:00:00Z"
 
 
 def test_fgat_and_3dvar_differ_only_in_the_comparison(var):

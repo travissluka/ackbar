@@ -41,21 +41,17 @@ FIXTURES = [
     # four-dimensional *arithmetic*, the overshoot and the slot cadence, which
     # `fgat` and `4d` share and which is computed from the window's length.
     "fourd_om1deg",
+    # And 4D-Ens-Var, which was the deferred one until its document landed.
+    # There is no deferred fixture any more: every window type in the schema
+    # builds. What used to be a phase gate here is now a permanent refusal in
+    # `graph.build._check_four_d_covariance`, and it is about a combination that
+    # cannot exist rather than one that is not written yet, so it is pinned in
+    # `test_graph.py` beside the other graph checks.
+    "fourdenvar_om1deg",
     "letkf_om1deg",
     "envar_om1deg",
     "hybrid_om1deg",
 ]
-
-#: Not in `FIXTURES`, and this is the point rather than an oversight: a
-#: 4D-Ens-Var experiment is a configuration ACKBAR can build a graph for and
-#: cannot yet run, so `validate` is supposed to say so. Listing it as clean
-#: would assert the opposite. Move it in when 4D-Ens-Var lands, the way
-#: `fourd_om1deg` moved in when FGAT did.
-#:
-#: An ensemble covariance, because a static one with `type: '4d'` never reaches
-#: this gate: `graph.build._check_four_d_covariance` refuses it first, and
-#: permanently rather than pending an implementation.
-DEFERRED_FIXTURE = "fourdenvar_om1deg"
 
 
 @pytest.fixture(scope="module")
@@ -157,23 +153,13 @@ class TestTheFixturesAreClean:
         assert main(["validate", "--offline", str(EXPERIMENTS / f"{name}.yaml")]) == 0
         assert "ok:" in capsys.readouterr().out
 
-    def test_a_window_nothing_can_solve_yet_is_refused_before_the_experiment_runs(
-            self, keys, schema):
-        """Where the refusal lands matters as much as that it exists.
-
-        `soca.var_config` already refuses this, but it refuses inside cycle 1's
-        `da` job. By then `create` and `start` have both succeeded and the
-        cycling forecast has run at 1.5x the model cost to write sub-window
-        states that nothing will read.
-        """
-        findings = offline(load(DEFERRED_FIXTURE, keys), schema)
-        assert [f.where for f in findings] == ["solver.window.type"]
-        assert "phase 9" in findings[0].message
-
-    def test_a_four_dimensional_letkf_is_not_caught_by_that(self, keys, schema):
-        # It is `config/soca/var.yaml` that cannot do this, and the LETKF does
-        # not read it. Refusing here on the window type alone would block a
-        # configuration that has no such problem.
+    def test_a_four_dimensional_letkf_is_clean(self, keys, schema):
+        # There was a phase gate here refusing four-dimensional windows while
+        # no document built one, and it had to exempt the LETKF because it is
+        # `config/soca/var.yaml` that could not do it and the LETKF does not
+        # read that file. Every window type builds now and the gate is gone;
+        # this stays as the assertion that nothing refuses the combination on
+        # the window type alone.
         config = load("letkf_om1deg", keys)
         config["solver"]["window"] = {"type": "4d"}
         config["forecast"] = {"slots": "PT12H"}

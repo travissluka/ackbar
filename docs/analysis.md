@@ -54,6 +54,47 @@ already says it. The only parts an experiment states directly are the ones
 nothing else implies, and they live in `config/layers/da/variational.yaml`:
 `background error` and `variational`.
 
+**Three shapes, not one**, chosen by `solver.window.type` in `cost_template`.
+They are sibling files rather than branches inside one, because two of the
+differences are structural rather than a changed value:
+
+| `window.type` | template | cost type | background |
+|---|---|---|---|
+| `3d` | `var.yaml` | `3D-Var` | one state, at the analysis time |
+| `fgat` | `varfgat.yaml` | `3D-FGAT` | one state, at the window's start, plus a `PseudoModel` over the rest |
+| `4d` | `var4d.yaml` | `4D-Ens-Var` | a list, one state per sub-window |
+
+FGAT and 4D read the same files, the previous cycle's sub-window slots, and they
+read them differently. FGAT's pseudo model list starts one step *after* the
+window's start, because the state there is what the model steps from and is
+named separately as the background. 4D-Ens-Var's list includes the start,
+because nothing is being stepped: each sub-window's observations are compared
+against the state at it, and the first sub-window's is the one at the start.
+soca-science's `run.var.sh` places them the same way, arrived at independently.
+
+**The first cycle of a `fgat` or `4d` experiment solves `3D-Var`**, because
+nothing ran before it to write a trajectory: its background is the staged
+initial condition and its window holds one state, which is what either cost
+function degenerates to over one state. The document is named for what was
+solved, so `da.<jobid>.var.yaml` in cycle 1 beside `da.<jobid>.varfgat.yaml`
+afterwards is the record of which cost function each cycle used. That is the
+only reason the three share an executable and not a name.
+
+**`4d` requires an ensemble covariance**, and this is refused at graph build
+rather than owed: a 4D-Ens-Var's four dimensions are its ensemble's, and
+carrying a static B across the window needs a linear model SOCA does not have
+for the ocean. `fgat` takes any covariance, because it solves one increment at
+the window's midpoint.
+
+One trap inside `var4d.yaml`, because it is the kind that is found by running
+and not by reading: the analysis `output` is a single block and the increment
+`output` is a list of them, one per sub-window. oops enrolls the first as a
+`StateWriter` post-processor and hands it one state at a time, while the second
+goes through `ControlIncrement::write` into `DataSetBase::write`, which asserts
+there is exactly one time unless a `states` key is present. SOCA's own `4denvar`
+test has no `final` block at all, so it never writes an increment and never
+reaches that assertion.
+
 The split is not the templating that soca-science did with `sed`, and the rule
 that makes it not is narrow: a template holds a value only when nothing in
 Python reads it. The moment a value is read on both sides, it becomes a slot,

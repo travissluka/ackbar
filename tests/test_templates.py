@@ -31,7 +31,7 @@ TEMPLATES = REPO / "config" / "soca"
 #: Which template each task's builder fills. The builders are exercised against
 #: a real config elsewhere (`tests/test_soca.py`); what is pinned here is the
 #: correspondence itself.
-DOCUMENTS = ("hofx", "hofx4d", "var", "varfgat", "letkf", "recenter")
+DOCUMENTS = ("hofx", "hofx4d", "var", "varfgat", "var4d", "letkf", "recenter")
 
 #: The slots each document is built with, spelled out rather than read back from
 #: the builder. A test that derived both sides from the same call would pass for
@@ -52,6 +52,13 @@ EXPECTED = {
                 "RESTART_FILE", "BACKGROUND_VARIABLES", "BACKGROUND_ERROR",
                 "OBSERVERS", "VARIATIONAL", "ANALYSIS_OUTPUT",
                 "INCREMENT_OUTPUT", "TSTEP", "STATES"},
+    # No `BACKGROUND_DIR`, `RESTART_FILE` or `BACKGROUND_VARIABLES`, and that
+    # absence is the difference: a 4D-Ens-Var has one background per sub-window
+    # rather than a single state to name by directory, so all three are folded
+    # into the entries of `BACKGROUND_STATES`.
+    "var4d": {"GEOMETRY", "ANALYSIS_VARIABLES", "BACKGROUND_ERROR", "OBSERVERS",
+              "VARIATIONAL", "ANALYSIS_OUTPUT", "INCREMENT_STATES",
+              "SUBWINDOW", "BACKGROUND_STATES"},
     "letkf": {"GEOMETRY", "MEMBER_BACKGROUNDS", "OBSERVERS", "LOCAL_ENSEMBLE_DA",
               "ANALYSIS_OUTPUT", "INCREMENT_OUTPUT", "SPREAD_PRIOR_OUTPUT",
               "SPREAD_POSTERIOR_OUTPUT"},
