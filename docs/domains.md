@@ -11,8 +11,8 @@ first-class configuration axis here rather than a flag (see Domains in
 | `om_1deg` | 360 x 320 | 75 | 1800 | 178 s | global development and test |
 | `gom_25km` | 87 x 56 | 36 | 1800 | 6.3 s | regional plumbing |
 | `gom_12km` | 174 x 111 | 36 | 900 | 30.5 s | regional science |
-| `gom_8km` | 271 x 173 | 25 | 900 | not timed | eddy resolving |
-| `gom_4km` | 541 x 346 | 36 | 300 | not timed, ~4.7x `om_1deg` | submesoscale |
+| `gom_8km` | 271 x 173 | 25 | 900 | 67 s | eddy resolving |
+| `gom_4km` | 541 x 346 | 36 | 300 | 930 s | submesoscale |
 | `om4_025` | | | | | global production, not yet built |
 
 Timings are wall clock on rancor, 8 MPI ranks, measured serially with nothing
@@ -23,6 +23,14 @@ one.
 `gom_25km` comes out 28x faster than `om_1deg` rather than the 38x its grid size
 predicts, because 87 x 56 split eight ways leaves subdomains too small to pay
 for their halo exchange. `gom_12km` hits its predicted 6.3x.
+
+At the top of the range the halo penalty is gone and the scaling is the
+arithmetic one. `gom_4km` costs 14x `gom_8km` against the 17x that 4x the cells,
+1.4x the levels and 3x the steps predict, so the larger subdomains are
+recovering some of what `gom_25km` loses. In absolute terms `gom_4km` is 5x
+`om_1deg` per simulated day, which is what makes it a domain to reach for
+deliberately: a 50 cycle experiment at 12 hour cycles is around 6.5 hours of
+model alone, and that is before any analysis.
 
 ## The Gulf of Mexico domains
 
