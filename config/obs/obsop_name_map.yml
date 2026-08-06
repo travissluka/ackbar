@@ -1,0 +1,33 @@
+# ACKBAR's copy of `soca/test/testinput/obsop_name_map.yml`, for the same reason
+# the fields metadata is copied: the bundle's is test data, and an observer that
+# reads it depends on a path inside a submodule.
+#
+# What it does: maps an observation variable name to the GeoVaLs name the
+# operator should interpolate. `seaSurfaceTemperature` is the observation, and
+# `sea_surface_temperature` is the model field, which exists only because the
+# fields metadata gives `sea_water_potential_temperature` that `name surface`.
+# The alias file and the fields metadata therefore have to agree, and neither
+# one says so.
+variable maps:
+  - name: depthBelowWaterSurface
+    alias: ocean_depth
+  - name: waterTemperature
+    alias: sea_water_temperature
+  - name: seaSurfaceTemperature
+    alias: sea_surface_temperature
+  - name: salinity
+    alias: sea_water_salinity
+  - name: seaSurfaceSalinity
+    alias: sea_surface_salinity
+  - name: seaIceFraction
+    alias: sea_ice_area_fraction
+  - name: waterSurfaceZonalVelocity
+    alias: surface_eastward_sea_water_velocity
+  - name: waterSurfaceMeridionalVelocity
+    alias: surface_northward_sea_water_velocity
+  - name: seaSurfaceChlorophyllMassConcentration
+    alias: sea_surface_chlorophyll
+  - name: oceanSurfaceBiomassContent
+    alias: sea_surface_biomass_in_p_units
+  - name: waveHeightSignificant
+    alias: sea_surface_wave_significant_height

@@ -12,6 +12,7 @@ import pytest
 from ackbar.paths import Paths
 
 SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static",
         "root": "/ackbar"}
 CONFIG = {"experiment": {"name": "e"}}
 

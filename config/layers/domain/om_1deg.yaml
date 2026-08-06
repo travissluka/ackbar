@@ -13,6 +13,16 @@ vars:
 
 domain:
   name: om_1deg
+
+  # The static stage: what an offline step produces once for this domain, and
+  # what every experiment on it then reads. Named by the domain layer rather
+  # than by the experiment, unlike the initial condition, because that is what
+  # "keyed on domain" means: two experiments here share one `soca_gridspec.nc`,
+  # and that sharing is what makes them comparable by construction rather than
+  # by inspection. See Offline stages in docs/design.md, and
+  # `tools/soca-gridspec.sh` for what writes it.
+  static: $(static_root)/static/om_1deg
+
   resources:
     # Everything that is bookkeeping: python, shell, a few file operations.
     # Named `default` so that adding a task does not silently submit it with

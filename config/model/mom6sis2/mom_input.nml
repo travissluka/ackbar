@@ -1,0 +1,45 @@
+! The namelist SOCA hands to MOM6 when it builds a geometry.
+!
+! Not the model's `input.nml`. That one configures a *coupled* integration:
+! coupler, SIS2, fluxes, the run length. This one exists so that SOCA's own
+! MOM6 can set up a domain decomposition and read `NK`, and nothing else. The
+! two are different files because they configure different executables, and
+! sharing one would mean a hofx job carrying a run length it never uses and a
+! forecast carrying a namelist SOCA rewrites.
+!
+! Three things here are not free choices.
+!
+! **The file must not be named `input.nml`.** SOCA copies whatever
+! `mom6_input_nml` names into `input.nml` in the working directory, and asserts
+! that the source is not already that (`soca/src/soca/Geometry/FmsInput.cc`).
+!
+! **`parameter_filename` is relative**, so `MOM_input` and `MOM_override` are
+! read out of the run directory. They are the case's own, linked in unchanged,
+! which is what keeps the geometry SOCA sees and the grid the model integrates
+! the same grid.
+!
+! **A `diag_table` has to exist in the run directory** even though nothing here
+! writes diagnostics. FMS reads it during `initialize_MOM`, and its absence is a
+! fatal error inside the geometry constructor rather than a missing output.
+
+ &MOM_input_nml
+        output_directory = './',
+        input_filename = 'n'
+        restart_input_dir = 'INPUT/',
+        restart_output_dir = 'RESTART/',
+        parameter_filename = 'MOM_input', 'MOM_override'
+/
+
+ &diag_manager_nml
+ /
+
+ &fms_io_nml
+        max_files_w = 100
+        checksum_required = .false.
+/
+
+ &fms_nml
+        clock_grain = 'MODULE'
+        clock_flags = 'SYNC'
+        domains_stack_size = 5000000
+/

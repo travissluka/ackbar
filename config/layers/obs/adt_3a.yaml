@@ -29,6 +29,11 @@ observations:
     distribution:
       name: $(obs_distribution)
       options: $(obs_distribution_options)
+    # The archive is keyed by date, because an archive has no cycle numbers: it
+    # is built once and read by experiments that number their cycles
+    # differently. The experiment's own output is keyed by cycle number, like
+    # every other directory it writes, so cleanup and the harvest address it the
+    # same way they address restarts. See the header of `ackbar/paths.py`.
     obsdatain:
       engine:
         type: H5File
@@ -36,7 +41,7 @@ observations:
     obsdataout:
       engine:
         type: H5File
-        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%d%H}}/$(experiment).adt_3a.{{window_begin:%Y%m%d%H}}.nc4
+        obsfile: $(obs_out_dir)/{{cycle}}/$(experiment).adt_3a.{{window_begin:%Y%m%d%H}}.nc4
     simulated variables: [absoluteDynamicTopography]
     io pool:
       max pool size: 1

@@ -755,12 +755,33 @@ path with a different grid file, and the README should not claim otherwise.
 **No downloading inside the cycle.** v2 could download and convert observations mid-cycle
 (`OBS_GEN_ENABLED`, `OBS_*_DWNLD`, `OBS_*_CNVRT`, the `scripts/obs/*.sh` downloader set)
 because it was built with realtime running in mind. These are retrospective experiments. The
-in-cycle obs step reduces to: find the file covering this window in the archive, link it, and
-drop observers whose input file is absent (unless marked required, per v3's `_required`).
+in-cycle obs step reduces to: find the file covering this window in the archive, and drop
+observers whose input file is absent (unless marked required, per v3's `_required`). The
+archive is keyed by date and the experiment's own output by cycle number, which looks
+inconsistent and is not: an archive is built once and read by experiments that number their
+cycles differently, while everything an experiment writes has to be addressable by cleanup and
+the harvest, which work off cycle numbers.
 
 Because that makes the observation set vary silently, **the realized observer list is written
 per cycle** and diffed by the comparison tooling. Two experiments differing in which observers
 actually ran is the difference that most affects a comparison, and it must not be invisible.
+
+It lives at `obs_out/<cycle>/observers.json`, beside the observation output it describes rather
+than under `cfg/`, because it is a product of the cycle and not of the configuration: the same
+experiment over a different archive writes a different one. Every configured observer is in it
+whether or not it ran, since a list naming only what ran makes a drop indistinguishable from an
+observer that was never configured. `stage.obs` writes it and hofx reads it rather than asking
+the filesystem a second time, so a file that arrives between the two jobs cannot change the
+observer set without changing the record of it.
+
+**Some missing is the archive, all missing is the configuration.** An observation file is the
+one input an experiment is allowed to be missing, so `validate` cannot check it the way it
+checks a grid file; skipping it entirely would let a misspelled archive path produce an
+experiment that runs to completion assimilating nothing. The rule that separates the two is
+proportion. An observer with no file in some cycles is a gap, and is left to `stage.obs`. An
+observer with no file in any cycle at all is reported before submission. One marked `required`
+is checked file by file, because the experiment has already said its own gaps are not
+acceptable.
 
 **OSSE first.** Synthetic observations generated from a truth run are the first obs source.
 Real observations come later, via an offline archive-building script, using v2's downloaders
@@ -787,7 +808,17 @@ Each produces versioned, read-only inputs. Experiments are pure consumers.
 
 Static is keyed on **domain, not experiment**, so one `static/om_1deg/` is shared read-only
 across every experiment on that domain. That is what makes experiments comparable by
-construction.
+construction. It is also the one stage an experiment does not name for itself: the domain layer
+carries the path, because "keyed on domain" and "chosen per experiment" are contradictory, and
+an experiment that could point at its own gridspec could be incomparable without saying so.
+
+`soca_gridspec.nc` is the geometry SOCA reads instead of initializing MOM6 to discover the
+grid, and building it *is* a full MOM6 initialization: more memory than the analysis that
+follows it, spent to produce the same bytes every time. That is the argument for the whole
+stage in miniature. `tools/soca-gridspec.sh` writes it from the model's own case directory, so the
+grid the analysis works on and the grid the model integrates on are the same grid by
+construction rather than by two configurations agreeing. Nothing detects a stale one, so it is
+rebuilt after a bundle bump that touches MOM6 or SOCA's geometry.
 
 They live under `$ACKBAR_STATIC_ROOT`, one directory per stage, keyed as the table says and in
 that order: `ic/<domain>/<source>/<YYYYMMDDThh>` is the initial condition stage,

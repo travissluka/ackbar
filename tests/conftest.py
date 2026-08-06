@@ -16,6 +16,10 @@ SITE = {
     "ACKBAR_SITE": "test",
     "ACKBAR_SCRATCH_ROOT": "/scratch",
     "ACKBAR_OUTPUT_ROOT": "/out",
+    # What the offline stages produce. Here because the domain layers name it
+    # for their static stage, so without it an experiment on a real domain fails
+    # to resolve rather than failing to find a file.
+    "ACKBAR_STATIC_ROOT": "/static",
     "ACKBAR_MAX_SUBMIT_JOBS": "10000",
     "ACKBAR_MAX_ARRAY_SIZE": "1000",
 }

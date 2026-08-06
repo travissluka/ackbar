@@ -14,14 +14,17 @@ observations:
     obsdataout:
       engine:
         type: H5File
-        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%d%H}}/$(experiment).sst_noaa19.{{window_begin:%Y%m%d%H}}.nc4
+        obsfile: $(obs_out_dir)/{{cycle}}/$(experiment).sst_noaa19.{{window_begin:%Y%m%d%H}}.nc4
     simulated variables: [seaSurfaceTemperature]
     io pool:
       max pool size: 1
     obs perturbations seed: '{{seed}}'
   obs operator:
     name: Identity
-    observation alias file: obsop_name_map.yml
+    # Absolute, so `ackbar validate` stats it before anything is submitted. The
+    # relative name the JEDI examples use resolves against the run directory,
+    # where the only thing that can notice its absence is the job that fails.
+    observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
   obs error:
     covariance model: diagonal
   obs filters:

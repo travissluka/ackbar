@@ -77,12 +77,13 @@ def validate_experiment(config, schema, site, root, offline=False):
     ran |= {2, 6}
     findings += _graph_step(config, graph)
 
-    jobtime_findings, paths = _jobtime_step(config, graph)
+    jobtime_findings, paths, observations = _jobtime_step(config, graph)
     findings += jobtime_findings
 
     if not offline:
         ran |= {3, 4, 5}
         findings += _path_step(paths, site)
+        findings += _observation_step(observations)
         findings += _executable_step(graph, root)
         findings += _limit_step(graph, site)
 
@@ -122,6 +123,7 @@ def _jobtime_step(config, graph):
     """
     findings = []
     paths = set()
+    observations = {}
     for cycle, member in job_time_context(config, graph):
         try:
             rendered = render(config, symbols(config, cycle, member))
@@ -134,11 +136,34 @@ def _jobtime_step(config, graph):
             findings.append(Finding(
                 2, where, f"cycle {cycle}: token survived substitution: {value!r}"
             ))
+        _take_observation_inputs(rendered, observations)
         _collect_paths(rendered, paths)
 
     # One finding per distinct problem, not one per cycle: a bad symbol in a
     # shared config would otherwise be reported hundreds of times.
-    return _dedupe(findings), paths
+    return _dedupe(findings), paths, observations
+
+
+def _take_observation_inputs(rendered, observations):
+    """Move each observer's input file out of the general path set.
+
+    An observation file is the one input an experiment is allowed to be missing,
+    so it cannot be checked by the rule that governs every other path. Removed
+    from the tree rather than filtered afterwards, because the paths there are a
+    flat set of strings by then and nothing distinguishes an archive file from a
+    grid file.
+    """
+    for entry in rendered.get("observations") or ():
+        space = entry.get("obs space") or {}
+        engine = (space.get("obsdatain") or {}).get("engine") or {}
+        path = engine.pop("obsfile", None)
+        if not path:
+            continue
+        record = observations.setdefault(
+            space.get("name", ""), {"required": bool(space.get("required")),
+                                    "paths": set()},
+        )
+        record["paths"].add(path)
 
 
 def _collect_paths(node, out):
@@ -178,6 +203,53 @@ def _path_step(paths, site):
             findings.append(Finding(3, path, "input path does not exist"))
         elif not os.access(path, os.R_OK):
             findings.append(Finding(3, path, "input path is not readable"))
+    return findings
+
+
+def _observation_step(observations):
+    """Observation files, which are the one input allowed to be absent.
+
+    An archive has gaps: a platform goes down for a week, a satellite is not yet
+    launched at the start of a reanalysis. `stage.obs` drops the observer for
+    that cycle and records it, and refusing to create the experiment over it
+    would make ACKBAR unusable on any real record.
+
+    What is *not* data is an observer that has no file in any cycle at all. That
+    is a misspelled archive path or a platform named wrongly, and it produces an
+    experiment that runs to completion assimilating nothing, which is the most
+    expensive way to discover a typo. So the rule is by proportion rather than
+    by count: some missing is the archive, all missing is the configuration.
+
+    A `required` observer is checked file by file, since the experiment has
+    already said that its absence is not acceptable.
+    """
+    findings = []
+    for name in sorted(observations):
+        record = observations[name]
+        absent = sorted(p for p in record["paths"] if not os.path.exists(p))
+        # A file that is there and cannot be read is not an archive gap. Nothing
+        # downstream treats it as one either: `stage.obs` asks whether the file
+        # exists, keeps the observer, and hofx fails on it.
+        findings += [
+            Finding(3, path, "observation file is not readable")
+            for path in sorted(record["paths"] - set(absent))
+            if not os.access(path, os.R_OK)
+        ]
+        if not absent:
+            continue
+        if record["required"]:
+            findings += [
+                Finding(3, path, f"observer {name} is required and this file "
+                                 f"does not exist")
+                for path in absent
+            ]
+        elif len(absent) == len(record["paths"]):
+            findings.append(Finding(3, f"observations.{name}", (
+                f"no observation file exists for any of the {len(absent)} "
+                f"cycle(s) configured, for example {absent[0]}. One missing "
+                f"window is an archive gap and is dropped at run time; all of "
+                f"them is a wrong path."
+            )))
     return findings
 
 

@@ -22,6 +22,7 @@ EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 
 #: A fixed site, so the tests do not depend on which machine they run on.
 SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static",
         "root": str(REPO)}
 
 

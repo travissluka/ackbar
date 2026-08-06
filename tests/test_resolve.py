@@ -7,6 +7,7 @@ from ackbar.config.resolve import (
 )
 
 SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static",
         "root": "/ackbar"}
 
 

@@ -51,6 +51,11 @@ properties:
     additionalProperties: false
     properties:
       name: { type: string }
+      # Where this domain's offline static stage lives: one directory, shared
+      # read-only by every experiment on the domain. A directory rather than a
+      # map of products because there is one product so far, and naming the
+      # directory is what lets a second arrive without a schema change.
+      static: { type: string }
       resources:
         # Per-task resources live in the domain layer, because domain is what
         # actually drives the difference between OM_1deg and OM4_025. The site

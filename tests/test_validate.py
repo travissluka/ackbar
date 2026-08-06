@@ -14,9 +14,11 @@ import pytest
 import yaml
 
 from ackbar.cli import main
+from ackbar.config.jobtime import render, symbols
 from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
+from ackbar.graph import build_graph, job_time_context
 from ackbar.validate import validate_experiment
 
 REPO = Path(__file__).resolve().parents[1]
@@ -26,6 +28,7 @@ EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 SITE = {
     "scratch_root": "/scratch",
     "output_root": "/out",
+    "static_root": "/static",
     "max_submit_jobs": "10000",
     "max_array_size": "1000",
     "root": str(REPO),
@@ -50,9 +53,9 @@ def schema():
     return load_schema()
 
 
-def load(name, keys, path=None):
+def load(name, keys, path=None, site=None):
     layers = resolve_layers(path or EXPERIMENTS / f"{name}.yaml", LAYERS)
-    return resolve(merge_layers(layers, keys), SITE)
+    return resolve(merge_layers(layers, keys), site or SITE)
 
 
 def steps(findings):
@@ -78,14 +81,55 @@ def stage(findings):
 
     Directories first: `obs_dir` itself is a referenced input, and touching it
     as a file would make its children impossible.
+
+    Observation files are `stage_observations`'s job and are skipped here, both
+    the ones reported by name and the ones a required observer reports by path.
+    A test that means to leave a gap in the archive and has it filled in by the
+    generic stager passes for the wrong reason.
     """
     for path in sorted(f.where for f in findings):
+        if not path.startswith("/") or path.endswith(".nc4"):
+            continue
         target = Path(path)
         if target.suffix:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.touch()
         else:
             target.mkdir(parents=True, exist_ok=True)
+
+
+def observation_files(config):
+    """Every observation file the experiment will look for, over every cycle.
+
+    Rendered the way validate renders it rather than globbed off disk, because
+    the point of these tests is what the configuration asks for.
+    """
+    found = set()
+    for cycle, member in job_time_context(config, build_graph(config)):
+        rendered = render(config, symbols(config, cycle, member))
+        for entry in rendered.get("observations") or ():
+            space = entry.get("obs space") or {}
+            engine = (space.get("obsdatain") or {}).get("engine") or {}
+            if engine.get("obsfile"):
+                found.add(Path(engine["obsfile"]))
+    return sorted(found)
+
+
+def stage_observations(config, skip=()):
+    """Create the archive, optionally leaving some files out.
+
+    A skip that matches nothing is an error rather than a no-op: a test that
+    means to leave a gap and leaves none passes for the wrong reason, and the
+    windows here are dates that are easy to mistype.
+    """
+    left_out = 0
+    for path in observation_files(config):
+        if any(part in str(path) for part in skip):
+            left_out += 1
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert not skip or left_out, f"nothing matched {skip}"
 
 
 class TestTheFixturesAreClean:
@@ -140,36 +184,85 @@ class TestStep3InputPaths:
     """
 
     @pytest.fixture
-    def staged(self, tmp_path, keys, schema):
+    def local_site(self, tmp_path):
+        """A site whose offline stages are under `tmp_path`, so they can be made.
+
+        The module's `/static` is deliberately not any real machine's root,
+        which also means nothing can create it. These tests are about staging
+        the inputs an experiment names, so they need somewhere to stage them.
+        """
+        return dict(SITE, static_root=str(tmp_path / "static"))
+
+    @pytest.fixture
+    def staged(self, tmp_path, local_site, keys, schema):
         """An experiment whose observation archive is a real directory."""
         source = yaml.safe_load((EXPERIMENTS / "var_om1deg.yaml").read_text())
         source["vars"]["obs_dir"] = str(tmp_path / "obs")
         path = tmp_path / "staged.yaml"
         path.write_text(yaml.safe_dump(source))
-        return path
+        return load(None, keys, path, site=local_site)
 
-    def test_a_missing_observation_file_is_rejected(self, staged, keys, schema):
-        found = full(load(None, keys, staged), schema)
+    def test_the_experiment_passes_once_everything_it_names_is_staged(
+        self, staged, schema, local_site
+    ):
+        stage(full(staged, schema, site=local_site))
+        stage_observations(staged)
+        assert full(staged, schema, site=local_site) == []
+
+    def test_a_missing_grid_file_is_rejected(self, staged, schema, local_site):
+        stage_observations(staged)
+        found = full(staged, schema, site=local_site)
         assert steps(found) == [3]
         assert all("does not exist" in f.message for f in found)
 
-    def test_the_same_experiment_passes_once_the_archive_is_staged(
-        self, staged, keys, schema
-    ):
-        config = load(None, keys, staged)
-        stage(full(config, schema))
-        assert full(config, schema) == []
-
-    def test_an_unreadable_input_is_rejected_too(self, staged, keys, schema):
-        config = load(None, keys, staged)
-        stage(full(config, schema))
-        target = next(Path(config["vars"]["obs_dir"]).rglob("*.nc4"))
+    def test_an_unreadable_input_is_rejected_too(self, staged, schema, local_site):
+        stage(full(staged, schema, site=local_site))
+        stage_observations(staged)
+        target = observation_files(staged)[0]
         target.chmod(0)
         try:
-            found = full(config, schema)
-            assert [f.message for f in found] == ["input path is not readable"]
+            found = full(staged, schema, site=local_site)
+            assert [f.message for f in found] == ["observation file is not readable"]
         finally:
             target.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+    def test_an_archive_with_a_gap_is_data_and_not_a_finding(
+        self, staged, schema, local_site
+    ):
+        """The rule the whole observation path is built around.
+
+        A platform goes down for a week and the windows it covers have no file.
+        `stage.obs` drops the observer for those cycles and records it, and
+        refusing to create the experiment over it would make ACKBAR unusable on
+        any real record.
+        """
+        stage(full(staged, schema, site=local_site))
+        stage_observations(staged, skip=("2018041600",))
+        assert full(staged, schema, site=local_site) == []
+
+    def test_an_observer_with_no_file_in_any_cycle_is_a_typo_and_is_reported(
+        self, staged, schema, local_site
+    ):
+        # The same absence, all the way through, is a wrong path rather than a
+        # gap, and it produces an experiment that runs to completion
+        # assimilating nothing.
+        stage(full(staged, schema, site=local_site))
+        stage_observations(staged, skip=("adt_3a",))
+        found = full(staged, schema, site=local_site)
+        assert [f.where for f in found] == ["observations.adt_3a"]
+        assert "wrong path" in found[0].message
+
+    def test_a_required_observer_is_reported_for_every_window_it_is_missing(
+        self, staged, schema, local_site
+    ):
+        # `required` is how an experiment says its own gap is not acceptable, so
+        # the check reverts to file by file.
+        staged["observations"][0]["obs space"]["required"] = True
+        stage(full(staged, schema, site=local_site))
+        stage_observations(staged, skip=("2018041600",))
+        found = full(staged, schema, site=local_site)
+        assert [f.where.endswith("2018041512.nc4") for f in found] == [True]
+        assert "required" in found[0].message
 
     def test_output_paths_are_not_mistaken_for_inputs(self, keys, schema):
         # The experiment is about to create them; that is the point of it.

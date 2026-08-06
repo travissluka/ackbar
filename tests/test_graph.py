@@ -26,6 +26,7 @@ EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 GOLDENS = Path(__file__).resolve().parent / "goldens"
 
 SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static",
         "root": str(REPO)}
 
 #: One per graph shape worth pinning.

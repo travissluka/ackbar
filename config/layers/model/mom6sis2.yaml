@@ -11,8 +11,33 @@
 
 model:
   name: mom6sis2
-  namelist: mom_input.nml
-  fields metadata: fields_metadata.yaml
+
+  # What SOCA needs to build a geometry on this model's grid. Both are absolute
+  # rather than the relative names the JEDI examples use, which is the whole
+  # point: a relative path resolves against the run directory, so it can only be
+  # checked by the job that fails on it, while an absolute one is checked by
+  # `ackbar validate` before anything is submitted. SOCA opens either.
+  namelist: $(ackbar_root)/config/model/mom6sis2/mom_input.nml
+  fields metadata: $(ackbar_root)/config/model/mom6sis2/fields_metadata.yaml
+
+  # What SOCA reads out of a restart set, and what it calls it. The ice and
+  # surface restarts SOCA also knows about are absent on purpose: SIS2 writes
+  # `ice_model.res.nc` and the fields metadata's ice section is CICE's, so an
+  # ice field here would resolve to a variable that does not exist. The first
+  # ice observer is what makes that worth solving.
+  restart:
+    ocn: MOM.res.nc
+
+  # The background hofx evaluates against. Not "everything in the restart": each
+  # one is a 3D field read, interpolated and held in memory, so this is the set
+  # the configured observers actually need. Temperature and salinity carry SST
+  # and the T/S profiles, ssh carries ADT, and cell thickness is what makes any
+  # of them addressable by depth.
+  state variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+  - sea_water_cell_thickness
 
   executable: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main
   base: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/$(mom6_case)

@@ -90,7 +90,8 @@ def config(base, diag_tables):
     layers = resolve_layers(EXPERIMENTS / "free_om1deg.yaml", LAYERS)
     keys = merge_keys(load_schema())
     merged = resolve(merge_layers(layers, keys), {
-        "scratch_root": "/scratch", "output_root": "/out", "root": str(REPO),
+        "scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static", "root": str(REPO),
     })
     merged["model"].update({
         "base": str(base),
@@ -466,7 +467,8 @@ def test_the_config_layer_points_at_a_case_that_is_actually_there(config):
     """
     layers = resolve_layers(EXPERIMENTS / "free_om1deg.yaml", LAYERS)
     merged = resolve(merge_layers(layers, merge_keys(load_schema())), {
-        "scratch_root": "/scratch", "output_root": "/out", "root": str(REPO),
+        "scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static", "root": str(REPO),
     })
     model = merged["model"]
     assert os.path.isdir(model["base"])
