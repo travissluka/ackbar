@@ -168,17 +168,18 @@ def test_scratch_is_removed_on_success_and_kept_on_failure(env):
 def test_a_task_with_no_body_yet_says_so_plainly(env):
     """A task in the data path with no implementation is an error, not a no-op.
 
-    `recenter` is the one left: it is LETKF's, it stands between the analysis
-    and writeback, and a stub body quietly standing in for it would mean every
-    member forecasting from an unrecentred analysis while the experiment looks
-    healthy the whole way through. `forecast`, `da` and `writeback` all have
-    real bodies now, and the deferred leaves say so through DEFERRED instead.
+    `forecast.ext` is the one left: it is the same executable as the forecast
+    with a different diag_table and a different product, and it arrives with the
+    phase that scores those diagnostics. A stub body standing in for it would
+    write a file claiming to be a long forecast. The deferred leaves say so
+    through DEFERRED instead, and `recenter` is among them for a reason that is
+    not "unimplemented"; see the comment there.
     """
     config, site, paths = env
     config = json.loads(json.dumps(config))
     config["model"] = {"name": "mom6sis2"}
     with pytest.raises(run.TaskError, match="phase"):
-        run.run_task(config, site, paths, 1, "recenter", 1)
+        run.run_task(config, site, paths, 1, "forecast.ext", 1)
 
 
 # --- cleanup -----------------------------------------------------------------
@@ -331,7 +332,7 @@ def stage(paths, cycle, present):
     # LETKF is a different application with a different document. Until it
     # lands it has to reach the stub's "no implementation yet" rather than run
     # the variational one.
-    ("mom6sis2", "letkf", "da", False),
+    ("mom6sis2", "letkf", "da", True),
     ("mom6sis2", "variational", "writeback", False),
     ("stub", "variational", "da", False),
 ])

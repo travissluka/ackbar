@@ -311,17 +311,19 @@ def test_an_analysis_on_a_different_grid_is_refused(scene):
 # --- the metadata this depends on --------------------------------------------
 
 def test_the_model_layer_still_names_every_analysis_variable(scene):
-    """Holds `fields_metadata.yaml` and the variational layer together.
+    """Holds `fields_metadata.yaml` and every solver layer together.
 
-    The analysis variables are stated in `config/layers/da/variational.yaml` and
-    the restart names for them in the model layer, and nothing else compares the
+    The analysis variables are stated in `config/layers/da/*.yaml` and the
+    restart names for them in the model layer, and nothing else compares the
     two. Dropping an entry from the metadata is a writeback that fails in the
     middle of a cycle rather than a configuration that fails to load.
     """
     repo = Path(__file__).resolve().parents[1]
-    layer = yaml.safe_load((repo / "config/layers/da/variational.yaml").read_text())
-    fields = writeback._fields({"model": {"fields metadata": str(METADATA)}})
-    for name in layer["solver"]["analysis variables"]:
-        assert name in fields, name
-        assert fields[name]["io file"] in writeback.IO_FILES
-        assert fields[name]["grid"] in writeback.MASKS
+    fields = writeback.fields_of({"model": {"fields metadata": str(METADATA)}})
+    for solver in ("variational", "letkf"):
+        layer = yaml.safe_load(
+            (repo / f"config/layers/da/{solver}.yaml").read_text())
+        for name in layer["solver"]["analysis variables"]:
+            assert name in fields, f"{solver}: {name}"
+            assert fields[name]["io file"] in writeback.IO_FILES
+            assert fields[name]["grid"] in writeback.MASKS

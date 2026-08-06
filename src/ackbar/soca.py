@@ -34,7 +34,7 @@ from pathlib import Path
 
 import yaml
 
-from .config.jobtime import cycle_time, symbols
+from .config.jobtime import cycle_time, member_dir, symbols
 from .graph.tasks import SOCA_BIN
 from .mom6sis2 import (OVERRIDE, SOCA_OVERRIDE, ModelError, keep_traces,
                        link_override)
@@ -60,6 +60,8 @@ DIAG_TABLE = "soca\n{0.year} {0.month} {0.day} {0.hour} {0.minute} {0.second}\n"
 #: The application's own config and log, kept out of scratch on the way past.
 TRACES = ("hofx.yaml", "hofx.log")
 VAR_TRACES = ("var.yaml", "var.log")
+LETKF_TRACES = ("letkf.yaml", "letkf.log")
+
 
 #: How SOCA names a file it writes: `<datadir>/ocn.<exp>.<type>.<date>.nc`, from
 #: `soca_genfilename`. `type` is SOCA's own closed vocabulary ("an", "incr",
@@ -75,6 +77,23 @@ VAR_TRACES = ("var.yaml", "var.log")
 ANALYSIS = ("ana", "an")
 INCREMENT = ("incr", "incr")
 FILE_DATE = "%Y%m%dT%H%M%SZ"
+
+#: The ensemble's prior and posterior spread. `sprdb` and `sprda` rather than
+#: words, because `exp` becomes a dot-separated field of a filename and a dot
+#: inside it would make one field two.
+#:
+#: Not decoration. An ensemble filter fails in two ways that look nothing alike
+#: in the departures and identical in any single analysis: the spread collapses
+#: and every later cycle ignores its observations, or the spread grows and the
+#: filter chases noise. Prior and posterior spread side by side is the record of
+#: which is happening, and nothing else in the workflow produces it.
+SPREAD_PRIOR = ("sprdb", "an")
+SPREAD_POSTERIOR = ("sprda", "an")
+
+#: What an ensemble analysis writes besides the members themselves. All of them
+#: land on the control's directory, because `oops::LocalEnsembleDA` writes each
+#: with `member` set to 0.
+ENSEMBLE_DIAGNOSTICS = (INCREMENT, SPREAD_PRIOR, SPREAD_POSTERIOR)
 
 #: The directory the analysis application's own products go in, inside the
 #: member's analysed restart set.
@@ -169,6 +188,97 @@ def analysis(config, site, paths, cycle, task, *, background, observers, target)
                target / product_name(kind, when))
               for kind in (ANALYSIS, INCREMENT)]
     return commit(products) + commit(states, move=True)
+
+
+def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
+          target):
+    """Assimilate every member of one cycle's ensemble.
+
+    One MPI job for the whole ensemble, which is what an LETKF is: the analysis
+    at each point is a weighted combination of the members there, so no member
+    can be solved for alone.
+
+    *members* is the ensemble ACKBAR asked for and *backgrounds* is the
+    directory holding it, one subdirectory per member. *target* is a function
+    from a member index to where that member's analysis goes, because the
+    application writes all of them into one directory and they belong in
+    different ones.
+    """
+    if not observers:
+        print(f"ackbar: {cycle}.{task} has no observers with input files; the "
+              f"analysis for this cycle is the background")
+        return []
+
+    run = paths.scratch(cycle, task)
+    stage(config, run, cycle)
+
+    products = _redirect_output(observers, run / "out")
+    document = letkf_config(config, cycle, observers,
+                            backgrounds=backgrounds, members=members)
+    _write(run / "letkf.yaml", yaml.safe_dump(document, sort_keys=False))
+
+    try:
+        launch(config, site, run, task, "soca_letkf.x", "letkf.yaml", "letkf.log")
+    finally:
+        keep_traces(run, paths.sub("log") / str(cycle), task, None,
+                    names=LETKF_TRACES)
+
+    when = cycle_time(config, cycle)
+    name = analysis_file(config, cycle)
+    states = [(source, target(member) / name)
+              for member, source in _ensemble(run / "out", members).items()]
+    states += [(run / "out" / product_name(kind, when),
+                target(0) / product_name(kind, when))
+               for kind in ENSEMBLE_DIAGNOSTICS]
+    return commit(products) + commit(states, move=True)
+
+
+def _ensemble(written, members):
+    """Which file the application wrote for which member.
+
+    Found by looking rather than by predicting the name, which is a deliberate
+    exception to how the rest of this module works. SOCA builds an ensemble
+    filename as `ocn.<exp>.ens.<index>.<reference date>.<offset>.nc`, and the
+    last two fields are a duration oops formats from a date this code supplies
+    to itself. The index is the field that has to be read correctly, so it is
+    the one that is parsed.
+
+    **That index is a position, not a member number.** `oops::DataSetBase::write`
+    numbers what it writes by each state's place in the list it was given, so an
+    ensemble of members 1, 2, 4 is written out as 1, 2, 3. The correspondence
+    below is therefore to the *sorted* member list, and it is the single thing
+    in this file whose being wrong would put one member's analysis into another
+    member's directory with nothing to notice. It is checked by count and by the
+    contiguity of what was written.
+
+    Member 0 is the ensemble *mean*, which `oops::LocalEnsembleDA` writes when
+    asked to save the posterior mean. It goes to the control's directory,
+    because that is the whole of what the control's analysis is in an ensemble
+    filter: ACKBAR does not separately compute one.
+
+    Everything is then renamed to the name the variational analysis writes. The
+    index is redundant once the file is in that member's own directory and the
+    date is the cycle's, and what is left is a name `writeback` can open without
+    being told which solver produced it.
+    """
+    found = {}
+    for path in sorted(written.glob("ocn.*.ens.*.nc")):
+        fields = path.name.split(".")
+        if len(fields) > 4 and fields[3].isdigit():
+            found[int(fields[3])] = path
+
+    ordered = sorted(members)
+    expected = set(range(1, len(ordered) + 1)) | {0}
+    if set(found) != expected:
+        raise ModelError(
+            f"the analysis exited 0 having written states {sorted(found)} into "
+            f"{written}, and {len(ordered)} member(s) plus a mean were asked "
+            f"for. Which file belongs to which member is read off that "
+            f"numbering, so a gap in it is not something to work around."
+        )
+    # Position to member, and 0 to 0: the mean is the control's.
+    return {member: found[index + 1] for index, member in enumerate(ordered)} \
+        | {0: found[0]}
 
 
 # --- the run directory -------------------------------------------------------
@@ -336,7 +446,7 @@ def var_config(config, cycle, observers, *, background):
                 # that constructs and then reads a field of zeros.
                 "state variables": list(_require(solver, "background variables")),
             },
-            "background error": _background_error(solver, variables),
+            "background error": background_error(solver, variables),
             "observations": {
                 "observers": [record["config"] for record in observers],
             },
@@ -351,13 +461,110 @@ def var_config(config, cycle, observers, *, background):
     }
 
 
-def _background_error(solver, variables):
+def letkf_config(config, cycle, observers, *, backgrounds, members):
+    """The whole `soca_letkf.x` YAML, as a data structure.
+
+    The same construction as `var_config`, with one structural difference: the
+    background is an *ensemble*.
+
+    oops takes an ensemble either as `members from template`, with a `%mem%`
+    pattern and a zero padding, or as `members`, an explicit list. The list is
+    what is built here even though the template would fit, because the template
+    is the thing that quietly goes wrong: an ensemble with a gap in it needs an
+    `except`, the index a member is written out as is its *position* in the
+    template rather than its own number, and the two disagree exactly when a
+    member is missing. A list of twenty near-identical blocks is verbose in a
+    file nobody hand-edits, and in exchange every member's background is a path
+    that `ackbar validate` stats before anything is submitted.
+
+    *members* is the ensemble, which is every member index except the control.
+    The control's analysis is the ensemble mean, and the driver is what asks for
+    it.
+
+    Two things are ACKBAR's rather than a layer's, on the same rule as the
+    variational document: they are wrong by omission and the omission is quiet.
+
+    **The driver.** `do posterior observer` is what computes `oman`; without it
+    the cycle produces departures against the background only, and `post.obs`
+    has half of what it needs. `save posterior mean` is what gives the control
+    member an analysis at all.
+
+    **The outputs.** One block per thing saved, and each is required by the
+    driver flag that asks for it: `oops::LocalEnsembleDA` throws by name when a
+    flag is set and its output block is absent, which is the one failure in this
+    document that is loud.
+    """
+    table = symbols(config, cycle)
+    model = config["model"]
+    solver = config["solver"]
+    date = table["current_cycle"].strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if not members:
+        raise ModelError(
+            "the ensemble is empty, so there is nothing to assimilate. Every "
+            "member's forecast is missing, and the experiment's "
+            "`ensemble.on_missing_member` policy let the cycle continue anyway."
+        )
+
+    def one(member):
+        return {
+            "read_from_file": 1,
+            # The trailing separator matters here for the same reason it does
+            # in hofx: SOCA concatenates basename and filename without one.
+            "basename": f"{backgrounds / member_dir(member)}{os.sep}",
+            "ocn_filename": _require(model.get("restart") or {}, "ocn"),
+            "date": date,
+            "state variables": list(_require(solver, "background variables")),
+        }
+
+    return {
+        "geometry": {
+            "geom_grid_file": f"{GRIDSPEC}",
+            "mom6_input_nml": _require(model, "namelist"),
+            "fields metadata": _require(model, "fields metadata"),
+        },
+        "time window": {
+            "begin": table["window_begin"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "length": table["window_length"],
+        },
+        "background": {"members": [one(member) for member in sorted(members)]},
+        "observations": {
+            "observers": [record["config"] for record in observers],
+        },
+        "local ensemble DA": _require(solver, "local ensemble DA"),
+        "driver": {
+            # Without this there is no `oman`, and nothing says so.
+            "do posterior observer": True,
+            # Without this the control member has no analysis.
+            "save posterior mean": True,
+            "save posterior ensemble": True,
+            "save posterior mean increment": True,
+            "save prior variance": True,
+            "save posterior variance": True,
+        },
+        # `date` is the reference the ensemble filenames are formed against.
+        # It is the analysis time, so the offset in them is zero.
+        "output": dict(_written(("ana", "ens")), date=date),
+        "output increment": dict(_written(INCREMENT), date=date),
+        "output variance prior": dict(_written(SPREAD_PRIOR), date=date),
+        "output variance posterior": dict(_written(SPREAD_POSTERIOR), date=date),
+    }
+
+
+def background_error(solver, variables):
     """The B description, with the balance operator's variable lists filled in.
 
     Set rather than checked, and set even when the layer already says something,
     for the same reason the geometry is: the answer is the analysis variables,
     the analysis variables are stated once, and a second statement of them is
     only ever a chance to disagree.
+
+    Public because the analysis is not the only thing that reads this B. The
+    ensemble initial condition stage draws its perturbations from the same
+    covariance, and it hit the same omission from the other side: with no
+    `output variables`, `changeVarTL` produces an increment carrying no fields
+    at all, so every member came back exactly equal to the state it was
+    perturbed from and nothing said so.
     """
     section = dict(_require(solver, "background error"))
     change = section.get("linear variable change")

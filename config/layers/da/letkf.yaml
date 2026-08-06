@@ -1,15 +1,67 @@
 # LETKF solver. The distribution and land mask differ from variational, which
 # in soca-science was expressed by redefining &obs_distribution and
 # &obs_land_mask in soca_letkf.yaml.
+#
+# The whole `soca_letkf.x` document is built by `ackbar/soca.py`, the same way
+# the variational one is. What is here is the part nothing else implies: which
+# variables the ensemble carries, which of them the analysis is allowed to
+# write back, and the solver's own knobs. See `docs/analysis.md`.
 solver:
   name: letkf
   covariance: ensemble
   window: '3d'
+
+  # What writeback puts into the restart set. The LETKF updates *every*
+  # variable in its background, which is a superset of this: the ensemble has
+  # real spread in layer thickness, and an ensemble filter that saw a
+  # correlation between thickness and temperature would use it. What comes back
+  # here is the same three fields the variational analysis writes, on the
+  # background's own layers, because changing the vertical coordinate the
+  # analysed temperature is defined on is a separate decision from analysing
+  # the temperature.
+  analysis variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+
+  # What each member's state carries. `sea_water_cell_thickness` is here for the
+  # observation operators rather than for the filter: it is what makes anything
+  # addressable by depth. `ocean_mixed_layer_thickness` and `sea_water_depth`
+  # are absent, unlike the variational case, because what read them there was
+  # SOCAParametricOceanStdDev and there is no parametric standard deviation in
+  # an ensemble filter.
+  background variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+  - sea_water_cell_thickness
+
+  # Deterministic LETKF, which is the square-root filter and the one both
+  # sources use; the stochastic alternative would need an observation
+  # perturbation seed and is a different experiment.
+  #
+  # The inflation numbers are the bundle's example, and they are three
+  # different mechanisms rather than three settings of one. `rtps` relaxes the
+  # posterior *spread* back towards the prior's, `rtpp` relaxes the posterior
+  # *perturbations*, and `mult` is a flat multiplier. They are here to be
+  # tuned: an ensemble that collapses and an ensemble that never converges are
+  # both this block, and neither announces itself as an inflation problem.
+  local ensemble DA:
+    solver: Deterministic LETKF
+    inflation:
+      rtps: 0.5
+      rtpp: 0.6
+      mult: 1.1
 vars:
-  obs_distribution: Halo
-  # soca-science wrote this as 500e3, which PyYAML reads as the string '500e3'
-  # while eckit reads it as a float. See ackbar.config.lint.
-  obs_distribution_options: {halo size: 500000}
+  # The halo is what makes an LETKF parallel: each rank solves the points it
+  # owns using every observation within `halo size` of them, so the number is a
+  # decomposition parameter and a localization one at the same time. It has to
+  # be at least the largest localization radius any observer uses or a rank
+  # solves with observations it cannot see.
+  #
+  # Written as 500000 rather than soca-science's 500e3, which PyYAML reads as
+  # the string '500e3' while eckit reads it as a float. See ackbar.config.lint.
+  obs_distribution: {name: Halo, halo size: 500000}
   obs_land_mask_min: 0.5
 
 # Localization is added per observer. Each element names only the observer it

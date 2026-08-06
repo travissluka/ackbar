@@ -273,8 +273,11 @@ site:
     log/          job stdout and stderr, by cycle and task
     rst/<cycle>/mem###/     restart sets
     bkg/<cycle>/mem###/     backgrounds
-    ana/<cycle>/mem###/     analyses and increments
+    ana/<cycle>/mem###/     the analysed restart set the next forecast reads
+    ana/<cycle>/mem###/analysis/   what the analysis application itself wrote
+    ana/<cycle>/members.json       which members the cycle had, and the policy
     obs_out/<cycle>/        ioda output, ombg and oman
+    obs_out/<cycle>/observers.json which observers the cycle had, and why not
 ```
 
 Rules that fall out of this:
@@ -285,6 +288,16 @@ Rules that fall out of this:
   matters: under producer naming a node's outputs are always under its own cycle number, so
   cleanup is a cycle count rather than a data-flow analysis, and the offline initial condition
   goes in `rst/0` as the output of a forecast that never ran.
+- **A member directory under `ana/` is a restart set and nothing else.** Writeback fills it by
+  copying every file of the background's, `model: persistence` fills the next cycle's by
+  copying every file of this one, and the forecast links all of them into `INPUT/`. So what the
+  analysis application wrote goes in a subdirectory: a state file loose among them is inert to
+  the model and then carried forward by every cycle after it, one more each time.
+- **What a cycle actually had goes next to what it produced.** Which observers were staged and
+  which ensemble members arrived are properties of the cycle rather than of the configuration,
+  they vary from cycle to cycle without anything else saying so, and two experiments that
+  differ in either are not comparable. So each is a file, written whether or not anything was
+  missing.
 - **Scratch is deleted by the task itself on success and kept on failure.** A failed cycle
   leaves everything needed to debug it; a successful one leaves nothing.
 - **Job scripts are emitted once, at create time, for every cycle.** They are header carriers,

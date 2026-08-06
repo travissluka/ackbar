@@ -98,8 +98,8 @@ class TestValuesThatUsedToBeYamlAnchors:
 
     def test_solver_layer_owns_the_distribution(self, letkf):
         _, config = letkf
-        assert config["vars"]["obs_distribution"] == "Halo"
-        assert config["vars"]["obs_distribution_options"] == {"halo size": 500000}
+        assert config["vars"]["obs_distribution"] == {"name": "Halo",
+                                                     "halo size": 500000}
 
     def test_land_mask_threshold_differs_by_solver(self, keys):
         def land_mask(experiment):
@@ -175,8 +175,11 @@ class TestResolvedPort:
 
     def test_the_distribution_resolves_from_the_solver_layer(self, resolved):
         space = observer(resolved, "sst_noaa19")["obs space"]
-        assert space["distribution"]["name"] == "Halo"
-        assert space["distribution"]["options"] == {"halo size": 500000}
+        # One substituted mapping, not a name and a separate options bag: ioda
+        # reads a distribution's own parameters directly under `distribution`,
+        # and the Halo distribution refuses to construct without finding
+        # `halo size` there.
+        assert space["distribution"] == {"name": "Halo", "halo size": 500000}
 
     def test_input_paths_come_from_the_archive_and_output_from_the_layout(self, resolved):
         space = observer(resolved, "adt_3a")["obs space"]

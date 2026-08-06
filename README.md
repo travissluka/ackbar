@@ -10,9 +10,10 @@ merge, schema validation, substitution, blame), the task graph (generation, the 
 set, `ackbar validate`) and the workflow engine (job emission, submission, the ledger,
 daemon-free cycling) are in, and cycle end to end against a real Slurm with a stub model. On
 the real model, a free run cycles MOM6-SIS2, hofx evaluates observations against its
-background, and 3DVar cycles: the analysis is solved with a background error calibrated
-offline, written back into a restart set, and integrated forward. LETKF, hybrid covariance and
-4D windows arrive with their phases. See [`docs/build-order.md`](docs/build-order.md).
+background, and both solvers cycle: 3DVar against a background error calibrated offline, and
+LETKF over a member array carrying a real model, each analysis written back into a restart set
+and integrated forward. Hybrid covariance and 4D windows arrive with their phases. See
+[`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
 
@@ -62,7 +63,7 @@ to be cheap to define, reproducible, and directly comparable to one another.
 | [`docs/prior-workflows.md`](docs/prior-workflows.md) | Review of the two prior attempts and the mistakes this design exists to avoid. |
 | [`docs/domains.md`](docs/domains.md) | What each domain is, what a day of it costs, how one is added, and what is wrong with each. |
 | [`docs/background-error.md`](docs/background-error.md) | The static B: what is calibrated offline, how, and how to check it with a dirac. |
-| [`docs/analysis.md`](docs/analysis.md) | The analysis and writeback tasks: what `soca_var.x` is handed, what comes back, and how it reaches a restart. |
+| [`docs/analysis.md`](docs/analysis.md) | The analysis and writeback tasks: what each solver is handed, what comes back, how it reaches a restart, and what a missing ensemble member does. |
 | [`docs/model-build.md`](docs/model-build.md) | Building MOM6-SIS2: repository ownership, branch choice, the submodule recipe and its traps, smoke test. |
 | [`docs/model-data.md`](docs/model-data.md) | The `.datasets` mechanism and the MOM6-examples input data inventory. |
 | [`docs/slurm.md`](docs/slurm.md) | The single-node Slurm used to develop against a real scheduler, and the two dependency profiles the workflow is tested under. |
@@ -89,6 +90,7 @@ tools/soca-gridspec.sh     build a domain's SOCA geometry, the static stage
 tools/soca-diffusion.sh    calibrate a domain's background error correlation
 tools/soca-dirac.sh        check that calibration with a dirac through B
 tools/coldstart-ic.sh      cold start a domain into the initial condition stage
+tools/ensemble-ic.sh       perturb an initial condition into one restart set per ensemble member
 tools/import-gom-domain.sh import a Gulf of Mexico resolution, text to git and data to the static root
 tools/domain-paths.sh      sourced: where a domain's model configuration lives, read from its layer
 tools/obs-archive-smoke.py build a small observation archive to develop against, from the bundle's own ioda files

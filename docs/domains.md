@@ -207,12 +207,15 @@ tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <slug>  # the IC stage
 tools/soca-diffusion.sh <domain>                               # for a DA experiment
 tools/soca-dirac.sh <domain>                                   # and check it
 tools/obs-archive-osse.py --domain <domain> ...                # observations that reach it
+tools/ensemble-ic.sh <domain> <members>                        # for an ensemble experiment
 ackbar validate <experiment>.yaml
 ```
 
-The last three are only needed by an experiment whose `da` layer is
-`variational` or `hybrid`; a free run names no background error and assimilates
-nothing. See [`background-error.md`](background-error.md) and
+The background error and the observations are only needed by an experiment that
+assimilates; a free run names no B and reads no observations. The ensemble
+initial condition is only needed by one that carries an ensemble, and it depends
+on the background error, since that is what its perturbations are drawn from.
+See [`background-error.md`](background-error.md) and
 [`analysis.md`](analysis.md).
 
 **Observations have to be built for the domain, and this is quiet when it is

@@ -25,7 +25,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ledger, mom6sis2, observations, persistence, soca, writeback
+from . import (ensemble, ledger, mom6sis2, observations, persistence, soca,
+               writeback)
 from .graph.build import member_set
 
 #: Faults the stub can inject, each named for the terminal state it produces.
@@ -143,7 +144,17 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: `config/layers/da/variational.yaml` naming a per-cycle file instead of a
 #: static one; at that moment this entry has to go, and the analysis would fail
 #: on a missing input rather than silently reading last month's mixed layer.
-DEFERRED = ("b.vt", "post.obs", "post.state", "verify")
+#: `recenter` is here for a reason that is not "not written yet". Recentring an
+#: ensemble onto a centre it already has is the identity, and the centre of the
+#: analysis ensemble an LETKF produces *is* its own mean: `LocalEnsembleDA`
+#: computes that mean and ACKBAR hands it to the control member. So for every
+#: solver implemented so far the recentring is a no-op, and running
+#: `soca_ensrecenter.x` to compute one would be a job per cycle to confirm it.
+#: What brings a body is a centre that is not the ensemble's own mean, which is
+#: a hybrid: there the deterministic analysis is the centre and the ensemble is
+#: pulled onto it. At that moment this entry goes and the task gets an
+#: executable in the same change.
+DEFERRED = ("b.vt", "recenter", "post.obs", "post.state", "verify")
 
 
 def deferred_task(config, task):
@@ -175,16 +186,16 @@ def real_model(config, task):
     return config["model"]["name"] in REAL_STATE and task == "forecast"
 
 
-def real_analysis(config, task):
-    """Whether this job runs the variational analysis.
+#: Solvers with an implemented analysis. Anything else falls through to the
+#: stub, which says it has no implementation rather than running the wrong one.
+SOLVERS = ("variational", "letkf")
 
-    LETKF is deliberately not here: it is a different application with a
-    different document, and until that lands it falls through to the stub, which
-    says it has no implementation rather than running the wrong one.
-    """
+
+def real_analysis(config, task):
+    """Whether this job runs a real analysis application."""
     return (task == "da"
             and config["model"]["name"] in REAL_STATE
-            and config.get("solver", {}).get("name") == "variational")
+            and config.get("solver", {}).get("name") in SOLVERS)
 
 
 def real_writeback(config, task):
@@ -301,18 +312,45 @@ def _analysis_io(config, paths, cycle):
     do: the configuration names every observer and only the staged ones ran, and
     before that list exists there is nothing to declare, which is exactly when
     the skip rule must not fire.
+
+    An ensemble analysis reads every member's background and writes every
+    member's analysis, which is what makes it one job rather than an array. It
+    is declared that way rather than through the control alone, so that a member
+    whose forecast is missing is a missing *input* the divergence policy is
+    asked about rather than a file nobody looked for.
     """
-    member = member_set(config)[0]
-    inputs = [analysis_background(paths, cycle, member) / restart_stamp(config),
-              paths.observer_list(cycle)]
-    state = analysis_state(config, paths, cycle, member)
-    if state is None:
+    members = analysed_members(config)
+    stamp = restart_stamp(config)
+    inputs = [analysis_background(paths, cycle, member) / stamp
+              for member in members]
+    inputs.append(paths.observer_list(cycle))
+
+    if analysis_state(config, paths, cycle, members[0]) is None:
         return inputs, []
 
-    outputs = [state] + [Path(record["output"])
-                         for record in observations.read(paths, cycle)
-                         if record["present"]]
+    outputs = [analysis_state(config, paths, cycle, member) for member in members]
+    outputs += [Path(record["output"])
+                for record in observations.read(paths, cycle)
+                if record["present"]]
     return inputs, outputs
+
+
+def analysed_members(config):
+    """Which members this cycle's analysis reads and writes.
+
+    An ensemble filter consumes every member and produces an analysis for each,
+    plus the mean, which is the control's. Everything else is one deterministic
+    analysis of one background, and that background is the control's.
+
+    One function rather than a condition at each of the places that need it,
+    because a hybrid is the case where a variational analysis reads every member
+    and still writes only one, and that asymmetry has to arrive in a single
+    place or not at all.
+    """
+    members = member_set(config)
+    if config.get("solver", {}).get("name") == "letkf":
+        return members
+    return members[:1]
 
 
 def _writeback_io(config, paths, cycle, member):
@@ -612,19 +650,46 @@ def _forecast(config, site, paths, cycle, task, member):
 
 def _analysis(config, site, paths, cycle, task):
     """Solve for this cycle's analysis and its departures."""
-    member = member_set(config)[0]
     try:
-        written = soca.analysis(
-            config, site, paths, cycle, task,
-            background=analysis_background(paths, cycle, member),
-            observers=observations.selected(config, paths, cycle),
-            target=analysis_dir(paths, cycle, member),
-        )
+        observers = observations.selected(config, paths, cycle)
+        if config["solver"]["name"] == "letkf":
+            written = _ensemble_analysis(config, site, paths, cycle, task,
+                                         observers)
+        else:
+            member = member_set(config)[0]
+            written = soca.analysis(
+                config, site, paths, cycle, task,
+                background=analysis_background(paths, cycle, member),
+                observers=observers,
+                target=analysis_dir(paths, cycle, member),
+            )
     except (mom6sis2.ModelError, observations.ObservationError) as error:
         raise TaskError(f"{cycle}.{task}: {error}") from error
 
     for path in written:
         print(f"ackbar: wrote {path}")
+
+
+def _ensemble_analysis(config, site, paths, cycle, task, observers):
+    """One LETKF over the whole ensemble.
+
+    The divergence policy is applied here rather than inside the application,
+    because a member with no background is a fact about the workflow and not
+    about the filter: SOCA handed a path that does not exist aborts on the read,
+    which is the right answer for exactly one of the three policies.
+    """
+    members = ensemble.resolve(
+        config, paths, cycle,
+        ensemble.ensemble_members(config, member_set(config)),
+        stamp=restart_stamp(config))
+
+    return soca.letkf(
+        config, site, paths, cycle, task,
+        backgrounds=paths.cycle_out("rst", cycle - 1),
+        observers=observers,
+        members=members,
+        target=lambda member: analysis_dir(paths, cycle, member),
+    )
 
 
 def _writeback(config, paths, cycle, task, member):

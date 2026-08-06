@@ -77,7 +77,7 @@ def writeback(config, paths, cycle, member, *, background, analysis, target):
 
     restart = _require(config["model"].get("restart") or {}, "ocn")
     target.mkdir(parents=True, exist_ok=True)
-    _copy_set(background, target, exclude=(STAMP,))
+    copy_set(background, target, exclude=(STAMP,))
 
     if analysis is None:
         print(f"ackbar: {cycle}.writeback member {member}: no analysis for this "
@@ -94,7 +94,7 @@ def writeback(config, paths, cycle, member, *, background, analysis, target):
 
 # --- the restart set ---------------------------------------------------------
 
-def _copy_set(source, target, exclude=()):
+def copy_set(source, target, exclude=()):
     """Every file of the background's restart set, except what is excluded.
 
     A restart set is more than the ocean file: SIS2's ice state, the icebergs
@@ -127,51 +127,74 @@ def apply_analysis(config, analysis, restart):
     that was written to the wrong variable or shifted by a cell produces one of
     those just as readily as a correct analysis does.
     """
-    fields = _fields(config)
-    masks = _masks(config)
+    variables = analysed_fields(config)
+    masks = masks_of(config)
     lines = []
 
     with netCDF4.Dataset(analysis) as source, \
             netCDF4.Dataset(restart, "r+") as target:
         source.set_auto_mask(False)
         target.set_auto_mask(False)
-        for name in _require(config["solver"], "analysis variables"):
-            field = fields.get(name)
-            if field is None:
+        for field in variables:
+            io = field["io name"]
+            if io not in source.variables:
                 raise ModelError(
-                    f"{name} is an analysis variable with no entry in the "
-                    f"fields metadata, so nothing knows which restart variable "
-                    f"it is"
+                    f"the analysis has no {io}, so {field['name']} was solved "
+                    f"for and not written. Check `analysis variables` against "
+                    f"what the application's own output configuration asked for."
                 )
-            if field["io file"] not in IO_FILES:
-                raise ModelError(
-                    f"{name} lives in the {field['io file']!r} restart, and "
-                    f"writeback only writes the ocean one. Writing it needs "
-                    f"that file added to IO_FILES and a mask for its grid."
-                )
-            lines.append(_one(source, target, field, masks[field["grid"]]))
+            lines.append(place(target, field, masks[field["grid"]],
+                               np.asarray(source.variables[io][0])))
     return lines
 
 
-def _one(source, target, field, mask):
-    """One variable, ocean cells only, on its own staggered grid."""
+def analysed_fields(config):
+    """The analysis variables, as fields metadata entries, in configured order.
+
+    Refuses here rather than at the write, because "this variable is not in the
+    metadata" and "this variable lives in the ice restart" are both statements
+    about the configuration and neither should be discovered halfway through
+    editing a file.
+    """
+    known = fields_of(config)
+    out = []
+    for name in _require(config["solver"], "analysis variables"):
+        field = known.get(name)
+        if field is None:
+            raise ModelError(
+                f"{name} is an analysis variable with no entry in the fields "
+                f"metadata, so nothing knows which restart variable it is"
+            )
+        if field["io file"] not in IO_FILES:
+            raise ModelError(
+                f"{name} lives in the {field['io file']!r} restart, and "
+                f"writeback only writes the ocean one. Writing it needs that "
+                f"file added to IO_FILES and a mask for its grid."
+            )
+        out.append(field)
+    return out
+
+
+def place(target, field, mask, values):
+    """Write *values* into one variable of an open restart, ocean cells only.
+
+    Separate from `apply_analysis` because the values do not always come from an
+    analysis: `ensemble.replace_from_mean` builds a missing member's background
+    from the mean of the ones that arrived, and every rule below (the mask, the
+    staggered grid, the checksum, the finiteness check) applies to that
+    identically.
+    """
     io = field["io name"]
-    if io not in source.variables:
-        raise ModelError(
-            f"the analysis has no {io}, so {field['name']} was solved for and "
-            f"not written. Check `analysis variables` against what the "
-            f"application's own output configuration asked for."
-        )
     if io not in target.variables:
         raise ModelError(f"the restart has no {io} to write {field['name']} into")
 
-    values = np.asarray(source.variables[io][0])
+    values = np.asarray(values)
     data = np.asarray(target.variables[io][0])
     height, width = mask.shape
 
     if values.shape[-2:] != mask.shape:
         raise ModelError(
-            f"the analysis's {io} is {values.shape[-2:]} and the gridspec's "
+            f"the values for {io} are {values.shape[-2:]} and the gridspec's "
             f"{field['grid']} mask is {mask.shape}. They are different grids."
         )
     # The tracer-sized corner of a possibly larger array. A symmetric-memory
@@ -187,9 +210,9 @@ def _one(source, target, field, mask):
 
     if not np.all(np.isfinite(values[..., mask])):
         raise ModelError(
-            f"the analysis's {io} is not finite in the ocean. The minimization "
-            f"diverged, and writing this would produce a restart the forecast "
-            f"cannot read past."
+            f"the values for {io} are not finite in the ocean. A minimization "
+            f"that diverged produces this, and writing it would produce a "
+            f"restart the forecast cannot read past."
         )
 
     change = values[..., mask] - view[..., mask]
@@ -208,7 +231,7 @@ def _one(source, target, field, mask):
 
 # --- what the model calls things ---------------------------------------------
 
-def _fields(config):
+def fields_of(config):
     """The fields metadata, indexed by JEDI variable name.
 
     ACKBAR's own copy of the file SOCA reads, and read here rather than
@@ -234,7 +257,7 @@ def _fields(config):
     return fields
 
 
-def _masks(config):
+def masks_of(config):
     """The land masks, from the domain's gridspec.
 
     The gridspec rather than the restart's own land points, because a restart

@@ -130,3 +130,33 @@ The standard deviations in the variational layer are the bundle's defaults, not
 chosen values, and the sea surface height multiplier in `config/diffusion.yaml`
 is soca-science v2's. Both are decisions waiting to be made rather than settings
 that have been made.
+
+## The depth filter, and why it is off
+
+`SOCABkgErrFilt` carries two mechanisms with one name. `efold_z` is a taper:
+the background error decays with depth, which is what anyone would want. But
+`ocean_depth_min` is not a taper, and reading `BkgErrFilt.cc` is the only way to
+find that out:
+
+```cpp
+if (depth <= params.oceanDepthMin) continue;
+```
+
+The multiplier is left at zero, so wherever the total water column is shallower
+than that value the background error is not reduced, it is **deleted**. At the
+1000 m both sources use, that removes every continental shelf. On the Gulf
+domains it is the Louisiana-Texas shelf, the West Florida shelf and Campeche
+Bank, which between them are most of the domain's area and exactly where the
+SST observations are densest. Those observations are read, evaluated, given a
+departure, and then multiplied by an error of zero.
+
+It is set to 0 here. soca-science had already moved the same way, though not
+consistently: its hybrid configurations (`soca_3dhyb.yaml`, `soca_4dhyb.yaml`)
+use 0 while the older `soca_3dvar.yaml` and the hat10 regional copy of it kept
+1000.
+
+What it was for is real. A sea surface height increment over a shelf is not
+very meaningful, and neither is a temperature increment through a ten metre
+water column. A hard cutoff on total depth is a blunt way to say so, and it says
+it for every variable at once. Something better belongs here and belongs per
+variable.

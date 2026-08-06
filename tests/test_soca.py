@@ -293,6 +293,137 @@ def test_a_cycle_with_no_observers_is_not_an_analysis(var, paths, capsys):
     assert not paths.scratch(1, "da").exists()
 
 
+# --- the ensemble analysis's configuration -----------------------------------
+
+LETKF = {
+    "name": "letkf",
+    "analysis variables": SOLVER["analysis variables"],
+    "background variables": ["sea_water_potential_temperature",
+                             "sea_water_salinity",
+                             "sea_surface_height_above_geoid",
+                             "sea_water_cell_thickness"],
+    "local ensemble DA": {"solver": "Deterministic LETKF",
+                          "inflation": {"rtps": 0.5}},
+}
+
+
+@pytest.fixture
+def ens(config):
+    return dict(config, solver=dict(LETKF))
+
+
+def letkf_document(ens, members=(1, 2, 3)):
+    return soca.letkf_config(ens, 1, [observer()],
+                             backgrounds=Path("/out/e/rst/0"), members=members)
+
+
+def test_the_ensemble_is_a_list_of_members_and_not_a_template(ens):
+    """oops takes either, and the list is the one that cannot drift.
+
+    A template's `%mem%` expands by *position*, so an ensemble with a gap in it
+    needs an `except` and the index a member is written out as stops being its
+    own number. A list is verbose in a file nobody hand-edits, and in exchange
+    every member's background is a path `ackbar validate` stats up front.
+    """
+    document = letkf_document(ens)
+    members = document["background"]["members"]
+    assert [entry["basename"] for entry in members] == [
+        "/out/e/rst/0/mem001/", "/out/e/rst/0/mem002/", "/out/e/rst/0/mem003/"]
+    assert "members from template" not in document["background"]
+
+
+def test_a_gap_in_the_ensemble_is_carried_as_a_shorter_list(ens):
+    """What the divergence policy produces, and it must not renumber anything.
+
+    The member directories are still the members' own; only the count changes.
+    """
+    document = letkf_document(ens, members=(1, 3))
+    assert [entry["basename"] for entry in document["background"]["members"]] == [
+        "/out/e/rst/0/mem001/", "/out/e/rst/0/mem003/"]
+
+
+def test_every_member_reads_the_same_variables(ens):
+    for entry in letkf_document(ens)["background"]["members"]:
+        assert entry["state variables"] == LETKF["background variables"]
+        assert entry["date"] == "2018-04-15T00:00:00Z"
+        assert entry["ocn_filename"] == "MOM.res.nc"
+
+
+def test_the_driver_asks_for_what_the_workflow_needs(ens):
+    """Three flags that are not optional, for three different reasons.
+
+    `do posterior observer` is what computes `oman`; without it the cycle
+    produces departures against the background only. `save posterior mean` is
+    what gives the control member an analysis at all. `save posterior ensemble`
+    is the analysis itself.
+    """
+    driver = letkf_document(ens)["driver"]
+    assert driver["do posterior observer"] is True
+    assert driver["save posterior mean"] is True
+    assert driver["save posterior ensemble"] is True
+
+
+def test_every_output_the_driver_asks_for_is_configured(ens):
+    """`LocalEnsembleDA` throws by name when a flag is set and its block is not.
+
+    The one failure in this document that is loud, which is why it is worth a
+    test that the two lists agree rather than a comment saying they should.
+    """
+    document = letkf_document(ens)
+    required = {
+        "save posterior mean": "output",
+        "save posterior ensemble": "output",
+        "save posterior mean increment": "output increment",
+        "save prior variance": "output variance prior",
+        "save posterior variance": "output variance posterior",
+    }
+    for flag, block in required.items():
+        assert document["driver"].get(flag) is True, flag
+        assert block in document, f"{flag} is set and {block} is missing"
+
+
+def test_the_spread_diagnostics_are_named_apart(ens):
+    """Prior and posterior spread and the increment cannot share a filename.
+
+    All three are written with `member` set to zero, into one directory, so
+    `exp` is the only thing that distinguishes them.
+    """
+    document = letkf_document(ens)
+    names = {document[block]["exp"] for block in
+             ("output increment", "output variance prior",
+              "output variance posterior")}
+    assert len(names) == 3
+
+
+def test_the_solver_and_its_inflation_come_from_the_layer(ens):
+    assert letkf_document(ens)["local ensemble DA"] == LETKF["local ensemble DA"]
+
+
+def test_an_empty_ensemble_is_refused_rather_than_configured(ens):
+    """Every member's forecast is missing and the policy let the cycle run.
+
+    An ensemble filter with no members is not a degenerate analysis, it is an
+    application that will abort somewhere less informative.
+    """
+    with pytest.raises(ModelError, match="ensemble is empty"):
+        letkf_document(ens, members=())
+
+
+def test_the_shipped_letkf_layers_produce_a_document_soca_would_accept(tmp_path):
+    repo, merged = shipped("tier3_letkf.yaml")
+    document = soca.letkf_config(merged, 1, [observer()],
+                                 backgrounds=Path("/out/e/rst/0"),
+                                 members=(1, 2, 3, 4, 5, 6))
+    reread = yaml.safe_load(yaml.safe_dump(document))
+    assert reread["geometry"]["fields metadata"].startswith(str(repo))
+    assert len(reread["background"]["members"]) == 6
+    assert reread["local ensemble DA"]["solver"] == "Deterministic LETKF"
+    # The halo is the distribution's own parameter, not an `options` bag: ioda
+    # reads it directly under `distribution` and refuses to construct without it.
+    space = reread["observations"]["observers"][0]["obs space"]
+    assert space.get("distribution", {}).get("name", "RoundRobin")
+
+
 # --- the run directory -------------------------------------------------------
 
 def test_the_run_directory_gets_the_cases_own_grid_files(config, paths, tmp_path):

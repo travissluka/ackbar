@@ -58,6 +58,7 @@ from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
+from test_tier3 import initial_energy
 
 pytestmark = pytest.mark.tier3
 
@@ -399,13 +400,13 @@ def test_the_analysed_restart_set_is_whole(persist):
             <= {p.name for p in member.iterdir() if p.is_file()})
 
 
-def test_the_forecast_starts_from_the_analysis(cycled):
-    """The failure that leaves a DA experiment looking exactly like a free run.
+def test_the_restart_the_forecast_reads_carries_the_analysis(cycled):
+    """`ana/<n>` differs from the background it was made from.
 
-    Read off the files rather than off a log line: the restart the forecast
-    started from is `ana/<n>`, and it differs from the background it was made
-    from. If writeback had produced a copy, or the forecast had read `rst/<n-1>`
-    instead, the two would agree exactly.
+    Necessary and not sufficient, which is worth being explicit about: this
+    checks what writeback produced, not what the model then did with it. The
+    model's half is `test_the_model_read_the_analysed_restart` below, and the
+    gap between the two is where a whole phase of this project once lived.
     """
     netCDF4 = pytest.importorskip("netCDF4")
     import numpy
@@ -436,6 +437,22 @@ def test_mom6_integrates_the_analysed_restart(cycled):
         assert (cycled.member_out("rst", cycle, 0) / "coupler.res").exists()
     assert sorted(p.name for p in cycled.sub("stats").glob("*.json")) == [
         f"{cycle}.json" for cycle in CYCLES]
+
+
+def test_the_model_read_the_analysed_restart(cycled):
+    """The failure that makes every other assertion here meaningless.
+
+    Writeback can be perfect and the model can still ignore it: with
+    `input_filename = 'n'` MOM6 initializes from `INIT_LAYERS_FROM_Z_FILE` and
+    never opens `INPUT/MOM.res.nc`, so every cycle integrates the same cold
+    start and the experiment cycles a free run while reporting an analysis.
+    Nothing upstream notices, because the model runs and writes a restart set.
+
+    A cold start has `VELOCITY_CONFIG = zero`, so the energy MOM6 reports for
+    its own step zero is exactly zero. A resumed run's is not.
+    """
+    for cycle in CYCLES:
+        assert initial_energy(cycled, cycle) > 1e-12
 
 
 def test_the_checksums_that_still_apply_were_left_alone(cycled):

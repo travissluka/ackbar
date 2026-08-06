@@ -183,6 +183,17 @@ properties:
       variational:
         type: object
         additionalProperties: true
+      # The ensemble solver and its inflation, which is LETKF's counterpart to
+      # `background error` and `variational`: the part of the document nothing
+      # else in the experiment implies. What the application is told to *save*
+      # is not here, because that is not a choice an experiment gets to make.
+      # An analysis that writes no posterior mean leaves the control member
+      # with no analysis at all, and one that skips the posterior observer
+      # leaves `post.obs` with an `ombg` and no `oman`; both look healthy the
+      # whole way through, so ackbar sets the driver.
+      local ensemble DA:
+        type: object
+        additionalProperties: true
 
     allOf:
       # A variational experiment with no B and no minimizer is not an
@@ -199,6 +210,17 @@ properties:
           - background variables
           - background error
           - variational
+      # LETKF needs no B: its covariance is the ensemble. What it does need is
+      # a solver and an inflation, and defaulting either is how an experiment
+      # ends up reporting an ensemble that quietly collapsed.
+      - if:
+          properties: { name: { const: letkf } }
+          required: [name]
+        then:
+          required:
+          - analysis variables
+          - background variables
+          - local ensemble DA
 
   ensemble:
     type: object
@@ -214,6 +236,18 @@ properties:
       control: { type: boolean }
       source:
         enum: [offline, eda, perturbation]
+      # Where the members start. An offline product like every other initial
+      # condition, holding one restart set per member under `mem001` and up,
+      # and named separately from `model.initial_condition` rather than derived
+      # from it: the control starts from the unperturbed state and the members
+      # do not, so the two are different directories and each is stated.
+      #
+      # Absent means every member starts from the same state, which is an
+      # ensemble of zero spread. That is the right answer for an experiment
+      # whose spread arrives from somewhere else and the wrong one for an LETKF,
+      # where it is a filter with nothing to work with. `tools/ensemble-ic.sh`
+      # builds one.
+      initial_condition: { type: string }
       # A missing member is routine once members are array elements, so the
       # policy is per experiment and is stated rather than defaulted silently.
       on_missing_member:

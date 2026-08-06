@@ -19,6 +19,7 @@ from pathlib import Path
 import yaml
 
 from . import emit
+from .config.jobtime import member_dir
 from .graph.build import member_set
 from .paths import Paths
 from .validate import validate_experiment
@@ -122,28 +123,49 @@ def _initial_condition(config, paths):
     reads `rst/0` by the same rule `forecast(50)` reads `rst/49`, so nothing in
     the graph, the model, or healing needs a notion of a first cycle.
 
-    Links rather than copies. The initial condition is a read-only offline
-    product of gigabytes, and copying it per member would multiply it by the
-    ensemble size to no end: every member starts from the same state, and what
-    makes them differ is perturbation or an ensemble source, neither of which is
-    a property of this directory.
+    Links rather than copies. An initial condition is a read-only offline
+    product of gigabytes, and copying it costs the ensemble size in disk for no
+    gain: nothing in the experiment writes into `rst/0`.
+
+    Two sources, because the control and the ensemble start from different
+    states. The control is `model.initial_condition`, unperturbed, and it is
+    what a deterministic experiment has. The members come from
+    `ensemble.initial_condition`, one restart set each, which is what
+    `tools/ensemble-ic.sh` produces. Without that key every member starts from
+    the same state, which is an ensemble of zero spread; that is right for an
+    experiment whose spread arrives from elsewhere and is a filter with nothing
+    to work with for an LETKF, so it is said rather than defaulted into.
     """
-    source = Path(config["model"]["initial_condition"])
-    entries = sorted(source.iterdir()) if source.is_dir() else []
-    if not entries:
-        raise CreateError(
-            f"model.initial_condition {source} is empty or not a directory. "
-            f"Experiments never generate their own inputs, so this has to be a "
-            f"restart set an offline stage already produced."
-        )
+    control = _restart_set(config["model"]["initial_condition"],
+                           "model.initial_condition")
+    ensemble = (config.get("ensemble") or {}).get("initial_condition")
+
     for member in member_set(config):
+        source = control
+        if ensemble and member != 0:
+            source = _restart_set(
+                Path(ensemble) / member_dir(member),
+                f"ensemble.initial_condition, member {member}")
         target = paths.member_out("rst", 0, member)
         target.mkdir(parents=True, exist_ok=True)
-        for entry in entries:
+        for entry in source:
             link = target / entry.name
             if link.is_symlink() or link.exists():
                 link.unlink()
             link.symlink_to(entry)
+
+
+def _restart_set(path, named):
+    """The files of one restart set, or a refusal naming the key that is wrong."""
+    source = Path(path)
+    entries = sorted(source.iterdir()) if source.is_dir() else []
+    if not entries:
+        raise CreateError(
+            f"{named} is {source}, which is empty or not a directory. "
+            f"Experiments never generate their own inputs, so this has to be a "
+            f"restart set an offline stage already produced."
+        )
+    return entries
 
 
 def _stub_initial_condition(config, paths):

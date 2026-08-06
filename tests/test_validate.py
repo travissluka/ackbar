@@ -153,7 +153,8 @@ class TestStep1Configuration:
         # '500e3' is a string to PyYAML and the number 500000 to eckit, and the
         # re-emitted file still looks right, so nothing else would catch it.
         config = load("letkf_om1deg", keys)
-        config["vars"]["obs_distribution_options"] = {"halo size": "500e3"}
+        config["vars"]["obs_distribution"] = {"name": "Halo",
+                                              "halo size": "500e3"}
         found = offline(config, schema)
         assert [f.step for f in found] == [1]
         assert "500e3" in found[0].message

@@ -103,12 +103,30 @@ solver:
             filepath: $(domain_static)/diffusion/hz_ssh
 
     saber outer blocks:
-    # Taper the background error to zero in shallow water and with depth, so the
-    # analysis does not push a large increment into a coastal cell where the
-    # background is better than the observation network implies. v2 and the
-    # bundle agree on all three numbers, which is why they are here unchanged.
+    # Taper the background error with depth, so the analysis does not push the
+    # same amplitude into the abyss that it does into the thermocline.
+    #
+    # `ocean_depth_min: 0`, against v2's and the bundle's 1000. It is not a
+    # taper and the name is misleading: `BkgErrFilt.cc` reads
+    #
+    #     if (depth <= oceanDepthMin) continue;
+    #
+    # which leaves the multiplier at zero, so the background error is not
+    # reduced in shallow water, it is **deleted**. At 1000 m that removes the
+    # entire continental shelf: on the Gulf domains it is the Louisiana-Texas
+    # shelf, the West Florida shelf and Campeche Bank, which is most of the
+    # domain's area and exactly where the SST observations are densest. Those
+    # observations are then read, evaluated, and multiplied by an error of zero.
+    #
+    # v2 had already moved: `soca_3dhyb.yaml` and `soca_4dhyb.yaml` set 0, while
+    # the older `soca_3dvar.yaml` and the hat10 regional copy of it kept 1000.
+    # What it was for is real, that an ssh increment over a shelf is not
+    # meaningful, and a hard cutoff on total depth is a blunt way to say so.
+    # Something better belongs here eventually and belongs per variable.
+    #
+    # `efold_z` is the part that is a taper, and it is unchanged.
     - saber block name: SOCABkgErrFilt
-      ocean_depth_min: 1000   # [m]
+      ocean_depth_min: 0      # [m]
       rescale_bkgerr: 1.0
       efold_z: 2500.0         # [m]
 
@@ -158,8 +176,7 @@ solver:
       gradient norm reduction: 1.0e-10
 
 vars:
-  obs_distribution: RoundRobin
-  obs_distribution_options: {}
+  obs_distribution: {name: RoundRobin}
   obs_land_mask_min: 0.9
 
   # `diffusion_levels` is the domain's, declared in the domain layer, because it

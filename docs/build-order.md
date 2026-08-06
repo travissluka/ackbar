@@ -164,7 +164,29 @@ rebuild and no PMIx; what it needed was knowing that `--mpi=none` silently gives
 own `MPI_COMM_WORLD` instead of failing. See "srun and PMI" in `docs/slurm.md`, which also
 carries the measured `MaxRSS` difference between the two launchers.
 
-Four things this phase settled.
+Five things this phase settled, and the fifth was found much later, in phase 7, having
+invalidated everything in between.
+
+**A stock case tells MOM6 that every run is a new run.** `input_filename` in
+`MOM_input_nml` is read one character at a time by `MOM_restart::determine_is_new_run`:
+`'n'` means new, `'r'` means read the automatically named restart files. MOM6-examples ships
+`'n'`, which is right for a case distributed as an example. With it, MOM6 initializes
+temperature and salinity from `INIT_LAYERS_FROM_Z_FILE` and never opens `INPUT/MOM.res.nc` at
+all.
+
+Nothing about that is visible from outside. The model runs, integrates for the configured
+length, and writes a complete restart set; `coupler.res` carries the right clock, because the
+coupler reads it and MOM6's own initialization does not; and consecutive restart sets *differ*,
+because each cold start is forced by a different day of the atmosphere. So "every cycle hands
+its restart set to the next" passed, and so did "the restart sets are not all the same state",
+which was written specifically to catch a workflow that copies its initial condition forward.
+Both are true statements about a run that discards its own history every twelve hours.
+
+It surfaced in phase 7 and only because of the ensemble: six members with six different
+backgrounds produced six bit-identical forecasts. One member cannot show that. The check now in
+place is the one that would have caught it on day one and costs nothing, since a cold start has
+`VELOCITY_CONFIG = zero`: **the kinetic energy MOM6 reports for its own step zero is exactly
+zero on a cold start and is not on a resumed run.**
 
 **`INPUT/coupler.res` is a hardcoded string inside `coupler_main`.** `restart_input_dir` in
 `MOM_input_nml` and `SIS_input_nml` moves MOM's and SIS's own restarts, and the coupler does not
@@ -313,11 +335,75 @@ not for stability. That is why phase 6 is tested at OM_1deg.
 
 ## Phase 7. LETKF
 
-Parallel members, ensemble initial conditions, recentering. Member arrays now carry a real
-model, so this is where the phase 2 array work meets real cost.
+Parallel members and ensemble initial conditions. Member arrays now carry a real model, so
+this is where the phase 2 array work meets real cost.
 
-Requires a stated **divergence policy** for a missing or bad member, and a home for the
-temperature and salinity clamping that v2 did inside its checkpoint.
+- **Build:** the LETKF task, the divergence policy, and `tools/ensemble-ic.sh`.
+- **Test:** tier 3, `tests/test_tier3_letkf.py`, at gom_25km: seven forecasts a cycle as one
+  array, one analysis consuming all of them, seven writebacks. Plus `test_ensemble.py` at
+  tier 0, where the policies live.
+- **Done when:** LETKF cycles with MOM6 in the loop, every member's analysis is its own, and a
+  member lost mid-run is handled by the policy the experiment stated rather than by the run
+  stopping.
+
+Four things this phase settled.
+
+**Recentring is not part of a pure LETKF, and this is not a deferral.** Recentring an ensemble
+onto a centre it already has is the identity, and the centre of an LETKF's analysis ensemble is
+its own mean: `LocalEnsembleDA` computes that mean and ACKBAR hands it to the control member.
+So `recenter` is in `DEFERRED` with a body that does nothing *because nothing is the right
+answer*. What brings a real body is a centre that is not the ensemble's own mean, which is a
+hybrid, and that is phase 8's to add along with the `da` split.
+
+**The index a member is written out as is its position, not its number.**
+`oops::DataSetBase::write` numbers by place in the list it was handed, so an ensemble with a
+gap in it is renumbered on output. That is why the background is built as an explicit
+`members` list rather than a `members from template`: with a template the input and output
+numbering disagree exactly when a member is missing, and the consequence is one member's
+analysis written into another member's restart set with nothing to notice.
+
+**A distribution's parameters go directly under `distribution`.** soca-science nested them
+under `options`, which was right for an older ioda; the Halo distribution this LETKF needs
+finds no `halo size` there and refuses to construct. The observer layers now substitute the
+whole mapping, so a distribution's parameters stay next to the distribution that needs them.
+
+**An ensemble perturbed from a static B is spin-up, not an ensemble**, and an ensemble on one
+atmosphere is not one either. `tools/ensemble-ic.sh` draws each member from the same covariance
+the variational analysis uses, which is the right place to start and gives spread with no
+dynamical balance and no flow dependence; at gom_25km that spread is about 0.09 K in surface
+temperature, so the filter is heavily overconfident and moves the state very little. The larger
+problem is that every member is then forced by the *same* atmosphere, so what spread there is
+gets handed back to the forcing they share, cycle after cycle. An LETKF wants an ensemble
+perturbed in the atmosphere as well as in the ocean.
+
+Both are data problems rather than workflow ones, and both belong with the nature run below.
+Until they are solved, an LETKF scored against a 3DVar here is not being scored on its merits,
+which is the reason that work should precede any comparison between solvers.
+
+Still owed, and moved here from this phase's original list: a home for the **temperature and
+salinity clamping** v2 did inside its checkpoint. Nothing has needed it yet, and writeback's
+existing guard is a refusal on a non-finite analysis. Add it when a cycle produces a
+temperature that a clamp would have caught, not before.
+
+## Phase 7.5. A Gulf of Mexico OSSE
+
+Not in the original plan, and it belongs before any comparison between solvers rather than
+after. Without a nature run, "did LETKF beat 3DVar" can only be answered from departures, and
+each system fits its own observations, so the comparison is self-referential. A nature run
+gives state-space verification, which is what `verify` exists for and what the benchmarking
+premise of this repository rests on. It also gives phase 7's ensemble somewhere honest to come
+from.
+
+- **Blocked on data, not on workflow.** The Gulf domains run with a single frozen SODA
+  five-day mean on the open boundary and a short forcing sample, so a months-long run needs
+  time-varying boundary conditions and a real forcing archive first. That is an offline stage.
+- **Decide the twin.** Nature and DA at the same resolution is an identical twin: easy, and
+  flattering. Nature at 4 or 8 km against DA at 12 or 25 km is fraternal, is the honest
+  version, and changes what the observation generator has to do.
+- **Perturbed atmospheric forcing comes with it.** It is the same data problem, and without it
+  the ensemble every phase after this one depends on cannot hold its spread. See phase 7.
+- **`tools/obs-archive-osse.py` is the small version of it**, and says so: its truth is one
+  state plus a fixed anomaly rather than a trajectory.
 
 ## Phase 8. Ensemble and hybrid covariance
 

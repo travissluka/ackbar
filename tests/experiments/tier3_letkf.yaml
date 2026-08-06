@@ -1,0 +1,60 @@
+# Tier 3: LETKF cycling at gom_25km. The phase 7 milestone.
+#
+# The same domain, dates, initial condition and observation archive as
+# `tier3_var`, so the two are directly comparable and the difference between
+# their results is the solver. That comparability is the reason this project
+# exists, so it is worth stating that it is not an accident here: both read the
+# same offline stages and differ in one inherited layer.
+#
+# Six members plus a control, and MOM6 in the loop, because the claim phase 7
+# rests on is that a member array carries a real model: seven forecasts a cycle,
+# scheduled as one array, each an ordinary integration.
+#
+# **Every member runs on the same atmosphere**, and that is the first thing to
+# fix before anything here is compared with the variational experiment. An
+# ensemble whose members differ only in their ocean state, forced identically,
+# gives spread back to the forcing they share every cycle; what an LETKF wants
+# is an ensemble perturbed in the atmosphere too. That is a data problem rather
+# than a workflow one, and it belongs with the nature run.
+#
+# Six is small on purpose. It gives a rank-6 covariance, which for a domain of
+# five thousand ocean columns is a filter held together entirely by
+# localization. Read nothing about the science off this experiment, and one
+# number says why: the ensemble is drawn from the static background error, whose
+# spread in this domain is about 0.09 K in surface temperature, against a truth
+# anomaly of 1 K and an observation error of 0.5 K. A filter that confident
+# gives observations very little weight, so the departures move slightly and in
+# the right direction, which is all this checks. An ensemble whose spread means
+# something comes from a nature run, not from perturbing one state.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_letkf
+  description: phase 7, LETKF cycling at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+ensemble:
+  size: 6
+  # The control is `mem000`, and in an ensemble filter its analysis is the
+  # posterior mean, which the filter computes anyway. It is not a separately
+  # assimilated member and it carries no perturbation.
+  control: true
+  source: offline
+  # A member whose forecast is missing is rebuilt from the mean of the ones that
+  # arrived, so the ensemble stays the size it was configured with. See
+  # `ackbar/ensemble.py` for what that does and does not buy.
+  on_missing_member: replace_from_mean
+  # One restart set per member, from `tools/ensemble-ic.sh gom_25km 6`. Without
+  # it every member starts from the same state and the filter has no spread to
+  # work with at all.
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
