@@ -27,7 +27,8 @@
 solver:
   name: variational
   covariance: static
-  window: '3d'
+  window:
+    type: '3d'
 
   # Ocean only, matching the model layer's `state variables`. The ice fields in
   # the bundle's example are absent for the same reason they are absent there:

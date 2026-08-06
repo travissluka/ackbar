@@ -8,12 +8,17 @@
 # sit, because that is the only place a reader would think to look.
 
 cost function:
-  # 3D-Var is the only window this document builds. FGAT and 4D differ here and
-  # in the graph, which is why `solver.window` is validated and not yet read: a
-  # value this ignores is worse than one it rejects. When they arrive they are
-  # sibling files rather than a branch in Python.
+  # 3D-Var is the only cost function this document builds. `solver.window` is
+  # read for its *length*, which sets the window below and how far the forecast
+  # overshoots, and `var_config` in `ackbar/soca.py` refuses a type this file
+  # cannot honour rather than quietly building 3D-Var over a trajectory the
+  # experiment paid an extra half window of model for. FGAT and 4D differ here
+  # and in the graph, and when they arrive they are sibling files rather than a
+  # branch in Python.
   cost type: 3D-Var
 
+  # As long as the cycle unless `solver.window.length` says otherwise, and
+  # centred on the analysis time either way.
   time window:
     begin: '{{window_begin}}'
     length: '{{window_length}}'

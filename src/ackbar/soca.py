@@ -42,7 +42,7 @@ from pathlib import Path
 
 import yaml
 
-from .config.jobtime import cycle_time, member_dir
+from .config.jobtime import FOUR_D, cycle_time, member_dir, window_type
 from .config.jobtime import render as render_jobtime
 from .config.jobtime import symbols
 from .config.template import fill
@@ -576,6 +576,19 @@ def var_config(config, cycle, observers, *, background, ensemble=None,
     """
     model = config["model"]
     solver = config["solver"]
+    if window_type(config) in FOUR_D:
+        # The forecast already writes the sub-window states and already
+        # overshoots to cover the far end of the window, so an experiment can
+        # ask for this and get a 3D-Var document built over a trajectory it
+        # paid for and did not use. Refused rather than ignored: that is a
+        # 50 per cent model bill and an analysis nobody chose, and neither
+        # leaves a mark anywhere.
+        raise ModelError(
+            f"solver.window.type is {window_type(config)!r} and "
+            f"config/soca/var.yaml builds 3D-Var. The sub-window states exist "
+            f"and the cost function that reads them does not yet; see phase 9 "
+            f"in docs/build-order.md."
+        )
     variables = list(_require(solver, "analysis variables"))
     geometry = _geometry(model)
 

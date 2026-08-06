@@ -6,12 +6,18 @@ from ackbar.config.jobtime import (
     SYMBOL_NAMES,
     JobTimeError,
     cycle_time,
+    forecast_length,
+    forecast_overshoot,
+    handoff_time,
     member_dir,
     render,
     seed_for,
+    slot_length,
+    slot_times,
     symbols,
     unresolved,
     window_bounds,
+    window_length,
 )
 from ackbar.duration import format_instant
 
@@ -45,6 +51,101 @@ class TestCycleArithmetic:
 
     def test_consecutive_windows_tile_without_gap_or_overlap(self):
         assert window_bounds(CONFIG, 2)[1] == window_bounds(CONFIG, 3)[0]
+
+    def test_a_declared_window_is_still_centred_on_the_analysis_time(self):
+        # Which is where the analysis is written: CostFctFGAT saves the state
+        # at the window's midpoint. A window centred anywhere else produces an
+        # analysis valid at a time no cycle starts from.
+        short = {**CONFIG, "solver": {"window": {"type": "fgat",
+                                                 "length": "PT6H"}}}
+        assert window_length(short).total_seconds() == 6 * 3600
+        begin, end = window_bounds(short, 2)
+        assert format_instant(begin) == "2018-04-15T21:00:00Z"
+        assert format_instant(end) == "2018-04-16T03:00:00Z"
+
+
+class TestTheForecastCoversTheNextWindow:
+    """What a four-dimensional window costs the model, and why.
+
+    The next cycle's window is centred on the next analysis time, so half of it
+    lies *after* that time. Nothing but this cycle's forecast can produce those
+    states: the next cycle's own forecast starts from the analysis, so a state
+    it writes at the same clock time is a different trajectory.
+    """
+
+    FGAT = {**CONFIG, "solver": {"window": {"type": "fgat"}},
+            "forecast": {"slots": "PT6H"}}
+
+    def test_a_three_dimensional_window_costs_nothing_extra(self):
+        assert forecast_overshoot(CONFIG).total_seconds() == 0
+        assert forecast_length(CONFIG) == window_length(CONFIG)
+
+    def test_a_four_dimensional_window_costs_half_of_itself(self):
+        # 1 + W/2C times the model, which at the default W == C is one and a
+        # half, and is not avoidable by moving the window.
+        assert forecast_overshoot(self.FGAT).total_seconds() == 12 * 3600
+        assert forecast_length(self.FGAT).total_seconds() == 36 * 3600
+
+    def test_the_states_are_exactly_the_next_cycles_window(self):
+        assert slot_times(self.FGAT, 2)[0] == window_bounds(self.FGAT, 3)[0]
+        assert slot_times(self.FGAT, 2)[-1] == window_bounds(self.FGAT, 3)[1]
+
+    def test_the_next_cycle_starts_from_a_state_the_run_wrote_on_its_way(self):
+        # Not the last thing written, which is half a window later. It is one
+        # of the intervals, and it has to be one the forecast actually reached.
+        handoff = handoff_time(self.FGAT, 2)
+        assert format_instant(handoff) == "2018-04-17T00:00:00Z"
+        assert handoff in slot_times(self.FGAT, 2)
+        assert handoff != slot_times(self.FGAT, 2)[-1]
+
+    def test_a_window_shorter_than_the_cycle_still_ends_on_the_last_instant(self):
+        # The states are the last window's worth of the forecast wherever the
+        # window falls, so a six hour window on a 24 hour cycle is three states
+        # and not thirteen.
+        short = {**CONFIG,
+                 "solver": {"window": {"type": "fgat", "length": "PT6H"}},
+                 "forecast": {"slots": "PT3H"}}
+        assert [format_instant(t) for t in slot_times(short, 1)] == [
+            "2018-04-15T21:00:00Z", "2018-04-16T00:00:00Z",
+            "2018-04-16T03:00:00Z"]
+
+
+class TestSlots:
+    """The sub-window states one forecast writes as it goes."""
+
+    CADENCED = {**CONFIG, "forecast": {"slots": "PT6H"}}
+
+    def test_an_experiment_that_asked_for_none_has_none(self):
+        assert slot_length(CONFIG) is None
+        assert slot_times(CONFIG, 2) == ()
+
+    def test_the_times_span_the_forecast_and_end_on_its_last_instant(self):
+        # Cycle 2 runs 2018-04-16 to the 17th, so a six hour cadence is 06, 12,
+        # 18 and the end. The last one duplicates the committed restart set,
+        # deliberately: the alternative is a slot series with a hole at its own
+        # last entry for every consumer to special-case.
+        assert [format_instant(t) for t in slot_times(self.CADENCED, 2)] == [
+            "2018-04-16T06:00:00Z", "2018-04-16T12:00:00Z",
+            "2018-04-16T18:00:00Z", "2018-04-17T00:00:00Z"]
+
+    def test_the_forecasts_own_start_is_not_one_of_them(self):
+        # FMS writes when its clock *reaches* the next interval, so the first
+        # lands one cadence in. The state at the start is the restart set the
+        # forecast was handed rather than one it produced.
+        assert cycle_time(self.CADENCED, 2) not in slot_times(self.CADENCED, 2)
+
+    def test_the_cadence_reaches_mom6_as_its_own_interval_list(self):
+        assert table(config=self.CADENCED)["mom6_restart_interval"] \
+            == "0, 0, 0, 6, 0, 0"
+
+    def test_no_cadence_is_the_value_that_means_write_none(self):
+        assert table()["mom6_restart_interval"] == "0, 0, 0, 0, 0, 0"
+
+    def test_a_cadence_longer_than_a_day_is_days_and_not_hours(self):
+        # `restart_interval` is y, m, d, h, m, s, and 36 hours in the hours
+        # field is a value FMS reads happily and a duration nobody wrote.
+        weekly = {**CONFIG, "forecast": {"slots": "P1DT12H"}}
+        assert table(config=weekly)["mom6_restart_interval"] == "0, 0, 1, 12, 0, 0"
 
 
 class TestSeeds:

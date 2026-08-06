@@ -46,6 +46,16 @@ WIND_CONFIG = 'zero'
 
 ENABLE_BUGS_BY_DEFAULT = False
 
+! An intermediate restart is time-stamped instead of overwriting MOM.res.nc.
+! `ocean_model_restart` writes nothing at all unless RESTART_CONTROL has a bit
+! set, and it is the default bit 0 that overwrites: a forecast given a
+! `restart_interval` would rewrite one file once per interval and end with the
+! same single state it started with. Bit 1 is the time-stamped write, which is
+! what a sub-window state is. Inert for a forecast that was given no interval,
+! which is every 3D experiment. See `forecast.slots` in config/schema and
+! MOM_STAMP in ackbar/mom6sis2.py for the name it produces.
+RESTART_CONTROL = 2
+
 ! Deliberately not overridden, and here so nobody "fixes" it:
 !
 ! MOM_input states OBC_COMPUTED_VORTICITY and OBC_FREESLIP_VORTICITY, both

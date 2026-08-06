@@ -273,7 +273,7 @@ site:
     stats/        <cycle>.json, one file per cycle, never appended to
     log/          job stdout and stderr, by cycle and task
     rst/<cycle>/mem###/     restart sets
-    bkg/<cycle>/mem###/     backgrounds
+    bkg/<cycle>/mem###/<valid time>/  sub-window states, one directory each
     ana/<cycle>/mem###/     the analysed restart set the next forecast reads
     ana/<cycle>/mem###/analysis/   what the analysis application itself wrote
     ana/<cycle>/members.json       which members the cycle had, and the policy
@@ -721,8 +721,25 @@ Three of those four are worth saying why:
   ensemble is how a free run fills a disk. An extended forecast exists to be scored and writes
   intervals. Same executable, same code path, different file, which is what makes this
   configuration rather than a branch.
-- **`input.nml` is patched, not regenerated.** ACKBAR sets the run length and the fallback date
-  in `coupler_nml` and leaves the couple of dozen groups of model physics alone.
+- **`input.nml` is patched, not regenerated.** ACKBAR sets the run length, the fallback date and
+  the intermediate restart cadence in `coupler_nml` and leaves the couple of dozen groups of
+  model physics alone.
+- **A 4D window's sub-window states are intermediate restarts, not history.** `forecast.slots`
+  becomes `restart_interval` in `coupler_nml`, so one model run dumps a state at each of them as
+  its clock passes; the alternative shape, a chain of short forecasts, pays a model
+  initialization per slot and puts a restart handoff between each pair. They are restarts rather
+  than `diag_table` output because SOCA reads a state through `fields metadata`, whose every
+  ocean entry maps to a restart variable name and not the diagnostic name for the same field.
+  See phase 9 in `docs/build-order.md`.
+- **A 4D window makes the cycling forecast overshoot, and its restart set becomes an interval of
+  the run.** The window is centred on the analysis time, because that is where FGAT writes the
+  analysis, so half of the *next* cycle's window lies after that time and only this cycle's
+  forecast can cover it. It runs the cycle length plus half a window, which is `1 + W/2C` times
+  the model and one and a half at the usual `W == C`. The set the next cycle starts from is then
+  the interval at its own analysis time rather than the last thing written, and every interval is
+  a complete set, so `mom6sis2.commit` assembles it by matching the stamp and undoing the three
+  naming conventions that land in one `RESTART/`. Integrating past a time does not change the
+  state at it.
 
 v2 had a seven-way case statement over `DA_MODE`. Most of those modes are the same code with
 different covariance or window settings. The real axes:
@@ -732,7 +749,7 @@ different covariance or window settings. The real axes:
 | model | `mom6sis2`, `persistence`, `stub` |
 | solver | `none`, `variational`, `letkf` |
 | covariance (variational only) | `static`, `ensemble`, `hybrid` |
-| window | `3d`, `fgat`, `4d` |
+| window | `3d`, `fgat`, `4d`, each with its own length, defaulting to the cycle |
 | ensemble source | `letkf`, `none`, and the unimplemented `eda`, `offline`, `perturbation` |
 
 So v2's modes map as: `3dvar` = variational+static+3d, `3denvar` = variational+ensemble+3d,

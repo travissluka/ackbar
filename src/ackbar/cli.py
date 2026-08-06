@@ -296,7 +296,7 @@ def cmd_resolve(args):
 def cmd_symbols(args):
     print("Job-time symbols. The set is closed: anything else is an error.\n")
     for name, description in SYMBOLS:
-        print(f"  {{{{{name}}}}}".ljust(26) + description)
+        print(f"  {{{{{name}}}}}".ljust(26) + " " + description)
     print(
         "\nA whole-token string takes the symbol's type; embedded in text it "
         "interpolates\nas text. Either form may carry a format spec after a "

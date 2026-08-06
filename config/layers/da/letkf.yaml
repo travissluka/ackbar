@@ -8,7 +8,8 @@
 solver:
   name: letkf
   covariance: ensemble
-  window: '3d'
+  window:
+    type: '3d'
 
   # What writeback puts into the restart set. The LETKF updates *every*
   # variable in its background, which is a superset of this: the ensemble has

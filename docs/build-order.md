@@ -451,31 +451,115 @@ than letting a covariance be drawn from an ensemble that nothing updates. `eda` 
 ## Phase 9. 4D windows
 
 Sub-window forecast slots, and the first phase in which the *window* stops being a property that
-only the configuration knows about. Design these deliberately rather than inheriting v2's `f###`
+only the configuration knows about. Designed deliberately rather than inheriting v2's `f###`
 symlink farm.
 
-`solver.window` has been validated and unread since phase 1, exactly as `solver.covariance` was
-until phase 8, and `fourd_om1deg` exists as a golden precisely so that the shape change shows up
-as a diff. What follows is what that diff has to contain. It is written per mode because the
-three modes differ in what they need, and only one of them needs a new task.
+`solver.window` was validated and unread from phase 1, exactly as `solver.covariance` was until
+phase 8, and `fourd_om1deg` exists as a golden precisely so that the shape change shows up as a
+diff. What follows is what that diff contains. It is written per mode because the three modes
+differ in what they need, and only one of them needs a new task.
+
+**Where this stands.** The mechanism and the arithmetic are both built and exercised on the free
+run: `forecast.slots`, one model run that dumps a state at each interval,
+`bkg/<n>/mem###/<valid time>/`, `cleanup` reaping them, and the window arithmetic below.
+`solver.window` is now a mapping of a type and a length; the length is read, sets the window every
+document is given, and makes the cycling forecast overshoot by half of itself when the type is
+`fgat` or `4d`.
+
+What is left is the analysis end. No document builds an FGAT or a 4D cost function yet, so
+`soca.var_config` refuses those two types rather than quietly building 3D-Var over a trajectory
+the experiment has already paid an extra half window of model for. Item 5 below is that document.
+
+`tests/test_tier3_gom.py` asks the three questions that were actually open, all of them about the
+model rather than the solver, and all of them on a free run because that is the cheapest place a
+wrong answer is legible: whether SOCA reads what MOM6 wrote at an interval, which it asks by
+handing two slot states to `soca_diffstates.x`; whether a restart set assembled out of an interval
+is the set the model would have written had it stopped there; and whether that set resumes.
+
+One finding from the last of those is worth keeping, because it is otherwise rediscovered as a
+bug: MOM6-SIS2 on this domain is **not exact-restart**. Resuming from the model's own final set
+and integrating on does not reproduce an uninterrupted run, at a round-off that grows with the
+trajectory. A set taken from an interval is exactly as good as the model's own, which is why that
+assertion compares against a shorter run rather than against a longer chain.
 
 ### The window, which all three share
 
-**Where the analysis time sits in the window becomes a configured property of the solver.**
-Centred is the current assumption and it is what `config/jobtime.py` computes: `window_begin` is
-the cycle time minus half the cycle length. 3D-FGAT and 4DEnVar are both happy with that. Strong
-constraint 4DVar is not: its window must *begin* at the analysis time, because the state it
-solves for is the one the model is integrated forward from. So `window_begin` stops being a
-constant expression and becomes a function of `solver.window`, and every symbol derived from it
-follows. That is a change in `symbols()` and in the observation archive's window selection, and
-it is the one change here that can silently produce a working experiment assimilating the wrong
-half day of observations.
+**The window is centred on the analysis time, and that is not a choice.** This section used to say
+that where the analysis time sits in the window should become a configured property of the solver,
+that 3D-FGAT and 4DEnVar are both happy with a centred one, and that only strong constraint 4DVar
+is not. Reading `oops` says otherwise on all three counts, and the correction is the most
+consequential thing in the phase.
 
-**The window length stops being the cycle length.** They are equal today and the equality is
-implicit. A 4D window that overlaps its neighbours, which is common in practice, breaks it, and
-so does a window shorter than the cycle. `window_length` should become its own configured
-duration defaulting to the cycle length, and `cleanup` has to key off the longest window
-anything still reads rather than off `n-2`.
+`CostFctFGAT` reads its background at the window **start** (`newJb` builds `CostJb3D` on
+`timeWindow_.start()`, and `runNL` asserts the state is valid there before integrating the whole
+window). `doLinearize` then saves the state at the window **midpoint** and `finishLinearize`
+replaces the background and first guess with it, so every later evaluation, the increment and the
+analysis that is written are all at the midpoint. `CostFct4DEnsVar` is the same shape stated as a
+list: `nsubwin = length/subwindow + 1` states from `timeWindow_.start()` inclusive.
+
+So the analysis time being the midpoint is not something ACKBAR configures, it is what the cost
+function does. Keeping the analysis at the cycle time therefore keeps the window centred, and what
+has to move instead is the **forecast**: half of a centred window is *after* the analysis time,
+and nothing has integrated there. The cycling forecast has to run from one analysis time to the
+next **plus half a window**, the restart the next cycle starts from becomes one of its
+sub-window states rather than its final set, and the overlap is re-integrated next cycle because
+the analysis changed the state under it.
+
+That is a real cost and it should be stated as one: `1 + W/2C` times the model, so 1.5x at a
+window as long as the cycle. It is not avoidable by moving the window, only by shortening it,
+and a window shorter than the cycle drops every observation between windows. 4D is 50% more
+model than 3D and the benchmark should say so rather than discover it.
+
+**soca-science reached the same arithmetic**, which is the strongest confirmation available that
+this is the shape and not a misreading. `scripts/workflow/cycle.sh` derives, per cycle length `C`,
+window length `W` defaulting to `C`, and sub-window `Δ`:
+
+| | 3D | 4D |
+|---|---|---|
+| forecast length | `C` | `W/2 + C` |
+| timeslots | 1 | `W/Δ + 1` |
+| sub-window | `C` | `Δ`, refused unless `(timeslots-1)*Δ == W` |
+| window start | analysis time `- W/2` | analysis time `- W/2` |
+
+and `run.var.sh` places the states in forecast hours: the background at `f(C - W/2)`, under its
+own comment `# background at beginning of window` against the 3D case's `# background in center
+of window`; the FGAT pseudo model from `f(C - W/2 + Δ)` to `f(C + W/2)`; the 4DEnVar ensemble
+from `f(C - W/2)` inclusive. That is exactly the split `CostFctFGAT` and `CostFct4DEnsVar` imply,
+arrived at independently. So for a six hour cycle with a six hour window at three hours, the
+slots are F03, F06, F09, the forecast runs nine hours, and FGAT reads F03 as its background and
+F06 and F09 through the pseudo model.
+
+The one thing there not to carry forward: v2 stamps each pseudo model state
+`DA_WINDOW_START + (fcst_hr - W/2)`, which is the state's true valid time only when `W == C`. A
+shorter window puts every date `C - W` out. `W` defaults to `C`, so it would never have shown.
+
+The mechanism for that already existed, which is the one piece of luck in it. A forecast that runs
+past the analysis time and hands over an intermediate restart uses the same `restart_interval` the
+sub-window states are written by, so what changed is the length of the run and which of its sets
+`rst/<n>` is taken from. Every interval is a *complete* set: `coupler_restart` writes the calendar
+and the model time at that interval, FMS writes each component's restart under the same stamp,
+and MOM6 writes the ocean under its own, so `mom6sis2.commit` assembles `rst/<n>` by matching on
+the stamp and undoing all three conventions. Nothing downstream can tell it was written mid-run.
+
+`cleanup` did **not** have to key off the longest window, which is what this used to say. Every
+state a cycle's analysis reads comes out of one forecast, so the horizon stays `n-2`. What makes
+that true is a bound rather than an assumption: `graph.build._check_window` refuses a window that
+would begin at or before the start of the forecast covering it, which for a 4D window means
+shorter than two cycles.
+
+**The window length stops being the cycle length.** They were equal and the equality was implicit.
+`solver.window.length` is now its own duration defaulting to the cycle length, read by
+`jobtime.window_length`, and it moves the window observations are selected on along with
+everything else. That last is the one change here that can silently produce a working experiment
+assimilating the wrong half day.
+
+The cadence has to land on a write, and FMS only writes at multiples of `Δ` counted from the start
+of the run, so `Δ` must divide the window, the cycle, and the forecast's lead-in to the window
+(`C + W/2 - W`). Together the last two mean `Δ` divides `W/2` as well as `W`, so at the usual
+`W == C` the usable cadences are 1h and 3h at a six hour cycle, those plus 2h and 6h at twelve,
+and those plus 4h and 12h at twenty-four. The classic FGAT F03/F06/F09 on a six hour cycle is
+`slots: PT3H`. Each of the three divisibility rules is refused separately and by name, because
+"the cadence is wrong" is not a diagnosis.
 
 ### 3D-FGAT: no new task, one new relationship
 
@@ -493,25 +577,71 @@ thing the workflow does not currently produce.
 **That is the whole of phase 9's real work, and it is the forecast's, not the analysis's.** The
 cycling forecast writes a restart set and no history at all, deliberately: writing history every
 cycle of an ensemble is how a free run fills a disk (`docs/design.md`, Model and DA modes). A 4D
-window needs it to write a state every *slot*. That is a `diag_table` selected by purpose, which
-is a mechanism phase 4 already built, plus a place for the slots to go and a rule for reaping
-them.
+window needs it to write a state every *slot*, plus a place for those to go and a rule for
+reaping them.
 
-Concretely, in order of how much they can go wrong:
+Items 1 to 4 below are **built**, on the free run, where the only open questions were about the
+model. Item 5 is what is left.
 
-1. **A slot cadence**, `solver.slots` or a duration under `window`, validated to divide the
-   window length. The number of slots is what sets the cost of everything below.
-2. **A `diag_table` that writes a full state per slot**, chosen by the forecast task the way the
-   extended forecast's is chosen today. Not the restart writer: these are history files, and
-   what SOCA reads them with is its own state reader, so the fields metadata has to name every
-   background variable in them.
-3. **Where they go.** `bkg/<n>/mem###/` is in `SUBDIRS` already and is unused, which is where
-   this was always going to land. One file per slot, named by valid time and not by an `f###`
-   offset: v2's symlink farm existed because its names were offsets and every consumer had to
-   recompute them.
+1. **A slot cadence.** `forecast.slots`, a duration, validated in `graph/build.py` against the
+   window, the cycle and the lead-in. Under `forecast` and not `solver` because the forecast is
+   what writes them and a free run wants them with no solver at all, which is also what let the
+   mechanism be built and tested before any 4D document existed. The window it is validated
+   against is `solver.window.length`, which is where the two subtrees meet and why the check
+   lives in the graph builder rather than in the schema. The number of slots is what sets the
+   cost of everything below.
+2. **One model run that dumps as it goes**, which is `restart_interval` in `coupler_nml` and
+   `RESTART_CONTROL = 2` in each domain's `MOM_override`. `coupler_main` compares its clock
+   against the next interval on each coupled step and writes in place, so a window of states
+   costs one extra restart write apiece and nothing else: no chain of short forecasts, no model
+   initialization per slot, and no restart handoff between them, which is the mechanism with the
+   most ways to be silently wrong in the workflow.
+
+   Both halves are needed and the second is not obvious. `ocean_model_restart` writes nothing at
+   all unless `RESTART_CONTROL` has a bit set, and the default, bit 0, is the *unstamped* write:
+   a forecast given an interval rewrites `MOM.res.nc` once per interval and ends with the single
+   state it would have had anyway, while `coupler_main` reports having written an intermediate
+   restart each time. Bit 1 is the time-stamped write. The symptom of getting this wrong is an
+   empty `bkg/` and a model log full of notes saying the opposite, which is why `commit` claims
+   each state by the name it should have rather than filing whatever it finds.
+
+   The name is MOM6's own and not FMS's, which matters because the two are in the same directory.
+   `MOM_restart::save_restart` stamps with the year, the day *of the year* and the second of the
+   day, so 04:00 on 2015-01-05 is `MOM.res_Y2015_D005_S14400.nc`. FMS appends `YYYYMMDD.HHMMSS`
+   to every other component's restart (`ice_model.res.nc20150105.040000.nc`) and `coupler_main`
+   prepends it to its own two clock files. Only the first is kept.
+
+   **Intermediate restarts and not a `diag_table`**, which is a correction to what this list used
+   to say. There are two mechanisms and they differ in what the file calls its variables. SOCA
+   reads a state through `fields metadata`, whose every ocean entry names a *restart* variable:
+   `Temp`, `Salt`, `ave_ssh`, `h`, `u`, `v`. A `diag_table` writes the diagnostic names for the
+   same fields, `temp`, `salt`, `SSH`, and would also have to be told to write instantaneous
+   values rather than the time means a history file defaults to. History would therefore need a
+   second fields metadata, and that file is the model layer's one contract with SOCA. The pinned
+   bundle agrees: the states `3dvarfgat_pseudo.yml` and `4denvar.yml` read are written by
+   `soca_forecast.x` through that same mapping, so they are restart-shaped too.
+
+   What the restart route costs is that `coupler_main` calls `ice_model_restart` at every
+   interval as well, and `mom6sis2.commit` discards it, because the fields metadata's ice section
+   describes CICE's `cice.res.nc` rather than SIS2's. If disk ever binds at `OM4_025`, a second
+   fields metadata keyed to diagnostic names is what buys it back.
+   The states written are the last window's worth of the run, ending on its last step, because
+   that is the window the *next* cycle assimilates in. With no overshoot the window is the cycle
+   and they span it; the series never includes hour zero either way, since FMS writes when its
+   clock *reaches* an interval and the state at the start is the set the forecast was handed.
+   The handoff time always falls inside the series when there is a window, because it is that
+   window's own centre, so that one slot is a hard link into the restart set rather than a second
+   copy of a gigabyte.
+3. **Where they go.** `bkg/<n>/mem###/<valid time>/MOM.res.nc`. `bkg/` was in `SUBDIRS` already
+   and unused, which is where this was always going to land. Named by valid time and not by an
+   `f###` offset: v2's symlink farm existed because its names were offsets and every consumer had
+   to recompute them. A directory per slot rather than one directory of date-stamped files, so
+   that `model.restart.ocn` keeps one spelling and a state is addressed the same way whether it
+   came from a slot, a restart set or the static root.
 4. **`cleanup` reaping them.** A slot state is a full 3D field, so an ensemble at a 6 slot window
    is six times the per-cycle output of the restarts, and this is the item that fills a disk in
-   the second week rather than the first.
+   the second week rather than the first. Reaped with `rst/` and `ana/` at `n-2` and under the
+   same proof.
 5. **A `pseudo model` block in the var document.** Split the way every document now is: the
    block's shape, and the `cost type` beside it, are a sibling file under `config/soca/`, since
    FGAT differs from 3D-Var in structure rather than in values. The *states* it names stay a

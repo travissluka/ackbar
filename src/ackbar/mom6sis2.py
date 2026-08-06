@@ -87,6 +87,35 @@ GENERATED = ("MOM_parameter_doc.", "SIS_parameter_doc.", "available_diags.")
 #: date, so its absence is exactly the failure that matters.
 STAMP = "coupler.res"
 
+#: Everything FMS leaves in `RESTART/` at an intermediate restart *except* the
+#: ocean state, and all of it is discarded. `coupler_main` prefixes its own two
+#: clock files with `date_to_string`, which is `YYYYMMDD.HHMMSS`; FMS's
+#: `save_restart` appends the same stamp to every other component's restart, so
+#: SIS2's arrives as `ice_model.res.nc20150105.040000.nc`. Prefix and suffix for
+#: one stamp, which is why this is two alternatives rather than one.
+#:
+#: Neither is readable by anything downstream. The fields metadata's ice section
+#: describes CICE's `cice.res.nc` rather than SIS2's `ice_model.res.nc`, and a
+#: stamped clock file describes a time nothing resumes from. What is *not*
+#: matched here is `coupler.intermediate.res`, which carries no stamp and
+#: travels with the restart set: `coupler_main` reads it out of `INPUT/` next
+#: cycle to know when the last interval fell.
+FMS_STAMPED = re.compile(r"^\d{8}\.\d{6}\.|\d{8}\.\d{6}\.nc$")
+
+#: How MOM6 names the one file here that anything reads, and it is its own
+#: convention rather than FMS's. `MOM_restart::save_restart` builds the stamp
+#: from the year, the day *of the year* and the second of the day, deliberately
+#: not the month ("Compute the year-day, because I don't like months. - RWH"),
+#: so `MOM.res.nc` at 04:00 on 2015-01-05 is `MOM.res_Y2015_D005_S14400.nc`.
+#:
+#: Built rather than parsed. Going the other way would mean reconstructing a
+#: date from a year-day, and the model's calendar is `NOLEAP` while every date
+#: ACKBAR computes is Python's proleptic Gregorian; the two disagree from March
+#: of a leap year onwards. Constructing the name a slot *should* have makes that
+#: disagreement a file this cannot find, which stops the cycle, rather than a
+#: state filed under the wrong hour, which does not.
+MOM_STAMP = "_Y{0:04d}_D{1:03d}_S{2:05d}"
+
 
 class ModelError(Exception):
     pass
@@ -113,8 +142,16 @@ TRACES = ("ocean.stats", "SIS.stats", "logfile.000000.out",
           "MOM_parameter_doc.layout")
 
 
-def forecast(config, site, paths, cycle, task, member, *, source, target):
-    """One model integration, from *source* restarts to *target* restarts."""
+def forecast(config, site, paths, cycle, task, member, *, source, target,
+             slots=None, handoff=None):
+    """One model integration, from *source* restarts to *target* restarts.
+
+    *slots* maps each valid time a sub-window state was asked for to where it
+    belongs, and *handoff* is the valid time of the set *target* holds when that
+    is not the end of the run. Both are passed in rather than computed here for
+    the same reason *target* is: where a product lives and what time it is
+    valid at are the experiment's layout, and this module's job is the model.
+    """
     run = paths.scratch(cycle, task, member)
     logs = paths.sub("log") / str(cycle)
     stage(config, run, cycle, task, source=source)
@@ -124,7 +161,8 @@ def forecast(config, site, paths, cycle, task, member, *, source, target):
         # In `finally`, because the run that failed is the one whose trace is
         # worth having.
         keep_traces(run, logs, task, member)
-    commit(run, target)
+    commit(run, target, slots=slots, handoff=handoff,
+           restart=(config["model"].get("restart") or {}).get("ocn"))
 
 
 # --- the run directory -------------------------------------------------------
@@ -334,7 +372,7 @@ _RESUME = "'r'"
 def _namelist(base, config, cycle):
     """`input.nml` with the run length, fallback date and parameter files set.
 
-    `months`/`days` are zeroed as well as setting `hours`, because a base case
+    `months`/`days` are zeroed as well as setting the rest, because a base case
     that runs in months would otherwise add ours to its own.
     """
     table = symbols(config, cycle)
@@ -342,7 +380,16 @@ def _namelist(base, config, cycle):
         "months": 0,
         "days": 0,
         "hours": table["mom6_hours"],
+        "minutes": table["mom6_minutes"],
+        "seconds": table["mom6_seconds"],
         "current_date": table["mom6_current_date"],
+        # How often the run writes an intermediate restart, and all zeros for
+        # "never", which is what an experiment with no `forecast.slots` gets.
+        # Written either way rather than only when it is wanted: a base case
+        # that set one of its own would otherwise decide how much a cycling
+        # forecast writes, which is the same class of surprise `input_filename`
+        # was.
+        "restart_interval": table["mom6_restart_interval"],
     }
     # The coupling timestep, when the domain states one. It varies with
     # resolution exactly as `DT` does, and it lives in `input.nml` rather than
@@ -434,27 +481,201 @@ def keep_traces(run, logs, task, member, names=("model.log",) + TRACES):
             shutil.copyfile(source, logs / f"{stem}{stamp}.{name}")
 
 
-def commit(run, target):
-    """Move the restart set to where the next cycle reads it.
+def commit(run, target, slots=None, restart=None, handoff=None):
+    """Sort what the run wrote: the restart set to *target*, the slots to theirs.
 
     Move rather than copy, and only after the model has exited zero: at a
     gigabyte a member a copy is the most expensive thing in the cycle. `STAMP`
     goes last, so a set that is present is a set that is whole even if this is
     killed halfway.
+
+    `RESTART/` holds two kinds of file once `forecast.slots` is set. FMS writes
+    a complete, self-consistent set at every interval under a time stamp, and
+    another at the end of the run with no stamp at all. **One model run produces
+    all of them.** It compares its clock against the next interval on each
+    coupled step and dumps in place, so each set costs a write and nothing
+    else: no chained short forecasts, no second initialization, no restart
+    handoff between them to get wrong.
+
+    *handoff* names which of those sets the next cycle starts from, and is None
+    for the unstamped one at the end. A 4D window is what makes them differ:
+    the forecast overshoots the next analysis time by half a window so that the
+    far end of that window exists, and the state the next cycle resumes from is
+    then the interval at the analysis time rather than the last thing written.
+    Integrating past a time does not change the state at it.
+
+    *slots* maps each valid time a sub-window state was asked for to the
+    directory it belongs in, and is None for a forecast that was not asked for
+    any. Each is claimed by the name it should have and a missing one stops the
+    cycle. Everything unclaimed is deleted rather than left behind, so that what
+    survives a forecast is exactly what something asked it to produce: the next
+    cycle links the whole of *target* into its own `INPUT/`, and a stamped file
+    carried in there is one FMS would find and ACKBAR never named.
     """
     written = run / "RESTART"
-    stamp = written / STAMP
-    if not stamp.exists():
+    if not (written / STAMP).exists():
         raise ModelError(
             f"the model exited 0 but wrote no {written / STAMP}, so there is "
             f"nothing for the next cycle to start from"
         )
 
-    target.mkdir(parents=True, exist_ok=True)
+    slots = dict(slots or {})
+    # The handoff time is a sub-window time too, whenever there is a window: it
+    # is the centre of the next cycle's, and MOM6 writes the state there once.
+    # So that slot is a link to the file in the restart set rather than a
+    # second claim on it, made after the set is assembled.
+    shared = slots.pop(handoff, None) if handoff is not None else None
+    for when, directory in sorted(slots.items()):
+        _claim_slot(written, when, directory, restart)
+
+    keep = (_final_set(written, restart) if handoff is None
+            else _stamped_set(written, handoff, restart))
+    keeping = {source for source, _ in keep}
     for entry in sorted(os.scandir(written), key=lambda e: e.name):
-        if entry.name != STAMP:
-            os.replace(entry.path, target / entry.name)
+        if entry.is_file() and Path(entry.path) not in keeping:
+            os.unlink(entry.path)
+
+    target.mkdir(parents=True, exist_ok=True)
+    stamp = None
+    for source, name in sorted(keep, key=lambda pair: pair[1]):
+        if name == STAMP:
+            stamp = source
+        else:
+            os.replace(source, target / name)
     os.replace(stamp, target / STAMP)
+
+    if shared is not None:
+        _link_state(target, shared, restart)
+
+
+def _final_set(written, restart):
+    """The unstamped set: what `coupler_end` leaves at the end of the run.
+
+    Everything without a stamp on it, rather than a list of names, so that a
+    component restart ACKBAR has never heard of still travels with the set.
+    """
+    return [(Path(entry.path), entry.name)
+            for entry in os.scandir(written)
+            if entry.is_file()
+            and not FMS_STAMPED.search(entry.name)
+            and not _stamped_ocean(entry.name, restart)]
+
+
+def _stamped_set(written, when, restart):
+    """The set FMS wrote at one interval, and the plain name each file takes.
+
+    Three stamping conventions land in one directory and all three have to be
+    undone. `coupler_main` prefixes its own two clock files with
+    `YYYYMMDD.HHMMSS`; FMS appends the same string to a component restart, so
+    SIS2's arrives as `ice_model.res.nc20150105.040000.nc`; MOM6 ignores the
+    string it was handed and builds its own year-day stamp. Matching on the
+    stamp rather than on a list of names is what carries an unknown component's
+    restart along, exactly as `_final_set` does.
+
+    The interval's `coupler.res` is a complete one: `coupler_restart` writes the
+    calendar, the run's start date and `Time` at the interval, which is what a
+    resume reads. Its `coupler.intermediate.res` carries the interval's own time
+    and is what schedules the next run's first interval.
+    """
+    if not restart:
+        raise ModelError(
+            "model.restart.ocn is not set, so the ocean state in the set this "
+            f"run wrote at {when} has no name to be looked for under, and the "
+            f"set would be assembled without it"
+        )
+    stamp = when.strftime("%Y%m%d.%H%M%S")
+    body = _mom_body(when, restart)
+    found = []
+    for entry in os.scandir(written):
+        if not entry.is_file():
+            continue
+        name = entry.name
+        if body and name.startswith(body):
+            plain = restart.rpartition(".")[0] + name[len(body):]
+        elif name.startswith(stamp + "."):
+            plain = name[len(stamp) + 1:]
+        elif name.endswith(stamp + ".nc"):
+            plain = name[:-len(stamp) - 3]
+        else:
+            continue
+        found.append((Path(entry.path), plain))
+
+    if not any(name == STAMP for _, name in found):
+        raise ModelError(
+            f"the model exited 0 having written no {stamp}.{STAMP} in {written}, "
+            f"so the state at {when} that the next cycle starts from does not "
+            f"exist. `restart_interval` in `coupler_nml` has to divide the "
+            f"cycle length for the forecast to write a set there at all."
+        )
+    return found
+
+
+def _mom_body(when, restart):
+    """How MOM6 spells *restart* at *when*, without the suffix. `MOM.res` ->
+    `MOM.res_Y2015_D005_S14400`, which `MOM.res_1.nc` extends to
+    `MOM.res_Y2015_D005_S14400_1.nc`."""
+    if not restart:
+        return None
+    stem = restart.rpartition(".")[0]
+    return stem + MOM_STAMP.format(when.year, when.timetuple().tm_yday,
+                                   when.hour * 3600 + when.minute * 60 + when.second)
+
+
+def _claim_slot(written, when, directory, restart):
+    """Move the state MOM6 wrote at *when* into the directory it belongs in.
+
+    The ocean state alone, and not the whole set FMS wrote at that interval: a
+    slot is what the analysis reads a background out of, and SOCA reads the
+    ocean restart through `fields metadata`. Every file of it, though: a restart
+    with enough fields is split into `MOM.res.nc`, `MOM.res_1.nc` and up, and a
+    slot missing one of those is a state SOCA reads as far as it goes and then
+    reports a field it could not find.
+    """
+    if not restart:
+        raise ModelError(
+            "model.restart.ocn is not set, so the state this run wrote at "
+            f"{when} has no name to be looked for under"
+        )
+    stem, _, suffix = restart.rpartition(".")
+    body = _mom_body(when, restart)
+
+    found = sorted(Path(written).glob(f"{body}*.{suffix}"))
+    if not found:
+        raise ModelError(
+            f"the model exited 0 having written no {body}.{suffix} in {written}, "
+            f"so the state at {when} that this cycle was asked for does not "
+            f"exist. RESTART_CONTROL has to have bit 1 set for MOM6 to write a "
+            f"time-stamped restart at all, and `restart_interval` in "
+            f"`coupler_nml` has to reach that time."
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+    for source in found:
+        os.replace(source, directory / source.name.replace(body, stem))
+
+
+def _link_state(target, directory, restart):
+    """The slot at the handoff time, as links to the restart set's own files.
+
+    A hard link rather than a copy, because it is the same state and a copy of
+    it is a gigabyte, and rather than a symlink because the two directories are
+    reaped independently and a link that outlives its target is a background
+    that reads as missing only when something opens it.
+    """
+    stem, _, suffix = restart.rpartition(".")
+    directory.mkdir(parents=True, exist_ok=True)
+    for source in sorted(Path(target).glob(f"{stem}*.{suffix}")):
+        link = directory / source.name
+        if link.exists():
+            link.unlink()
+        os.link(source, link)
+
+
+def _stamped_ocean(name, restart):
+    """Any MOM6-stamped state, which is one written at an interval."""
+    if not restart:
+        return False
+    stem = restart.rpartition(".")[0]
+    return bool(re.match(rf"{re.escape(stem)}_Y\d+_D\d+_S\d+", name))
 
 
 def _path(model, key):

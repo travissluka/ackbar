@@ -265,6 +265,27 @@ def test_the_window_is_the_cycles_own(var):
         "begin": "2018-04-15T12:00:00Z", "length": "P1DT0H0M0S"}
 
 
+def test_a_declared_window_is_the_one_the_analysis_gets(var):
+    """Still centred on the analysis time, which is where FGAT writes it."""
+    var["solver"]["window"] = {"type": "3d", "length": "PT6H"}
+    document = soca.var_config(var, 2, [observer()], background=Path("/rst/1"))
+    assert document["cost function"]["time window"] == {
+        "begin": "2018-04-15T21:00:00Z", "length": "P0DT6H0M0S"}
+
+
+def test_a_window_this_document_cannot_honour_is_refused_not_ignored(var):
+    """The forecast has already paid for it by the time this runs.
+
+    A 4D window makes the cycling forecast run half a window longer and write a
+    state per sub-window. Building 3D-Var over that is a 50 per cent model bill
+    for a trajectory nothing reads and an analysis nobody chose, and neither
+    leaves a mark in the output.
+    """
+    var["solver"]["window"] = {"type": "fgat"}
+    with pytest.raises(ModelError, match="3D-Var"):
+        soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+
+
 def test_a_solver_missing_a_value_says_so_rather_than_emitting_nothing(var):
     del var["solver"]["background error"]
     with pytest.raises(ModelError, match="background error"):

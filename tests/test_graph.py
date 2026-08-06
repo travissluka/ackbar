@@ -291,6 +291,77 @@ class TestCadence:
         with pytest.raises(GraphError, match="do not exist"):
             build_graph(config)
 
+    def test_a_slot_cadence_that_does_not_divide_the_window_is_refused(self, keys):
+        """The last state would land short of the end of the window.
+
+        The analysis then reads a trajectory that stops before its own last
+        observation, and every observation after that point is compared against
+        a background from the wrong hour. The model runs, the minimizer
+        converges, and nothing anywhere says so.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["forecast"]["slots"] = "PT5H"
+        with pytest.raises(GraphError, match="does not divide the window"):
+            build_graph(config)
+
+    def test_a_cadence_that_divides_it_builds(self, keys):
+        config = load("hybrid_om1deg", keys)
+        config["forecast"]["slots"] = "PT6H"
+        # No new task and no new edge: what is four-dimensional is the
+        # comparison, and the states are outputs of a forecast that already
+        # exists.
+        assert build_graph(config).nodes == build_graph(load("hybrid_om1deg", keys)).nodes
+
+    def test_a_cadence_that_misses_the_handoff_is_refused(self, keys):
+        """The set the next cycle starts from is one of the forecast's intervals.
+
+        A 12 hour window at a 4 hour cadence on a 10 hour cycle: the forecast
+        runs 16 hours, the window tiles from F04 to F16, and every state the
+        analysis reads exists. What does not is F10, where the next cycle
+        begins, because a window with an odd number of sub-windows puts its own
+        centre between two of them. Without this the cycle would hand forward
+        whatever happened to be in `RESTART/`.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["cycle"]["length"] = "PT10H"
+        config["solver"]["window"] = {"type": "4d", "length": "PT12H"}
+        config["forecast"] = {"slots": "PT4H"}
+        with pytest.raises(GraphError, match="does not divide the cycle length"):
+            build_graph(config)
+
+    def test_a_cadence_that_misses_the_start_of_the_window_is_refused(self, keys):
+        """Every state has to land on a multiple of the cadence from hour zero.
+
+        A 12 hour window on a 24 hour cycle starts at F18, and a cadence of 4
+        hours divides both the window and the cycle while never reaching it.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["solver"]["window"] = {"type": "fgat", "length": "PT12H"}
+        config["forecast"] = {"slots": "PT4H"}
+        with pytest.raises(GraphError, match="lead-in"):
+            build_graph(config)
+
+    def test_a_four_dimensional_window_with_no_states_to_read_is_refused(self, keys):
+        config = load("hybrid_om1deg", keys)
+        config["solver"]["window"] = {"type": "fgat"}
+        config.pop("forecast", None)
+        with pytest.raises(GraphError, match="forecast.slots is not set"):
+            build_graph(config)
+
+    def test_a_window_the_forecast_cannot_cover_is_refused(self, keys):
+        """A window of two cycles reaches back to the forecast's own first step.
+
+        Which is the one time nothing is written at: the state there is the set
+        the forecast was handed. It is also what keeps every state one analysis
+        reads inside one forecast, and therefore what lets `cleanup` reap on the
+        cycle before last.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["solver"]["window"] = {"type": "4d", "length": "PT48H"}
+        config["forecast"] = {"slots": "PT6H"}
+        with pytest.raises(GraphError, match="begins at or before the start"):
+            build_graph(config)
+
 
 class TestCrossCycle:
     def test_the_only_cross_cycle_edges_come_out_of_the_forecast(self, named_graph):

@@ -25,6 +25,11 @@ from .config.jobtime import member_dir
 #: name the same places without spelling them a second time.
 SUBDIRS = ("cfg", "ledger", "stats", "log", "rst", "bkg", "ana", "obs_out", "done")
 
+#: How a sub-window state's own valid time is spelled in its directory name.
+#: Compact and without colons, which survive a filesystem and then surprise
+#: everything that reads `host:path`.
+SLOT_DATE = "%Y%m%dT%H%M%SZ"
+
 
 @dataclass(frozen=True)
 class Paths:
@@ -62,6 +67,25 @@ class Paths:
 
     def member_out(self, kind, cycle, member):
         return self.cycle_out(kind, cycle) / member_dir(member)
+
+    def slot_out(self, cycle, member, when):
+        """One sub-window state of cycle *n*'s forecast, by its valid time.
+
+        A directory per slot holding the ocean restart under its ordinary name,
+        rather than one directory of date-stamped files. That is what lets
+        every consumer read `<somewhere>/MOM.res.nc`, so `model.restart.ocn`
+        keeps one spelling and a state is addressed the same way whether it
+        came from a slot, from a restart set or from the static root, whose
+        `ic/<domain>/<product>/<date>/` is laid out identically.
+
+        Under `bkg/<n>` because a directory here is named by the cycle that
+        *produced* it, like `rst/` and `ana/`. The valid time is in the leaf,
+        which is the whole of what distinguishes one slot from another, and it
+        is a time rather than v2's `f###` offset: an offset has to be
+        recomputed against a reference by everything that reads it, and every
+        one of those computations is a chance to be an hour out.
+        """
+        return self.member_out("bkg", cycle, member) / when.strftime(SLOT_DATE)
 
     def observer_list(self, cycle):
         """Which observers this cycle actually ran, and what they read.

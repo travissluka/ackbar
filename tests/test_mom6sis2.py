@@ -13,6 +13,7 @@ inside it, because that is the shape a regional domain has.
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -364,6 +365,35 @@ def test_the_fallback_date_is_this_cycle_and_not_the_case_authors(env):
     assert "1958,1,1" not in (run_dir / "input.nml").read_text()
 
 
+def test_a_forecast_with_no_slots_is_told_to_write_no_intermediate_restarts(env):
+    """Written as zeros rather than omitted.
+
+    A base case that set a `restart_interval` of its own would otherwise decide
+    how much a cycling forecast writes, and the states would land in a run
+    directory nothing sorts, which is the same class of surprise
+    `input_filename` was.
+    """
+    run_dir = staged(env)
+    assert "restart_interval = 0, 0, 0, 0, 0, 0" in (run_dir / "input.nml").read_text()
+
+
+def test_a_cadence_reaches_the_model_as_one_run_that_dumps_as_it_goes(env):
+    """The whole mechanism, in one namelist value.
+
+    `coupler_main` compares its clock against the next interval on each coupled
+    step and writes in place, so a window of states costs one model run and an
+    extra restart write per slot. The alternative shape, a chain of short
+    forecasts, pays a model initialization per slot and puts a restart handoff
+    between each pair of them.
+    """
+    config, _, _ = env
+    config["forecast"] = {"slots": "PT6H"}
+    run_dir = staged(env)
+    assert "restart_interval = 0, 0, 0, 6, 0, 0" in (run_dir / "input.nml").read_text()
+    # And the run is still the whole cycle, not a slot of it.
+    assert "hours = 24" in (run_dir / "input.nml").read_text()
+
+
 def test_namelist_groups_ackbar_does_not_own_come_through_untouched(env):
     run_dir = staged(env)
     text = (run_dir / "input.nml").read_text()
@@ -425,6 +455,220 @@ def test_a_model_that_exits_zero_having_written_no_restarts_still_fails(env, tmp
     written.mkdir(parents=True)
     with pytest.raises(mom6sis2.ModelError, match="wrote no"):
         mom6sis2.commit(written.parent, tmp_path / "rst")
+
+
+# --- the sub-window states ---------------------------------------------------
+
+#: The two sub-window times the fixture below writes a state at, and the names
+#: the two writers actually give them. Both are transcribed from a real
+#: `RESTART/` after a 12 hour gom_25km forecast with `restart_interval` set to
+#: three hours, because the point of this fixture is that the two conventions
+#: are genuinely unalike: MOM6 stamps its own restart with a year-day and a
+#: second of the day, and FMS appends `YYYYMMDD.HHMMSS` to everything else while
+#: `coupler_main` prepends it to its own clock files.
+SLOTS = {
+    datetime(2015, 1, 5, 4, tzinfo=timezone.utc):
+        ("MOM.res_Y2015_D005_S14400.nc", "20150105.040000"),
+    datetime(2015, 1, 5, 7, tzinfo=timezone.utc):
+        ("MOM.res_Y2015_D005_S25200.nc", "20150105.070000"),
+}
+
+
+def written_restart(directory):
+    """`RESTART/` as one run of the model leaves it with a cadence configured."""
+    restart_set(directory)
+    # Only written once an interval has actually passed, and it carries no
+    # stamp, so it travels with the set rather than with the states.
+    (directory / "coupler.intermediate.res").write_text("2015 1 5 13 0 0\n")
+    for state, stamp in SLOTS.values():
+        (directory / state).write_bytes(f"ocean {state}\n".encode())
+        (directory / f"ice_model.res.nc{stamp}.nc").write_bytes(b"ice\n")
+        (directory / f"{stamp}.coupler.res").write_text("2 (calendar type)\n")
+        (directory / f"{stamp}.coupler.intermediate.res").write_text("2015 1 5\n")
+    return directory
+
+
+def slot_map(tmp_path):
+    return {when: tmp_path / "bkg" / when.strftime("%Y%m%dT%H%M%SZ")
+            for when in SLOTS}
+
+
+def test_each_interval_state_lands_in_the_slot_directory_for_its_own_time(tmp_path):
+    written = written_restart(tmp_path / "run" / "RESTART")
+
+    mom6sis2.commit(written.parent, tmp_path / "rst",
+                    slots=slot_map(tmp_path), restart="MOM.res.nc")
+
+    # Named by the state's own valid time, and under the name every other state
+    # in the experiment has, so `model.restart.ocn` keeps one spelling. MOM6's
+    # own year-day stamp does not survive into the layout: it is how the file
+    # was found, not what it is called.
+    assert (tmp_path / "bkg" / "20150105T040000Z" / "MOM.res.nc").read_bytes() \
+        == b"ocean MOM.res_Y2015_D005_S14400.nc\n"
+    assert (tmp_path / "bkg" / "20150105T070000Z" / "MOM.res.nc").exists()
+
+
+def test_a_state_the_cycle_asked_for_and_did_not_get_stops_the_cycle(tmp_path):
+    """The failure `RESTART_CONTROL` at its default produces.
+
+    `ocean_model_restart` writes nothing unless a bit is set, and the default
+    bit overwrites `MOM.res.nc` rather than time-stamping it, so the model runs
+    the interval, reports writing an intermediate restart, and leaves no state.
+    Claiming each slot by the name it should have is what turns that into a
+    stopped cycle instead of a `bkg/` that is quietly empty.
+    """
+    written = written_restart(tmp_path / "run" / "RESTART")
+    (written / SLOTS[datetime(2015, 1, 5, 7, tzinfo=timezone.utc)][0]).unlink()
+
+    with pytest.raises(mom6sis2.ModelError, match="RESTART_CONTROL"):
+        mom6sis2.commit(written.parent, tmp_path / "rst",
+                        slots=slot_map(tmp_path), restart="MOM.res.nc")
+
+
+def test_the_restart_set_the_next_cycle_reads_holds_none_of_them(tmp_path):
+    written = written_restart(tmp_path / "run" / "RESTART")
+    target = tmp_path / "rst"
+
+    mom6sis2.commit(written.parent, target, slots=slot_map(tmp_path),
+                    restart="MOM.res.nc")
+
+    # A stamped file left here is inert to the model and is then carried
+    # forward by every cycle after it, one more each time, because the next
+    # forecast links the whole directory into its own INPUT. The unstamped
+    # `coupler.intermediate.res` is not one of those: `coupler_main` reads it
+    # back to know when the last interval fell.
+    assert sorted(p.name for p in target.iterdir()) == [
+        "MOM.res.nc", "coupler.intermediate.res", "coupler.res", "ice_model.res.nc"]
+
+
+def test_the_state_a_slot_keeps_is_the_ocean_and_nothing_else(tmp_path):
+    """The ice restart at an interval is written by SIS2 and read by nothing.
+
+    The fields metadata's ice section describes CICE's `cice.res.nc`, not SIS2's
+    `ice_model.res.nc`, so an ice file in a slot directory is a file SOCA cannot
+    open and disk that `cleanup` still has to carry.
+    """
+    written = written_restart(tmp_path / "run" / "RESTART")
+
+    mom6sis2.commit(written.parent, tmp_path / "rst",
+                    slots=slot_map(tmp_path), restart="MOM.res.nc")
+
+    assert sorted(p.name for p in
+                  (tmp_path / "bkg" / "20150105T040000Z").iterdir()) == ["MOM.res.nc"]
+
+
+def test_a_forecast_that_was_asked_for_no_slots_keeps_none_of_them(tmp_path):
+    """An extended forecast integrates past the window on its own cadence, so a
+    state it wrote at the same clock time is a different trajectory."""
+    written = written_restart(tmp_path / "run" / "RESTART")
+    target = tmp_path / "rst"
+
+    mom6sis2.commit(written.parent, target, restart="MOM.res.nc")
+
+    assert sorted(p.name for p in target.iterdir()) == [
+        "MOM.res.nc", "coupler.intermediate.res", "coupler.res", "ice_model.res.nc"]
+    assert not [p for p in written.iterdir()]
+
+
+def test_the_numbered_halves_of_a_split_restart_are_all_kept(tmp_path):
+    """MOM6 writes `MOM.res.nc`, `MOM.res_1.nc` and up when a restart carries
+    enough fields, and a slot missing one is a state SOCA reads as far as it
+    goes and then reports a field it could not find."""
+    when = datetime(2015, 1, 5, 4, tzinfo=timezone.utc)
+    written = tmp_path / "run" / "RESTART"
+    restart_set(written)
+    for part in ("", "_1", "_2"):
+        (written / f"MOM.res_Y2015_D005_S14400{part}.nc").write_bytes(b"ocean\n")
+
+    mom6sis2.commit(written.parent, tmp_path / "rst",
+                    slots={when: tmp_path / "one"}, restart="MOM.res.nc")
+
+    assert sorted(p.name for p in (tmp_path / "one").iterdir()) == [
+        "MOM.res.nc", "MOM.res_1.nc", "MOM.res_2.nc"]
+
+
+def test_slots_with_no_restart_name_is_an_error_rather_than_a_guess(tmp_path):
+    written = written_restart(tmp_path / "run" / "RESTART")
+    with pytest.raises(mom6sis2.ModelError, match="model.restart.ocn"):
+        mom6sis2.commit(written.parent, tmp_path / "rst", slots=slot_map(tmp_path))
+
+
+# --- the handoff, when the forecast overshoots -------------------------------
+#
+# A four-dimensional window makes the forecast run half a window past the next
+# analysis time, so the set the next cycle starts from is no longer the last
+# thing the run wrote. It is one of the intervals, and every one of those is a
+# complete set: `coupler_restart` writes the calendar and the model time at the
+# interval, FMS writes each component's restart under the same stamp, and MOM6
+# writes the ocean under its own. Integrating past a time does not change the
+# state at it.
+
+HANDOFF = datetime(2015, 1, 5, 7, tzinfo=timezone.utc)
+
+
+def test_the_next_cycle_starts_from_the_interval_and_not_the_end_of_the_run(tmp_path):
+    written = written_restart(tmp_path / "run" / "RESTART")
+    target = tmp_path / "rst"
+
+    mom6sis2.commit(written.parent, target, restart="MOM.res.nc", handoff=HANDOFF)
+
+    # The same four files a restart set always holds, under the same names, so
+    # nothing downstream can tell which one of the run's sets this was.
+    assert sorted(p.name for p in target.iterdir()) == [
+        "MOM.res.nc", "coupler.intermediate.res", "coupler.res", "ice_model.res.nc"]
+    # And it is the state at the handoff, not the one at the end of the run.
+    assert (target / "MOM.res.nc").read_bytes() \
+        == b"ocean MOM.res_Y2015_D005_S25200.nc\n"
+
+
+def test_the_sets_the_handoff_did_not_claim_are_discarded(tmp_path):
+    written = written_restart(tmp_path / "run" / "RESTART")
+
+    mom6sis2.commit(written.parent, tmp_path / "rst", restart="MOM.res.nc",
+                    handoff=HANDOFF)
+
+    # Including the unstamped one at the end of the run, which describes a time
+    # half a window past anything this experiment resumes from.
+    assert not [p for p in written.iterdir()]
+
+
+def test_the_slot_at_the_handoff_is_the_restart_sets_own_file(tmp_path):
+    """The handoff time is a sub-window time too: it is the centre of the next
+    cycle's window, and MOM6 writes the state there once.
+
+    A hard link rather than a copy, because it is the same state and a copy is
+    a gigabyte, and rather than a symlink because `bkg/` and `rst/` are reaped
+    independently and a link that outlives its target reads as a missing
+    background only when something opens it.
+    """
+    written = written_restart(tmp_path / "run" / "RESTART")
+    target = tmp_path / "rst"
+
+    mom6sis2.commit(written.parent, target, slots=slot_map(tmp_path),
+                    restart="MOM.res.nc", handoff=HANDOFF)
+
+    slot = tmp_path / "bkg" / "20150105T070000Z" / "MOM.res.nc"
+    assert slot.read_bytes() == (target / "MOM.res.nc").read_bytes()
+    assert slot.stat().st_ino == (target / "MOM.res.nc").stat().st_ino
+    assert not slot.is_symlink()
+    # The slots that are not the handoff are moved as they always were.
+    assert (tmp_path / "bkg" / "20150105T040000Z" / "MOM.res.nc").exists()
+
+
+def test_a_handoff_the_run_never_wrote_a_set_at_stops_the_cycle(tmp_path):
+    """`restart_interval` not dividing the cycle length produces exactly this.
+
+    The model runs, exits zero, and leaves a `RESTART/` full of sets at times
+    nothing asked about. Handing one of those forward would start the next cycle
+    from the wrong hour, which nothing downstream can detect: `coupler.res`
+    carries whatever date it carries and the model resumes happily.
+    """
+    written = written_restart(tmp_path / "run" / "RESTART")
+    missed = datetime(2015, 1, 5, 10, tzinfo=timezone.utc)
+
+    with pytest.raises(mom6sis2.ModelError, match="restart_interval"):
+        mom6sis2.commit(written.parent, tmp_path / "rst", restart="MOM.res.nc",
+                        handoff=missed)
 
 
 # --- launching ---------------------------------------------------------------

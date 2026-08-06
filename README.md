@@ -13,8 +13,9 @@ the real model, a free run cycles MOM6-SIS2, hofx evaluates observations against
 background, and every covariance cycles: 3DVar against a background error calibrated offline,
 LETKF over a member array carrying a real model, and a hybrid running both in one cycle with
 the ensemble recentred onto the deterministic analysis, each analysis written back into a
-restart set and integrated forward. 4D windows arrive with their phase. See
-[`docs/build-order.md`](docs/build-order.md).
+restart set and integrated forward. 4D windows are in progress: one forecast now dumps a state
+at every sub-window time and SOCA reads them, and the analysis documents that consume them are
+what is left. See [`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
 

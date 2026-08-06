@@ -154,8 +154,33 @@ properties:
         enum: [none, variational, letkf]
       covariance:
         enum: [static, ensemble, hybrid]
+      # The assimilation window: what the analysis compares against, and over
+      # how long. Centred on the analysis time, always, because that is where
+      # the analysis is written: `CostFctFGAT::doLinearize` saves the state at
+      # `timeWindow_.midpoint()` and `finishLinearize` replaces the background
+      # and the first guess with it, so an off-centre window would produce an
+      # analysis valid at a time no cycle starts from.
+      #
+      # `length` defaults to the cycle length, which is the case where
+      # consecutive windows tile the experiment with no gap and no overlap.
+      # A shorter one drops the observations that fall between windows; a
+      # longer one assimilates some of them twice. Both are real experiments
+      # and neither is the default.
+      #
+      # `type` is what reads the window rather than how long it is. `3d`
+      # compares every observation in it against one background at the centre;
+      # `fgat` and `4d` compare each against the sub-window state nearest its
+      # own time, which is what `forecast.slots` writes. Those two therefore
+      # require it, and make the forecast overshoot the next analysis time by
+      # half a window so that the states at the far end of that window exist.
       window:
-        enum: ['3d', fgat, '4d']
+        type: object
+        required: [type]
+        additionalProperties: false
+        properties:
+          type:
+            enum: ['3d', fgat, '4d']
+          length: { type: string, pattern: '^P' }
       # What the analysis solves for. Deliberately not `model.state variables`:
       # that list is what gets read out of the restart set and interpolated for
       # the observers, and the background needs fields the analysis does not
@@ -357,6 +382,34 @@ properties:
     type: object
     additionalProperties: false
     properties:
+      # How often the forecast writes a state *inside* its integration, as well
+      # as the restart set at the end of it. Absent is the ordinary case and
+      # means it writes only that set: a 3D analysis compares every observation
+      # in the window against one background, so there is nothing between the
+      # endpoints for anything to read.
+      #
+      # A 4D window is what needs them, and it needs one state per sub-window
+      # rather than a trajectory: `cost type: 3D-FGAT` reads them through a
+      # `pseudo model` and 4D-Ens-Var reads one list of them per member.
+      #
+      # The states written are the last window's worth of the forecast, ending
+      # at its last step, because that is the window the *next* cycle
+      # assimilates in. With `solver.window.type` of `fgat` or `4d` the
+      # forecast runs half a window past the next analysis time to produce
+      # them; without a window it runs the cycle length, and the states then
+      # span the cycle.
+      #
+      # They are MOM6's own intermediate restarts, `restart_interval` in
+      # `coupler_nml`, and deliberately not model history. SOCA reads a state
+      # through `fields metadata`, which maps every field to a *restart*
+      # variable (`Temp`, `Salt`, `ave_ssh`); a `diag_table` writes the
+      # diagnostic names (`temp`, `salt`, `SSH`), which are different strings
+      # for the same fields. History would therefore need a second fields
+      # metadata, and that file is the model layer's one contract with SOCA.
+      #
+      # Must divide the cycle length and the window, checked in
+      # `ackbar/graph/build.py`.
+      slots: { type: string, pattern: '^P' }
       extended:
         type: object
         required: [length, every]

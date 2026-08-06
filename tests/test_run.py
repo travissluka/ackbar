@@ -223,6 +223,53 @@ def test_cleanup_reaps_the_analysis_on_the_same_rule_as_the_restarts(env):
     assert paths.cycle_out("ana", 2).exists()
 
 
+def test_cleanup_reaps_the_sub_window_states_too(env):
+    """`bkg/` grows faster than either of the other two.
+
+    A slot state is a full 3D field, so a six slot window is six times the
+    per-cycle output of the restarts it sits beside. It is safe under the same
+    proof: those are `forecast(drop)`'s states, read by `da(drop + 1)`, and
+    `rst/<keep>` existing means that analysis and the forecast after it are both
+    done with them.
+    """
+    _, _, paths = env
+    for cycle in (1, 2):
+        _complete_cycle(env, cycle)
+        for member in (1, 2):
+            for hour in ("20180415T060000Z", "20180415T120000Z"):
+                slot = paths.member_out("bkg", cycle, member) / hour / "MOM.res.nc"
+                slot.parent.mkdir(parents=True, exist_ok=True)
+                slot.write_bytes(b"x")
+
+    do(env, 3, "cleanup")
+    assert not paths.cycle_out("bkg", 1).exists()
+    assert paths.cycle_out("bkg", 2).exists()
+
+
+def test_a_forecast_declares_every_state_it_was_asked_to_write(env):
+    """The states are declared by file rather than by directory.
+
+    A slot directory that exists proves nothing about what is in it, and the
+    skip rule and `ackbar validate` both read this list: an output declared as a
+    directory is a cycle that skips itself after writing nothing.
+    """
+    config, _, paths = env
+    config["forecast"] = {"slots": "PT6H"}
+    _, outputs = run.task_io(config, paths, "forecast", 2, 1)
+
+    assert len(outputs) == 5           # the restart set, plus four slots
+    assert outputs[0].name == "restart.stub"
+    assert [p.parent.name for p in outputs[1:]] == [
+        "20180416T060000Z", "20180416T120000Z",
+        "20180416T180000Z", "20180417T000000Z"]
+
+
+def test_a_forecast_that_was_asked_for_no_states_declares_none(env):
+    config, _, paths = env
+    _, outputs = run.task_io(config, paths, "forecast", 2, 1)
+    assert len(outputs) == 1
+
+
 def test_cleanup_keeps_everything_when_the_proof_is_incomplete(env):
     # Keyed off artifacts rather than job state, so a retried cleanup cannot
     # conclude that a resubmitted consumer is gone and delete what it is about

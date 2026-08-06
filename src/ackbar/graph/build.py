@@ -6,8 +6,10 @@ and has to get the same answer, so nothing here may consult the clock, the
 filesystem, or the scheduler.
 """
 
-from ..config.jobtime import cycle_length, cycle_time
-from ..duration import parse_duration
+from ..config.jobtime import (FOUR_D, cycle_length, cycle_time,
+                              forecast_overshoot, slot_length, window_length,
+                              window_type)
+from ..duration import format_duration, parse_duration
 from .model import AFTERCORR, Graph, GraphError, Node
 from .tasks import (
     CROSS_CYCLE,
@@ -93,6 +95,7 @@ def extended_cycles(config, count):
 def build_graph(config):
     """The whole experiment: every cycle, every task, every edge."""
     _check_ensemble_source(config)
+    _check_window(config)
     count = config["cycle"]["count"]
     canonical = member_set(config)
     graph = Graph(
@@ -182,6 +185,85 @@ def _check_ensemble_source(config):
             f"filter beside the variational analysis, and solver states no "
             f"{' and no '.join(missing)}. Inherit a layer that configures one."
         )
+
+
+def _check_window(config):
+    """What the window, the cycle and the sub-window cadence imply about each other.
+
+    Checked here, with the rest of what one subtree implies about another,
+    rather than in the schema, which can say `forecast.slots` is a duration and
+    not that it is *this* experiment's duration.
+
+    Three relations, and none of them is a rounding question. FMS writes a state
+    each time its clock *reaches* the next interval, counting from the start of
+    the run, so any time the workflow names that is not a whole number of
+    cadences in is a file the model never wrote. Two of the three are the same
+    invariant soca-science checked, `(DA_TIMESLOTS-1)*DA_SUBWINDOW_LEN ==
+    DA_WINDOW_LEN` in its `cycle.sh`; the third is ACKBAR's, and it exists
+    because the forecast here is one run rather than a chain of them, so the
+    state the next cycle resumes from is an interval of this one.
+
+    A window that is not shorter than two cycles is refused outright: its own
+    start would fall at or before the forecast's, and nothing is written at hour
+    zero. That is also what keeps every state one cycle's analysis reads inside
+    one forecast, which is what lets `cleanup` reap on the cycle before last.
+    """
+    step = slot_length(config)
+    window = window_length(config)
+    cycle = cycle_length(config)
+    overshoot = forecast_overshoot(config)
+
+    if window.total_seconds() <= 0:
+        raise GraphError("solver.window.length must be a positive duration")
+    if window_type(config) in FOUR_D and step is None:
+        raise GraphError(
+            f"solver.window.type is {window_type(config)!r}, which compares each "
+            f"observation against the state nearest its own time, and "
+            f"forecast.slots is not set, so the forecast writes no states for it "
+            f"to read. Set a sub-window cadence that divides the window "
+            f"({_spell(window)})."
+        )
+    if step is None:
+        return
+    if step.total_seconds() <= 0:
+        raise GraphError("forecast.slots must be a positive duration")
+
+    # The window has to fit inside the forecast that covers it, and a window
+    # whose analysis reads a state *at* its own start needs it to fit with a
+    # cadence to spare: nothing is written at hour zero, so the state there is
+    # the set the forecast was handed rather than one it produced. A free
+    # running forecast reads nothing and is allowed the flush fit, which is what
+    # `W == C` with no overshoot is.
+    lead = cycle + overshoot - window
+    if lead.total_seconds() < 0 or (overshoot and not lead.total_seconds()):
+        raise GraphError(
+            f"the window ({_spell(window)}) begins at or before the start of the "
+            f"forecast that has to cover it, which runs {_spell(cycle)} plus "
+            f"{_spell(overshoot)} of overshoot. The state at hour zero is the "
+            f"set that forecast was handed, not one it wrote. Shorten "
+            f"solver.window.length or lengthen the cycle."
+        )
+
+    for name, quantity, why in (
+        ("the window", window,
+         "so the sub-window states would not tile it and the analysis would "
+         "read a trajectory that stops before its own last observation"),
+        ("the cycle length", cycle,
+         "so the forecast writes nothing at the time the next cycle starts "
+         "from"),
+        ("the forecast's lead-in to the window", lead,
+         "so the window would begin between two of the forecast's writes"),
+    ):
+        if quantity.total_seconds() % step.total_seconds():
+            raise GraphError(
+                f"forecast.slots ({config['forecast']['slots']}) does not divide "
+                f"{name} ({_spell(quantity)}), {why}"
+            )
+
+
+def _spell(delta):
+    """A duration as the configuration would have written it."""
+    return format_duration(delta)
 
 
 def _runs_in_cycle(name, cycle, count, long_forecast):

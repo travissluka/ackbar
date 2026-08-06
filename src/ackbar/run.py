@@ -27,7 +27,8 @@ from pathlib import Path
 
 from . import (ensemble, ledger, mom6sis2, observations, persistence, soca,
                writeback)
-from .config.jobtime import cycle_time
+from .config.jobtime import (cycle_time, forecast_overshoot, handoff_time,
+                             slot_times)
 from .graph.build import member_set
 from .graph.tasks import ensemble_covariance, ensemble_source
 
@@ -105,7 +106,12 @@ def stub_io(config, paths, task, cycle, member):
                [ana(cycle, member, "restart.stub")]
     if task == "forecast":
         start = restart_source(config, paths, cycle, member) / "restart.stub"
-        return [start], [rst(cycle, member)]
+        # The sub-window states as well, so that tier 2 exercises `bkg/` and
+        # its reaping on the scheduler rather than leaving both to first run
+        # under the real model, where a cycle costs a hundred times as much.
+        slots = [paths.slot_out(cycle, member, when) / "restart.stub"
+                 for when in slot_times(config, cycle)]
+        return [start], [rst(cycle, member)] + slots
     if task == "forecast.ext":
         start = restart_source(config, paths, cycle, member) / "restart.stub"
         # Where a long forecast's output really belongs is a phase 4 question.
@@ -291,12 +297,29 @@ def restart_stamp(config):
     return mom6sis2.STAMP if config["model"]["name"] in REAL_STATE else "restart.stub"
 
 
+def slot_states(config, paths, cycle, member):
+    """The sub-window states this cycle's forecast is asked to write.
+
+    Empty unless `forecast.slots` is set. Each is named by its own valid time
+    and holds the ocean restart under the name every other state here has, so
+    it is declared exactly the way the restart set is: by the file, not by the
+    directory, since a directory that exists proves nothing about what is in it.
+    """
+    ocean = (config["model"].get("restart") or {}).get("ocn")
+    if not ocean:
+        return []
+    return [paths.slot_out(cycle, member, when) / ocean
+            for when in slot_times(config, cycle)]
+
+
 def task_io(config, paths, task, cycle, member):
     """(inputs, outputs) for one job, whatever is running it."""
     if real_model(config, task):
         stamp = restart_stamp(config)
         source = restart_source(config, paths, cycle, member)
-        return [source / stamp], [paths.member_out("rst", cycle, member) / stamp]
+        return [source / stamp], \
+               [paths.member_out("rst", cycle, member) / stamp] \
+               + slot_states(config, paths, cycle, member)
     if real_analysis(config, task):
         return _analysis_io(config, paths, cycle, task)
     if real_recenter(config, task):
@@ -738,13 +761,28 @@ def _forecast(config, site, paths, cycle, task, member):
     """
     source = restart_source(config, paths, cycle, member)
     target = paths.member_out("rst", cycle, member)
+    # Only the cycling forecast. An extended forecast integrates past the
+    # window on its own cadence, so a state it wrote at the same clock time is
+    # a different trajectory, and putting it in the same directory would give
+    # the analysis two answers for one slot.
+    slots, handoff = None, None
+    if task == "forecast":
+        slots = {when: paths.slot_out(cycle, member, when)
+                 for when in slot_times(config, cycle)} or None
+        # Only where the window makes the forecast overshoot. Without one the
+        # set the next cycle starts from is the last thing the run wrote, and
+        # naming a time for it would send `commit` looking for an interval at
+        # an hour the model had no reason to write one.
+        if forecast_overshoot(config):
+            handoff = handoff_time(config, cycle)
     try:
         if config["model"]["name"] == "persistence":
             persistence.forecast(config, paths, cycle, task, member,
                                  source=source, target=target)
         else:
             mom6sis2.forecast(config, site, paths, cycle, task, member,
-                              source=source, target=target)
+                              source=source, target=target, slots=slots,
+                              handoff=handoff)
     except mom6sis2.ModelError as error:
         raise TaskError(f"{cycle}.{task} member {member}: {error}") from error
 
@@ -987,13 +1025,24 @@ def _cleanup(config, paths, cycle):
     the earliest set nothing can need is n-2, and it goes only once n-1 is
     complete for every member.
 
-    Both restart directories go, not just `rst/`. In a DA run the forecast
+    n-2 and not "however far back the longest window reaches", because it
+    cannot reach further. Every state a cycle's analysis reads comes out of one
+    forecast, including the sub-window states of a 4D window: that forecast runs
+    from the cycle before last and overshoots by half a window, and
+    `graph.build._check_window` refuses a window that would need it to start
+    earlier still. So the horizon here is a property of the cycle rather than of
+    the solver, and stays one setting the moment a window grows.
+
+    All three state directories go, not just `rst/`. In a DA run the forecast
     starts from `ana/<n>/mem###`, which `writeback` fills with a whole restart
     set per member per cycle, so `ana/` grows at the same rate as `rst/` and for
-    the same reason. Reaping one and not the other is how an experiment that
-    cycles happily for a week fills the disk in the second week. `obs_out/` is
-    deliberately not here: the departures are the experiment's product rather
-    than an intermediate, and they are kilobytes where these are gigabytes.
+    the same reason. `bkg/` grows *faster* than either once `forecast.slots` is
+    set: it is a full 3D state per slot per member per cycle, so a six slot
+    window is six times the per-cycle output of the restarts it sits beside.
+    Reaping one and not the others is how an experiment that cycles happily for
+    a week fills the disk in the second week. `obs_out/` is deliberately not
+    here: the departures are the experiment's product rather than an
+    intermediate, and they are kilobytes where these are gigabytes.
     """
     members = member_set(config)
     keep = cycle - 1
@@ -1011,7 +1060,11 @@ def _cleanup(config, paths, cycle):
 
     # `ana/<drop>` is safe under the same proof: it is what `forecast(drop)`
     # started from, and `rst/<drop>` existing is what says that forecast ran.
-    for kind in ("rst", "ana"):
+    # `bkg/<drop>` is safe under it too, and this is the one that needs saying:
+    # those are the slot states of `forecast(drop)`, read by `da(drop + 1)`,
+    # and `rst/<keep>` existing means that analysis and the forecast after it
+    # are both done with them.
+    for kind in ("rst", "ana", "bkg"):
         target = paths.cycle_out(kind, drop)
         if target.exists():
             shutil.rmtree(target)

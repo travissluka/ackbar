@@ -21,7 +21,7 @@ JEDI parses.
 
 import re
 import zlib
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..duration import ISO_INSTANT, format_duration, parse_duration, parse_instant
 
@@ -40,11 +40,15 @@ SYMBOLS = (
     ("forecast_begin", "start of this cycle's forecast, the analysis time"),
     ("forecast_end", "end of this cycle's forecast"),
     ("forecast_length", "forecast length, ISO 8601"),
+    ("handoff", "valid time of the restart set the next cycle starts from"),
     ("member", "ensemble member index; the control is 0"),
     ("member_dir", "the member's directory name, mem000 and up"),
     ("seed", "random seed, derived from experiment, cycle and member"),
     ("mom6_current_date", "MOM6 input.nml date list, y,m,d,h,m,s"),
-    ("mom6_hours", "forecast length in whole hours, for MOM6"),
+    ("mom6_hours", "whole hours of the forecast, for MOM6"),
+    ("mom6_minutes", "whole minutes of the forecast past mom6_hours"),
+    ("mom6_seconds", "whole seconds of the forecast past mom6_minutes"),
+    ("mom6_restart_interval", "MOM6 intermediate restart cadence, y,m,d,h,m,s"),
 )
 
 SYMBOL_NAMES = tuple(name for name, _ in SYMBOLS)
@@ -71,15 +75,144 @@ def cycle_time(config, cycle):
     return parse_instant(config["cycle"]["start"]) + (cycle - 1) * cycle_length(config)
 
 
+#: Window types whose analysis reads a *trajectory* rather than one state, and
+#: which therefore need the forecast to overshoot. `3d` compares every
+#: observation in the window against a single background at the centre, so it
+#: needs nothing the cycle does not already produce.
+FOUR_D = ("fgat", "4d")
+
+
+def window_type(config):
+    """`3d`, `fgat` or `4d`, and `3d` for an experiment with no solver."""
+    window = (config.get("solver") or {}).get("window") or {}
+    return window.get("type", "3d")
+
+
+def window_length(config):
+    """The assimilation window. The cycle length unless something says otherwise.
+
+    Equal to the cycle is the case where consecutive windows tile the
+    experiment with no gap and no overlap, which is why it is the default and
+    why soca-science computed it the same way (`DA_WINDOW_LEN` defaulting to
+    `DA_CYCLE_LEN` in its `cycle.sh`).
+    """
+    declared = ((config.get("solver") or {}).get("window") or {}).get("length")
+    return parse_duration(declared) if declared else cycle_length(config)
+
+
 def window_bounds(config, cycle):
     """The assimilation window, centred on the analysis time.
 
-    Centred, and as long as the cycle, so that consecutive windows tile the
-    experiment without gap or overlap. soca-science computed it the same way.
+    Centred, always. The analysis is written at the window's midpoint, not at
+    its start: `CostFctFGAT::doLinearize` saves the state at
+    `timeWindow_.midpoint()` and `finishLinearize` replaces the background and
+    the first guess with it. A window centred anywhere else would therefore
+    produce an analysis valid at a time no cycle starts from.
     """
-    length = cycle_length(config)
+    length = window_length(config)
     middle = cycle_time(config, cycle)
     return middle - length / 2, middle + length / 2
+
+
+def forecast_overshoot(config):
+    """How far past the next analysis time the cycling forecast integrates.
+
+    Zero for a 3D window, which reads one background at the next analysis time
+    and nothing after it. Half a window for FGAT and 4D, which read the whole
+    of the next cycle's window, and the far half of that window lies *after*
+    the time the next cycle is centred on. Nothing else can produce those
+    states: the next cycle's own forecast starts from the analysis, so a state
+    it wrote at the same clock time is a different trajectory.
+
+    This is the cost of a 4D window and it is not avoidable by moving the
+    window, only by shortening it: the model runs `1 + W/2C` times as long as
+    the cycling itself, which at the default `W == C` is one and a half.
+    """
+    if window_type(config) not in FOUR_D:
+        return timedelta(0)
+    return window_length(config) / 2
+
+
+def forecast_length(config):
+    """How long one cycling forecast integrates for.
+
+    The cycle length, so that the next cycle starts where this one is centred,
+    plus whatever overshoot the window asks for. **One** model run covers the
+    whole of it: FMS dumps the intermediate states in place as its clock
+    reaches them, so the overshoot costs extra integration and nothing else, no
+    chained short forecasts and no handoff between them to get wrong.
+    """
+    return cycle_length(config) + forecast_overshoot(config)
+
+
+def slot_length(config):
+    """How often the forecast writes a state inside its integration, or None.
+
+    None is the ordinary case and means it writes one restart set, at the end,
+    which is the whole of what the next cycle and a 3D analysis need. A 4D
+    window is what asks for more. See `forecast.slots` in the schema.
+    """
+    declared = (config.get("forecast") or {}).get("slots")
+    return parse_duration(declared) if declared else None
+
+
+def slot_times(config, cycle):
+    """The valid times cycle *n*'s forecast writes a sub-window state at.
+
+    The last window's worth of the forecast, ending on its last step. That is
+    the window the *next* cycle assimilates in: with an overshoot of `W/2` the
+    forecast ends at `T(n+1) + W/2`, so the series runs from `T(n+1) - W/2`,
+    which is where FGAT reads its background and where 4D-Ens-Var's first
+    sub-window sits. With no overshoot the window is the cycle and the series
+    spans it.
+
+    Computed rather than discovered, because this is what declares the task's
+    outputs *before* it has run: `ackbar validate` stats them and the skip rule
+    asks whether they are all there.
+
+    The forecast's own start time is never among them. FMS writes an
+    intermediate restart when its clock *reaches* an interval, so nothing is
+    written at hour zero, and the state there is the restart set the forecast
+    was handed rather than one it produced. That is why the series begins one
+    cadence in when the window is the whole forecast, which is the free-running
+    case, and at the window's own start otherwise.
+    `graph.build._check_window` is what refuses a window that reaches further
+    back than that.
+    """
+    step = slot_length(config)
+    if not step:
+        return ()
+    run = forecast_length(config)
+    first = max(step, run - window_length(config))
+    begin = cycle_time(config, cycle)
+    count = int((run - first) / step) + 1
+    return tuple(begin + first + index * step for index in range(count))
+
+
+def handoff_time(config, cycle):
+    """The valid time of the restart set cycle *n* hands to cycle *n+1*.
+
+    The next cycle's analysis time, which is the forecast's own last step only
+    when the window asks for no overshoot. With one, the set the next cycle
+    starts from is written *during* the run rather than at the end of it, and
+    `mom6sis2.commit` assembles it from the time-stamped files of that
+    interval. Integrating past a time does not change the state at it.
+    """
+    return cycle_time(config, cycle) + cycle_length(config)
+
+
+def mom6_interval(delta):
+    """A cadence as MOM6's `restart_interval`: year, month, day, hour, min, sec.
+
+    All zeros when nothing asked for one, which is what `coupler_main` reads as
+    "write no intermediate restarts". The first two are always zero because
+    `parse_duration` refuses months and years.
+    """
+    total = int(delta.total_seconds()) if delta else 0
+    days, rest = divmod(total, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, seconds = divmod(rest, 60)
+    return f"0, 0, {days}, {hours}, {minutes}, {seconds}"
 
 
 def seed_for(config, cycle, member):
@@ -99,6 +232,9 @@ def symbols(config, cycle, member=0):
     length = cycle_length(config)
     now = cycle_time(config, cycle)
     begin, end = window_bounds(config, cycle)
+    run = forecast_length(config)
+    hours, rest = divmod(int(run.total_seconds()), 3600)
+    minutes, seconds = divmod(rest, 60)
     return {
         "cycle": cycle,
         "current_cycle": now,
@@ -106,15 +242,23 @@ def symbols(config, cycle, member=0):
         "next_cycle": now + length,
         "window_begin": begin,
         "window_end": end,
-        "window_length": format_duration(length),
+        "window_length": format_duration(window_length(config)),
         "forecast_begin": now,
-        "forecast_end": now + length,
-        "forecast_length": format_duration(length),
+        "forecast_end": now + run,
+        "forecast_length": format_duration(run),
+        "handoff": handoff_time(config, cycle),
         "member": member,
         "member_dir": member_dir(member),
         "seed": seed_for(config, cycle, member),
         "mom6_current_date": "{0.year},{0.month},{0.day},{0.hour},{0.minute},{0.second}".format(now),
-        "mom6_hours": int(length.total_seconds() // 3600),
+        # Split three ways rather than truncated to hours. A half window of
+        # overshoot need not be a whole number of them, and `coupler_nml` reads
+        # each field separately, so an hours-only run length silently shortens
+        # the forecast and every state it was asked for lands early.
+        "mom6_hours": hours,
+        "mom6_minutes": minutes,
+        "mom6_seconds": seconds,
+        "mom6_restart_interval": mom6_interval(slot_length(config)),
     }
 
 

@@ -1,6 +1,14 @@
 # 3DVar and 4DVar differ by one configuration value and, for now, by nothing in
-# the graph. Sub-window forecast slots arrive in phase 9; pinning the shape now
-# means that change shows up as a golden diff rather than as a surprise.
+# the graph. What they do not share is the arithmetic: this experiment exists to
+# pin it.
+#
+# A 24 hour cycle with the default 24 hour window, sub-divided every 6 hours.
+# The window is centred on the analysis time, so it runs from 12 hours before
+# the next cycle to 12 hours after it, and the forecast therefore integrates 36
+# hours to cover its far end: one and a half times the model of the cycling
+# itself, which is what a centred 4D window costs and is not avoidable by moving
+# the window. The five states land at F12, F18, F24, F30 and F36, and the set
+# the next cycle starts from is the one at F24 rather than the last one written.
 inherit:
   - domain/om_1deg
   - model/mom6sis2
@@ -10,10 +18,13 @@ inherit:
 experiment:
   name: fourd_om1deg
 solver:
-  window: '4d'
+  window:
+    type: '4d'
 cycle:
   start: '2018-04-15T00:00:00Z'
   length: PT24H
   count: 3
+forecast:
+  slots: PT6H
 vars:
   obs_dir: /archive/obs/osse_2018
