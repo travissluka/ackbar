@@ -13,9 +13,16 @@
 # experiment. An ensemble maintained this way carries no observation
 # information of its own and does carry flow dependence, which is most of what
 # a hybrid wants from it and costs one job a cycle instead of two.
+#
+# `model/persistence`, for the reason `tier3_hybrid` gives at length: what this
+# experiment claims is that the solve was handed a covariance with no static
+# component and that a free ensemble survives a recentring, and neither claim is
+# about an integration. The restart sets the recentring reads are still real
+# MOM6 restart sets, which is the part of that path that matters here.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
+  - model/persistence
   - da/variational
   - da/hybrid
   - da/envar
@@ -23,7 +30,7 @@ inherit:
   - obs/sst_noaa19
 experiment:
   name: tier3_envar
-  description: phase 8, ensemble covariance cycling at gom_25km
+  description: phase 8, ensemble covariance cycling at gom_25km without the model
 cycle:
   start: '2015-01-05T01:00:00Z'
   length: PT12H

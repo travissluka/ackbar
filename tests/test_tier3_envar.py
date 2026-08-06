@@ -14,6 +14,11 @@ show.
   backgrounds instead: a different reader, a different variable set, and a path
   no other experiment takes.
 
+Runs on `model/persistence`. Both claims are about what SOCA was handed and what
+it wrote, and neither is about an integration; the restart sets the recentring
+reads are real MOM6 restart sets either way, which is the part that matters.
+`test_tier3_letkf` is where an ensemble is asked to survive being forecast.
+
     ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3_envar.py
 """
 
@@ -32,7 +37,6 @@ from ackbar.cli import main
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
-from test_tier3 import initial_energy
 from test_tier3_hybrid import field, product, var_document
 from test_tier3_var import DOMAIN, STATIC, initial_condition
 
@@ -43,7 +47,10 @@ NAME = "tier3_envar"
 LAST = 3
 MEMBERS = (1, 2, 3, 4, 5, 6)
 CONTROL = 0
-QUIET = 3600
+
+#: One analysis, one recentring and seven persistence handoffs a cycle. Generous
+#: against a queue that is busy rather than against the work itself.
+QUIET = 900
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -160,17 +167,13 @@ def test_the_recentring_read_the_backgrounds_and_still_centred_the_ensemble(run)
 def test_the_free_ensemble_kept_its_spread(run):
     """Nothing in this cycle contracts the ensemble, so nothing should shrink it.
 
-    A filter reduces spread and inflates it back; here there is neither, and the
-    members' own forecasts are the only thing acting on it. Spread that collapses
-    anyway means the recentring is overwriting members rather than moving them.
+    A filter reduces spread and inflates it back; here there is neither, so the
+    recentring is the only thing acting on the ensemble at all. Spread that
+    collapses anyway means the recentring is overwriting members rather than
+    moving them, which is the failure that looks most like success.
     """
     import numpy
 
     spread = numpy.std([field(product(run, LAST, member, "rcnt"))
                         for member in MEMBERS], axis=0)
     assert numpy.mean(spread[spread > 0]) > 1e-4
-
-
-def test_every_member_resumed_from_its_own_analysed_restart(run):
-    for member in (CONTROL,) + MEMBERS:
-        assert initial_energy(run, LAST, member) > 1e-12

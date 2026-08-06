@@ -1,4 +1,5 @@
-# Tier 3: hybrid covariance cycling at gom_25km. The phase 8 milestone.
+# Tier 3: hybrid covariance cycling at gom_25km, with the model out of the loop.
+# The phase 8 milestone.
 #
 # `tier3_var` and `tier3_letkf` in one cycle: the same domain, dates, initial
 # condition, ensemble and observation archive, with the deterministic analysis
@@ -18,16 +19,28 @@
 # ensemble component of this covariance is small, noisy and rank six. What this
 # experiment demonstrates is that the cycle runs and that each piece does what
 # it says; the weights are not tuned and are not claimed to be.
+#
+# `model/persistence`, which is what lets this run in minutes rather than
+# competing with the OSSE for the machine. Every claim below is about what the
+# SOCA applications did: which covariance the solve was handed, that two
+# analyses over one observer list did not overwrite each other, and that the
+# recentring moved the ensemble's centre without touching its perturbations.
+# Those are real applications reading and writing real restart sets, and not one
+# of them is about an integration. Twenty-one MOM6 forecasts to re-prove what
+# `tier3_var` and `tier3_letkf` already prove was the cost tier 3 could least
+# afford. What is given up is the ensemble evolving between cycles, which is
+# `tier3_letkf`'s claim and is asserted there.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
+  - model/persistence
   - da/variational
   - da/hybrid
   - obs/adt_3a
   - obs/sst_noaa19
 experiment:
   name: tier3_hybrid
-  description: phase 8, hybrid covariance cycling at gom_25km
+  description: phase 8, hybrid covariance cycling at gom_25km without the model
 cycle:
   start: '2015-01-05T01:00:00Z'
   length: PT12H
@@ -56,5 +69,5 @@ cleanup:
   # only the last cycle's, and the spread and increment assertions below compare
   # one cycle against another. The rule itself is pinned at tier 0
   # (`test_cleanup_reaps_the_analysis_a_cycle_before_the_restarts`); what this
-  # buys is a real run with something left to compare.
+  # buys is a run with something left to compare.
   keep_cycles: 2

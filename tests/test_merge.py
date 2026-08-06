@@ -37,6 +37,47 @@ def test_scalars_replace_including_across_types():
     assert merge({"a": 5}, {"a": None}) == {"a": None}
 
 
+class TestRemovingADictKey:
+    """The only way a layer can make an inherited key *absent*.
+
+    `da/eakf` is what this is for. It inherits `ensemble distribution` as
+    `{name: Halo, halo size: 500000}` and needs a round robin decomposition with
+    no halo at all; dicts merge, so naming the distribution alone leaves the
+    halo size behind, and the application is then handed a document describing a
+    decomposition nothing is using.
+    """
+
+    def test_the_key_is_gone_rather_than_null(self):
+        # Absent, not None. The document is read by eckit, where a null is a
+        # value and not the absence of one.
+        base = {"d": {"name": "Halo", "halo size": 500000}}
+        over = {"d": {"name": "RoundRobin", "halo size": "$remove"}}
+        assert merge(base, over) == {"d": {"name": "RoundRobin"}}
+
+    def test_it_removes_a_whole_subtree_not_only_a_scalar(self):
+        base = {"error": {"model": "SABER", "localization": {"method": "Rossby"}}}
+        over = {"error": {"localization": "$remove"}}
+        assert merge(base, over) == {"error": {"model": "SABER"}}
+
+    def test_removing_something_that_is_not_inherited_is_an_error(self):
+        # Same rule as the keyed-list form, and for the same reason: a removal
+        # that names nothing is a typo or a leftover from a base layer that has
+        # already dropped the key, and doing nothing quietly is how a layer ends
+        # up not doing what it says.
+        with pytest.raises(MergeError) as caught:
+            merge({"d": {"name": "Halo"}}, {"d": {"halo sze": "$remove"}})
+        assert "halo sze" in str(caught.value)
+        assert caught.value.path == ("d", "halo sze")
+
+    def test_a_key_whose_value_merely_looks_like_the_marker_is_untouched(self):
+        # The marker is the exact string. Nothing else is a removal, including a
+        # dict that happens to contain the word.
+        base = {"a": {"x": 1}}
+        over = {"a": {"x": "$removed", "y": {"$remove": True}}}
+        assert merge(base, over) == \
+            {"a": {"x": "$removed", "y": {"$remove": True}}}
+
+
 class TestKeyedLists:
     def test_matching_element_merges_rather_than_replacing(self):
         base = {"observations": [

@@ -448,6 +448,56 @@ def test_the_shipped_letkf_layers_produce_a_document_soca_would_accept(tmp_path)
     assert space.get("distribution", {}).get("name", "RoundRobin")
 
 
+def test_the_shipped_eakf_layers_change_the_solver_and_nothing_structural():
+    """`da/eakf` over `da/letkf`, which is three keys and has to be exactly three.
+
+    EAKF runs through `soca_letkf.x`, the same executable as the LETKF, so the
+    document is the same document with a different solver in it. What the layer
+    also has to do is drop the two things a sequential solver cannot use, and
+    both are silent failures: a halo is a decomposition an EAKF does not solve
+    in, and SOCA's own `eakf.yml` records that Rossby localization does not work
+    with it at all. An experiment that switched only the solver would run.
+    """
+    _, merged = shipped("eakf_om1deg.yaml")
+    document = yaml.safe_load(yaml.safe_dump(soca.letkf_config(
+        merged, 1, [observer()], backgrounds=Path("/out/e/rst/0"),
+        members=(1, 2, 3))))
+
+    assert document["local ensemble DA"]["solver"] == "EAKF"
+    # Inherited unchanged, and deliberately: retuning inflation per solver is
+    # what makes the two experiments incomparable.
+    assert document["local ensemble DA"]["inflation"] == {"rtps": 0.95}
+
+    # No halo, and no halo *size* either. Dicts merge, so the layer removes the
+    # key rather than restating the distribution; a round robin carrying a halo
+    # size is a document describing a decomposition nothing uses.
+    space = document["observations"]["observers"][0]["obs space"]
+    assert space["distribution"] == {"name": "RoundRobin"}
+
+    localizations = merged["observations"][0]["obs localizations"]
+    assert [entry["localization method"] for entry in localizations] == \
+        ["Horizontal Gaspari-Cohn"]
+
+
+def test_the_two_ensemble_solvers_differ_only_where_they_have_to():
+    """The pair is what makes them comparable, so the diff is asserted.
+
+    A layer that also moved the analysis variables, the background variables or
+    the inflation would produce two experiments whose difference is not the
+    solver, and the comparison they exist for would not mean anything.
+    """
+    _, letkf = shipped("letkf_om1deg.yaml")
+    _, eakf = shipped("eakf_om1deg.yaml")
+
+    differ = {key for key in set(letkf["solver"]) | set(eakf["solver"])
+              if letkf["solver"].get(key) != eakf["solver"].get(key)}
+    assert differ == {"local ensemble DA", "ensemble distribution"}
+    assert letkf["solver"]["analysis variables"] == \
+        eakf["solver"]["analysis variables"]
+    assert letkf["solver"]["background variables"] == \
+        eakf["solver"]["background variables"]
+
+
 # --- the run directory -------------------------------------------------------
 
 def test_the_run_directory_gets_the_cases_own_grid_files(config, paths, tmp_path):

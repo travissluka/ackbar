@@ -1,0 +1,48 @@
+# Tier 3: the sequential ensemble filter, with the model out of the loop.
+#
+# `tier3_letkf` with `da/eakf` inherited after it and nothing else changed, so
+# the two are comparable by construction. The graph is identical, which is
+# pinned at tier 1 (`test_the_two_ensemble_filters_build_the_same_graph`), and
+# the document differs in exactly three keys, which is pinned there too
+# (`test_the_shipped_eakf_layers_change_the_solver_and_nothing_structural`).
+#
+# What neither of those can say is whether `soca_letkf.x` accepts the document
+# and produces an analysis. A solver name that oops does not register, a
+# localization the sequential solver rejects, a distribution it cannot work in:
+# every one of those is a document that validates, passes every golden, and
+# aborts inside the application. That is the whole job of this experiment, and
+# it needs the real SOCA rather than the real MOM6.
+#
+# `model/persistence` accordingly. The ensemble does not evolve between cycles
+# here, which is `tier3_letkf`'s claim and is asserted there against a real
+# integration; what is asserted here is that the filter ran, moved the state
+# towards the observations, and left every member its own analysis.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - model/persistence
+  - da/letkf
+  - da/eakf
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_eakf
+  description: the EAKF solver at gom_25km without the model
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+ensemble:
+  size: 6
+  control: true
+  source: letkf
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+cleanup:
+  # Two, so a second cycle's analyses survive for the spread comparison. Same
+  # reason as `tier3_letkf`, which states it at length.
+  keep_cycles: 2

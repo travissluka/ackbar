@@ -26,6 +26,16 @@ The claims, in the order they would cost the most to discover later:
   independent applications of a `replace_from_mean` policy is how one half of a
   hybrid ends up with a member the other half rebuilt.
 
+Runs on `model/persistence`. Every claim above is about what the SOCA
+applications were handed and what they wrote, and not one of them is about an
+integration: the covariance is read off a document, the collisions are between
+filenames, and the recentring arithmetic is over states SOCA itself produced.
+Twenty-one MOM6 forecasts a run bought none of that and re-proved what
+`test_tier3_var` and `test_tier3_letkf` already prove. What moved to those two
+along with the model is anything about the ensemble evolving: that each member
+resumes from its own analysed restart, that no two members forecast the same
+state, and that the ensemble survives being cycled.
+
 What this does *not* test is whether a hybrid analysis is any better than the
 static one. Everything `test_tier3_letkf` says about this ensemble applies here
 and applies harder: six members forced by one atmosphere, perturbed out of the
@@ -50,7 +60,6 @@ from ackbar.cli import main
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
-from test_tier3 import initial_energy
 from test_tier3_var import DOMAIN, STATIC, initial_condition
 
 pytestmark = pytest.mark.tier3
@@ -67,8 +76,9 @@ KEPT = (2, 3)
 MEMBERS = (1, 2, 3, 4, 5, 6)
 CONTROL = 0
 
-#: Seven forecasts, two analyses and a recentring a cycle, on eight cores.
-QUIET = 3600
+#: Two analyses, a recentring and seven persistence handoffs a cycle. Generous
+#: against a queue that is busy rather than against the work itself.
+QUIET = 900
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -362,17 +372,15 @@ def test_one_record_says_which_members_both_halves_used(run):
     assert used == [f"{member:03d}" for member in ledger["assimilated"]]
 
 
-def test_every_member_resumed_from_its_own_analysed_restart(run):
-    """A cold start would give every member the same state, silently.
+def test_every_member_carried_its_own_state_into_the_next_cycle(run):
+    """The handoff, which persistence performs and does not make trivial.
 
-    `VELOCITY_CONFIG = zero` on a cold start, so MOM6's own step-zero kinetic
-    energy is exactly zero and is not on a resumed run.
+    Every member writes to `rst/<n>/mem###` and the next cycle reads it, so a
+    handoff that resolved to one shared path would give every member the same
+    background and nothing would say so. `test_tier3_letkf` makes the same claim
+    against a real integration, where the states also have to differ because the
+    model moved them apart; here it is only about which file each member read.
     """
-    for member in (CONTROL,) + MEMBERS:
-        assert initial_energy(run, LAST, member) > 1e-12
-
-
-def test_no_two_members_forecast_the_same_state(run):
     import numpy
 
     written = [field(run.member_out("rst", LAST, member) / "MOM.res.nc")
@@ -384,7 +392,12 @@ def test_no_two_members_forecast_the_same_state(run):
 
 def test_the_ensemble_did_not_collapse(run):
     """Three cycles is not long enough to prove an ensemble is stable, and is
-    long enough to catch one that goes to zero immediately."""
+    long enough to catch one that goes to zero immediately.
+
+    With no integration between them the only thing acting on the spread is the
+    filter and the recentring, which is what this is about: a filter that over
+    contracts, or a recentring that overwrites, shows up here on the second cycle.
+    """
     import numpy
 
     def spread(cycle):

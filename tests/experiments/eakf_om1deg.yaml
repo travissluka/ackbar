@@ -1,0 +1,24 @@
+# `letkf_om1deg` with the sequential solver, and nothing else changed.
+#
+# The pair is the point: the two experiments differ in one inherited layer, so a
+# graph golden that came out different between them would be saying the solver
+# changed the shape of the cycle, which it must not. `soca_letkf.x` runs both.
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/letkf
+  - da/eakf
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: eakf_om1deg
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 3
+ensemble:
+  size: 20
+  source: offline
+  on_missing_member: run_degraded
+vars:
+  obs_dir: /archive/obs/osse_2018

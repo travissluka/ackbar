@@ -1,0 +1,92 @@
+# EAKF: the same ensemble filter application, solved sequentially.
+#
+# Inherited **after** `da/letkf`, and it is three keys:
+#
+#   inherit:
+#   - domain/gom_25km
+#   - model/mom6sis2
+#   - da/letkf
+#   - da/eakf
+#
+# `soca_letkf.x` runs it, which is not a guess: `soca/test/CMakeLists.txt` gives
+# the `eakf` ctest `EXE soca_letkf.x`, the same executable as `letkf` and
+# `getkf`. So nothing about the graph, the tasks, the writeback or the ensemble
+# ledger changes, and `solver.name` stays `letkf`, because that is what names the
+# application. What changes is the solver inside it and the two things that
+# solver cannot use.
+#
+# The two constraints are the whole reason this is a layer rather than a
+# substituted word. Both are read off `soca/test/testinput/eakf.yml` against
+# `letkf.yml`, which differ in exactly these places and nowhere else that
+# matters.
+
+solver:
+  local ensemble DA:
+    # `EAKF` in oops's own factory: `instantiateLocalEnsembleSolverFactory.h`
+    # registers `EAKFSolver` under this name, and it derives from
+    # `SequentialEnsembleSolver` rather than from the LETKF's local solver.
+    # That is the difference: an LETKF solves each analysis point once against
+    # every observation within its localization radius, and an EAKF assimilates
+    # observations one at a time, updating the whole ensemble after each.
+    #
+    # The inflation is inherited unchanged, including `rtps: 0.95`. That number
+    # was chosen for the LETKF on these domains and there is no reason yet to
+    # believe it is right for a sequential filter, which removes and replaces
+    # spread in a different order. Leaving it alone is what makes the two
+    # experiments comparable; retuning it per solver is a science decision and
+    # belongs in an experiment, not here.
+    solver: EAKF
+
+  # No halo. An EAKF is sequential, so the decomposition an LETKF wants, each
+  # rank owning a patch and every observation within a radius of it, is not the
+  # decomposition this solver works in; the ctest simply drops `distribution`
+  # from its observers and takes ioda's default. Stated explicitly rather than
+  # deleted, because `da/letkf` and `da/hybrid` both set a halo and a layer that
+  # merely failed to mention this would inherit theirs.
+  #
+  # This also retires the constraint that made the halo awkward. `halo size` had
+  # to exceed the largest localization radius anywhere on the domain or a rank
+  # solved with observations it could not see; with no halo there is no such
+  # relation to keep, which is why the localization below can be chosen on its
+  # own merits.
+  #
+  # `$remove` rather than leaving `halo size` to be inherited: dicts merge, so
+  # naming only the distribution would emit a round robin decomposition that
+  # still carried a halo size. ioda would ignore it and the document would be
+  # describing something nothing does.
+  ensemble distribution:
+    name: RoundRobin
+    halo size: $remove
+
+# Gaspari-Cohn instead of Rossby, and not by preference. SOCA's own `eakf.yml`
+# carries the note
+#
+#     NOTE: Rossby localization is not yet working for EAKF. You're stuck with
+#     GC99 until that is sorted out!
+#
+# so this is a limitation being worked around and should be revisited whenever
+# the bundle is moved forward. An experiment that inherited `da/letkf`'s Rossby
+# localization and switched only the solver is the failure this exists to
+# prevent, and it is not one that announces itself.
+#
+# `lengthscale` is a hard cutoff, not an e-folding scale: `ObsHorLocGC99.h`
+# computes `gc99(distance / lengthscale)` and returns zero for
+# `distance >= lengthscale`, so it is also the search radius. 100 km, against
+# the roughly 67 km the Rossby method lands on in the deep Gulf, where the first
+# baroclinic radius is about 45 km and `rossby mult` is 1.5. One fixed number
+# has to serve the whole domain, so it is wider than Rossby over the shelf,
+# where the radius collapses, and comparable in the basin. It is the one value
+# in this file that is a choice rather than a transcription, and it is not
+# calibrated: what would calibrate it is a spread-skill comparison against the
+# LETKF on the same cycles, which is an experiment and not a default.
+observations:
+- obs space:
+    name: adt_3a
+  obs localizations:
+  - localization method: Horizontal Gaspari-Cohn
+    lengthscale: 100000
+- obs space:
+    name: sst_noaa19
+  obs localizations:
+  - localization method: Horizontal Gaspari-Cohn
+    lengthscale: 100000

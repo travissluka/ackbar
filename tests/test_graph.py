@@ -210,6 +210,28 @@ class TestConfigurationDrivesTheTaskSet:
         assert "b.vt" in self.tasks_of("hybrid_om1deg", keys)
         assert "b.vt" not in self.tasks_of("envar_om1deg", keys)
 
+    def test_the_two_ensemble_filters_build_the_same_graph(self, keys):
+        """EAKF is a different solver, not a different cycle.
+
+        `soca/test/CMakeLists.txt` gives the `eakf` ctest `EXE soca_letkf.x`, so
+        it is the same application reading the same inputs and writing the same
+        outputs, and every task, edge and array bound has to come out identical.
+        Asserted as an equality rather than pinned as a second golden, because a
+        golden would say what the shape is and this says the shape did not
+        change.
+        """
+        letkf, eakf = graph_for("letkf_om1deg", keys), graph_for("eakf_om1deg", keys)
+
+        def shape(graph):
+            return sorted((n.cycle, n.task, n.members, n.exe, n.is_array)
+                          for n in graph.nodes)
+
+        def wiring(graph):
+            return sorted((e.parent, e.child, e.kind) for e in graph.edges)
+
+        assert shape(eakf) == shape(letkf)
+        assert wiring(eakf) == wiring(letkf)
+
     def test_the_solver_chooses_the_executable(self, keys):
         def exe(name, task):
             return next(n.exe for n in graph_for(name, keys).nodes if n.task == task)

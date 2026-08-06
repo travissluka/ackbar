@@ -12,7 +12,11 @@ because merging them elementwise by position is never what anyone meant.
 
 from copy import deepcopy
 
-#: Marker key on a keyed-list element that deletes the inherited element.
+#: Deletes what a layer inherited. Two forms, because there are two things to
+#: delete: as a key on a keyed-list element (``$remove: true`` beside the
+#: element's identity) it drops that element, and as a *value* on any dict key
+#: (``halo size: $remove``) it drops that key. Both refuse to name something the
+#: layer did not inherit.
 REMOVE = "$remove"
 
 
@@ -81,7 +85,27 @@ def merge(base, over, merge_keys=None, path=()):
     if isinstance(base, dict) and isinstance(over, dict):
         out = deepcopy(base)
         for key, value in over.items():
-            if key in out:
+            if value == REMOVE:
+                # The only way a layer can make a key *absent*. Dicts merge, so
+                # a layer that inherits `{name: Halo, halo size: 500000}` and
+                # writes `{name: RoundRobin}` gets a round robin distribution
+                # that still carries a halo size: a key the application will
+                # ignore, in a document that now describes a decomposition
+                # nothing is using. See `da/eakf.yaml`, which is what this is
+                # for.
+                #
+                # Absent rather than null, because the emitted document is read
+                # by eckit and a null is a value. Refused when the key is not
+                # inherited, matching the keyed-list form above: a removal that
+                # names nothing is either a typo or a leftover from a base layer
+                # that has already dropped the key, and both are worth saying.
+                if key not in out:
+                    raise MergeError(
+                        f"{REMOVE} names {key!r}, which is not inherited here",
+                        path + (key,),
+                    )
+                del out[key]
+            elif key in out:
                 out[key] = merge(out[key], value, merge_keys, path + (key,))
             else:
                 out[key] = deepcopy(value)
