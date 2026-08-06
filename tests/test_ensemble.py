@@ -11,6 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import PATHS_CYCLE
+
 netCDF4 = pytest.importorskip("netCDF4")
 
 from ackbar import ensemble  # noqa: E402
@@ -58,7 +60,7 @@ def scene(tmp_path):
         "ensemble": {"size": 3, "on_missing_member": "fail_cycle"},
     }
     paths = Paths(experiment="e", output_root=tmp_path / "o",
-                  scratch_root=tmp_path / "s").ensure()
+                  scratch_root=tmp_path / "s", **PATHS_CYCLE).ensure()
     for member in ENSEMBLE:
         target = paths.member_out("rst", 0, member)
         target.mkdir(parents=True)

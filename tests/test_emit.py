@@ -12,7 +12,8 @@ from ackbar import emit
 from ackbar.graph.model import Node
 from ackbar.paths import Paths
 
-CONFIG = {"experiment": {"name": "e"}, "model": {"name": "stub"}}
+CONFIG = {"experiment": {"name": "e"}, "model": {"name": "stub"},
+          "cycle": {"start": "2018-04-15T00:00:00Z", "length": "PT24H"}}
 
 
 @pytest.fixture

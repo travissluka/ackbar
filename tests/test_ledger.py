@@ -14,7 +14,8 @@ from ackbar.paths import Paths
 @pytest.fixture
 def paths(tmp_path):
     return Paths.of(
-        {"experiment": {"name": "e"}},
+        {"experiment": {"name": "e"},
+         "cycle": {"start": "2018-04-15T00:00:00Z", "length": "PT24H"}},
         {"scratch_root": str(tmp_path / "s"), "output_root": str(tmp_path / "o")},
     ).ensure()
 

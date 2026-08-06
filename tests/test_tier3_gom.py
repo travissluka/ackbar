@@ -35,13 +35,14 @@ from pathlib import Path
 import netCDF4
 import numpy as np
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import mom6sis2, slurm, soca
 from ackbar.cli import main
 from ackbar.config.jobtime import cycle_time, handoff_time, slot_times
 from ackbar.duration import ISO_INSTANT
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -75,7 +76,7 @@ def require_everything():
 
 @pytest.fixture(scope="module")
 def run():
-    paths = Paths.of({"experiment": {"name": NAME}}, load_site())
+    paths = experiment_paths(NAME, load_site())
     _purge(paths)
     assert main(["create", str(EXPERIMENT)]) == 0
     assert main(["start", NAME]) == 0
@@ -99,7 +100,7 @@ def parameter_doc(paths, cycle, name="MOM_parameter_doc.all"):
     configuration instead would be asserting that ACKBAR wrote what ACKBAR
     wrote.
     """
-    matches = sorted((paths.sub("log") / str(cycle)).glob(f"forecast*.{name}"))
+    matches = sorted((paths.log_dir(cycle)).glob(f"forecast*.{name}"))
     assert len(matches) == 1, f"expected one {name} for cycle {cycle}, got {matches}"
     return matches[0].read_text()
 
@@ -124,8 +125,11 @@ def test_the_regional_model_cycles_and_leaves_restart_sets(run):
     for cycle in KEPT:
         assert (run.member_out("rst", cycle, 0) / "coupler.res").exists()
     # Every cycle ran, including the one whose restarts have since been reaped.
-    assert sorted(p.name for p in run.sub("stats").glob("*.json")) == \
-        ["1.json", "2.json", "3.json"]
+    # The accounting lives inside the cycle's own run directory, which cleanup
+    # never touches: it is the record that the cycle happened, and it survives
+    # the deletion of what the cycle produced.
+    assert [run.stats_file(cycle).exists() for cycle in (1, 2, 3)] == \
+        [True, True, True]
 
 
 # The restart handoff was checked here as well while this experiment and
@@ -216,7 +220,7 @@ def test_one_forecast_writes_a_state_at_every_slot(run):
         for directory in written:
             assert (directory / ocean).exists(), f"cycle {cycle} wrote no {directory}"
         # One forecast per cycle per member, and no second one hiding behind it.
-        logs = sorted((run.sub("log") / str(cycle)).glob("forecast.mem000*.model.log"))
+        logs = sorted((run.log_dir(cycle)).glob("forecast.mem000*.model.log"))
         assert len(logs) == 1
 
 
@@ -460,10 +464,12 @@ def test_the_slot_at_the_handoff_costs_no_second_copy_of_the_state(run, tmp_path
 
 
 def test_cleanup_reaps_the_states_on_the_same_rule_as_the_restarts(run):
-    """A slot state is a full 3D field, so `bkg/` grows faster than `rst/`.
+    """A slot state is a full 3D field, so `slot/` grows faster than `rst/`.
 
     Four slots a cycle here and a six slot window at OM4_025 is six times the
     per-cycle output of the restarts beside it, which is the item that fills a
     disk in the second week rather than the first.
     """
-    assert sorted(p.name for p in run.sub("bkg").iterdir()) == ["2", "3"]
+    kept = [cycle for cycle in (0, 1, 2, 3)
+            if run.cycle_out("slot", cycle).is_dir()]
+    assert kept == list(KEPT)

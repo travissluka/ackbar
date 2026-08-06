@@ -258,8 +258,12 @@ site:
   output_root:  /data/ackbar/exp          # HPC: /project/ackbar
 ```
 
+Inside the output root there are two tiers, and the split *is* the retention policy. The top
+level holds what the experiment is for. `run/` holds what it took to get there, and is the only
+place `cleanup` ever deletes from.
+
 ```
-<scratch_root>/<exp>/<cycle>/<task>[.<member>]/
+<scratch_root>/<exp>/<date>/<task>[.<member>]/
     working directory: model inputs, INPUT/, logs, everything transient
     removed by the task on success, retained on failure
 
@@ -267,28 +271,75 @@ site:
     HALT          present while paused; every submitter checks it
     cfg/          resolved config, the ordered layer files verbatim, provenance record
     cfg/soca/     the SOCA document templates, frozen from the checkout
-    cfg/<cycle>/<task>.sh   the emitted batch script, one per node
-    ledger/       append-only submission records, and the per-cycle submit marker
-    done/<cycle>/<task>[.mem###].json   sentinels, written last by a successful task
-    stats/        <cycle>.json, one file per cycle, never appended to
-    log/          job stdout and stderr, by cycle and task
-    rst/<cycle>/mem###/     restart sets
-    bkg/<cycle>/mem###/<valid time>/  sub-window states, one directory each
-    ana/<cycle>/mem###/     the analysed restart set the next forecast reads
-    ana/<cycle>/mem###/analysis/   what the analysis application itself wrote
-    ana/<cycle>/members.json       which members the cycle had, and the policy
-    obs_out/<cycle>/        ioda output, ombg and oman
-    obs_out/<cycle>/observers.json which observers the cycle had, and why not
+    cfg/<date>/<task>.sh    the emitted batch script, one per node
+
+    ana/<date>/mem###.nc    the analysis, compressed                    kept
+    ana/<date>/members.json which members the cycle had, and the policy  kept
+    bkg/<date>/mem###.nc    the background, compressed                  kept
+    obs_out/<date>/         ioda output, ombg and oman                  kept
+    obs_out/<date>/summary.json    departure statistics for the cycle
+    obs_out/<date>/observers.json  which observers the cycle had, and why not
+
+    fcst/<init>/F###/mem###.nc     the long forecast at that lead       kept
+    fcst/<init>/F012/mem###.nc     -> ../../../bkg/<init+length>/mem###.nc
+    fcst/<init>/obs/F###/mem###/   its departures, one set per section  kept
+
+    run/ledger.jsonl        append-only submission records
+    run/submitted.<date>    the per-cycle submit marker
+    run/<date>/log/         job stdout and stderr, and kept model traces  kept
+    run/<date>/done/<task>[.mem###].json   sentinels, written last       kept
+    run/<date>/stats.json   the resource harvest for the cycle           kept
+    run/<date>/rst/mem###/  what this cycle's forecast wrote           reaped
+    run/<date>/ana/mem###/  the analysed restart set the forecast reads
+    run/<date>/ana/mem###/analysis/  what the analysis application wrote
+    run/<date>/slot/mem###/<valid time>/  sub-window states, one directory each
+    run/<date>/fcst/mem###/F###/          the long forecast's raw trajectory
 ```
 
 Rules that fall out of this:
 
-- **A cycle directory is named by the cycle that *produced* it**, not by the valid time of what
-  is in it. `rst/7` is what cycle 7's forecast wrote, and cycle 8's analysis reads it. The
-  alternative, naming by valid time, reads better in isolation and costs more everywhere it
-  matters: under producer naming a node's outputs are always under its own cycle number, so
-  cleanup is a cycle count rather than a data-flow analysis, and the offline initial condition
-  goes in `rst/0` as the output of a forecast that never ran.
+- **`ana/` and `bkg/` are the products and are compressed; the restart sets are not.** A MOM6
+  restart carries every prognostic field the model has, and the forecast needs all of them, so
+  the set under `run/<date>/ana/` cannot be reduced. What a comparison reads is a handful of
+  fields, and `post.state` writes exactly those to `ana/<date>/mem###.nc` at about a fortieth
+  of the size. That is what makes the retention policy possible: the thing worth keeping
+  forever is small, and the thing that is large is regenerable from the pinned restarts.
+  soca-science drew the same line and kept its analysed restart set in scratch entirely;
+  ACKBAR cannot, because `writeback` and `forecast` are separate jobs and a task's scratch is
+  deleted when it succeeds.
+- **A directory is named by a date, and owned by the cycle that writes it.** `run/<T>/` is what
+  the cycle whose analysis time is `T` did. The one place this needs care is `run/<T>/rst/`,
+  which holds what *that* cycle's forecast wrote and is therefore valid at the next analysis
+  time; naming it for its own valid time would put one cycle's output under another cycle's
+  directory, and cleanup would stop being a date comparison. Cycle numbers survive in the
+  interface, where a scheduler dependency and a heal are computed, and the offline initial
+  condition goes in cycle 0's `rst/` as the output of a forecast that never ran.
+- **One date format, to the second.** ISO 8601 basic format, which sorts chronologically as a
+  string and carries no colons. Every duration an experiment may state is a whole number of
+  hours, enforced by `graph.build._check_hours`, so the minutes and seconds are always zero;
+  they are carried anyway because a date format is the one thing here that cannot change
+  without invalidating every experiment already on disk.
+- **The long forecast is the one thing keyed by lead rather than by valid time.** Everywhere
+  else a directory is named for when its contents are valid, because the consumer knows the
+  time it wants. Under `fcst/` the consumer wants the opposite: forecast skill is read against
+  lead, grouped across initializations. Both parts of the key are needed, since two forecasts
+  started five days apart pass through the same valid time and are not the same state. Leads
+  are `F###` in hours, which is why the whole-hours rule above is enforced rather than assumed.
+- **A background is a one-cycle forecast, so `bkg/` supplies the first lead.** Both forecasts
+  start from the same state and MOM6 is deterministic, so integrating five days does not change
+  the state at twelve hours. `fcst/<init>/F012/mem###.nc` is a *relative symlink* into `bkg/`
+  rather than a second reduction of the same restart set, which makes that equality structural:
+  two independent reductions can quietly disagree over rounding or a `FIELDS` change made on
+  one path only, and a link cannot. Keeping `bkg/` where it is also keeps `ana/<T>` and
+  `bkg/<T>` as the pair at one valid time, which is what makes an increment a subtraction
+  between two files of the same name.
+- **The long forecast's departures never land in `obs_out/`.** The observer layer's
+  `obsdataout` is `obs_out/<T>/...` rendered at the cycle being evaluated, so a five day
+  forecast that left it alone would overwrite the cycling departures of every cycle it reaches,
+  and the symptom would be an O-B statistic quietly describing a forecast. They go to
+  `fcst/<init>/obs/F###/mem###/`, keyed by the end of the section evaluated: today that is one
+  section covering the whole forecast, and a larger domain that has to evaluate a day at a time
+  needs no path change.
 - **A member directory under `ana/` is a restart set and nothing else.** Writeback fills it by
   copying every file of the background's, `model: persistence` fills the next cycle's by
   copying every file of this one, and the forecast links all of them into `INPUT/`. So what the
@@ -351,7 +402,7 @@ Tasks that need specific care, in order of how badly they fail:
   artifact rule also dissolves the "cleanup must be dependency-aware" problem outright: no
   dependency list, no race with healing, no age arithmetic.
 - **The stats harvest.** The task most likely to run twice, and its job is to write rows.
-  `stats/<cycle>.json`, one file per cycle, never appended to. Accumulate at analysis time.
+  `run/<date>/stats.json`, one file per cycle, never appended to. Accumulate at analysis time.
 - **`post.obs` statistics and `post.state` compression.** Same append hazard. Compression is
   lossy (`ncks -7 -L 4 --ppc default=.2`), so it must never run in place, and the source must
   survive until the destination is committed.
@@ -485,7 +536,7 @@ Three things about the harvest that are not obvious:
   rather than a sample. Any future escalation should be multiplicative rather than
   observed-peak-plus-epsilon.
 
-Harvest per cycle, into `stats/<cycle>.json`, one file per cycle. `sacct` rows are purged on a
+Harvest per cycle, into `run/<date>/stats.json`, one file per cycle. `sacct` rows are purged on a
 site retention, so they have to be pulled into the experiment directory while they exist.
 Attribution comes from the job name and comment, so a harvested row maps back to cycle, task,
 and member without a side table. The harvest is an `afterany` leaf, because it is most valuable
@@ -898,7 +949,7 @@ Because that makes the observation set vary silently, **the realized observer li
 per cycle** and diffed by the comparison tooling. Two experiments differing in which observers
 actually ran is the difference that most affects a comparison, and it must not be invisible.
 
-It lives at `obs_out/<cycle>/observers.json`, beside the observation output it describes rather
+It lives at `obs_out/<date>/observers.json`, beside the observation output it describes rather
 than under `cfg/`, because it is a product of the cycle and not of the configuration: the same
 experiment over a different archive writes a different one. Every configured observer is in it
 whether or not it ran, since a list naming only what ran makes a drop indistinguishable from an

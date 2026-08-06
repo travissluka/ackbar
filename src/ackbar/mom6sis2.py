@@ -154,7 +154,7 @@ def forecast(config, site, paths, cycle, task, member, *, source, target,
     valid at are the experiment's layout, and this module's job is the model.
     """
     run = paths.scratch(cycle, task, member)
-    logs = paths.sub("log") / str(cycle)
+    logs = paths.log_dir(cycle)
     stage(config, run, cycle, task, source=source)
     try:
         launch(config, site, run, task)
@@ -206,7 +206,7 @@ def stage(config, run, cycle, task, *, source):
     _fresh(run / "RESTART")
 
     _input_dir(run, _path(model, "input"), source)
-    _write(run / "input.nml", _namelist(base, config, cycle))
+    _write(run / "input.nml", _namelist(base, config, cycle, task))
     _write(run / "diag_table", _diag_table(config, model, cycle, task))
 
 
@@ -377,13 +377,16 @@ _PARAMETER_FILES = {
 _RESUME = "'r'"
 
 
-def _namelist(base, config, cycle):
+def _namelist(base, config, cycle, task):
     """`input.nml` with the run length, fallback date and parameter files set.
 
     `months`/`days` are zeroed as well as setting the rest, because a base case
     that runs in months would otherwise add ours to its own.
+
+    *task* because the long forecast runs for a different length and writes at
+    a different cadence, and both reach `coupler_nml` through the symbol table.
     """
-    table = symbols(config, cycle)
+    table = symbols(config, cycle, task=task)
     coupler = {
         "months": 0,
         "days": 0,

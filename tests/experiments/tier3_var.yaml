@@ -39,3 +39,11 @@ solver:
     iterations:
     - ninner: 3
       gradient norm reduction: 1.0e-10
+cleanup:
+  # Two, so that two cycles' analysis directories survive the run. `ana` under
+  # `run/` is released by its own cycle's forecast, so the default of one leaves
+  # only the last cycle's, and the spread and increment assertions below compare
+  # one cycle against another. The rule itself is pinned at tier 0
+  # (`test_cleanup_reaps_the_analysis_a_cycle_before_the_restarts`); what this
+  # buys is a real run with something left to compare.
+  keep_cycles: 2

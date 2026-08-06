@@ -92,10 +92,154 @@ def extended_cycles(config, count):
     return tuple(range(1, count + 1, stride))
 
 
+def extended_length(config):
+    """How far the long forecast runs, or None if there is not one."""
+    extended = (config.get("forecast") or {}).get("extended")
+    if not extended:
+        return None
+    length = parse_duration(extended["length"])
+    if length.total_seconds() <= 0:
+        raise GraphError("forecast.extended.length must be a positive duration")
+    return length
+
+
+def _ladder(config, key, default_to_length=True):
+    """The leads one cadence under `forecast.extended` names, shortest first."""
+    length = extended_length(config)
+    if length is None:
+        return ()
+    stated = (config["forecast"]["extended"]).get(key)
+    if not stated:
+        return (length,) if default_to_length else ()
+    step = parse_duration(stated)
+    if step.total_seconds() <= 0:
+        raise GraphError(f"forecast.extended.{key} must be a positive duration")
+    if length.total_seconds() % step.total_seconds():
+        raise GraphError(
+            f"forecast.extended.{key} ({stated}) does not divide "
+            f"forecast.extended.length ({config['forecast']['extended']['length']}), "
+            f"so the last state the model writes would not be at the lead the "
+            f"forecast was asked for"
+        )
+    count = int(length.total_seconds() // step.total_seconds())
+    return tuple(step * n for n in range(1, count + 1))
+
+
+def extended_leads(config):
+    """Which leads keep a compressed state, shortest first.
+
+    `interval` is optional and its absence means one state, at the end. That is
+    a legitimate experiment, it is just not a skill curve: verification against
+    lead needs more than one lead to have an axis.
+
+    The cycle-length lead is in this list even though nothing writes a file for
+    it. `bkg/` already holds that state, from the cycling forecast, which starts
+    from the same set and is therefore the same trajectory; `post.state` links
+    it rather than storing it twice. See `Paths.fcst_product`.
+    """
+    return _ladder(config, "interval")
+
+
+def extended_slots(config):
+    """Which leads the model writes a state at, for the departures to use.
+
+    Finer than `extended_leads` and for a different consumer. An observation is
+    compared against the state nearest its own time, so this cadence is the
+    resolution of every departure the long forecast produces, and a daily one
+    would compare a 06Z observation against an 00Z state. These are reaped once
+    `hofx.ext` has read them.
+
+    Falls back to the kept leads when `slots` is not set, which makes a forecast
+    with no sub-window cadence evaluate its observations against the states it
+    was keeping anyway rather than against nothing.
+    """
+    return _ladder(config, "slots", default_to_length=False) \
+        or extended_leads(config)
+
+
+def extended_lead_cycles(config):
+    """The leads a set of departures is produced at, one per cycle covered.
+
+    Departures are per cycle rather than per slot because observations are:
+    each covered cycle has an observer set and a window, and `hofx.ext` hands
+    the four-dimensional application that window with the slot states inside it.
+    So the trajectory is sampled at `slots` and the *output* is one file set per
+    cycle, which is also what makes it directly comparable to the cycling
+    background's departures at the same time.
+
+    Floors, so that a forecast whose length is not a whole number of cycles
+    scores the cycles it does cover rather than refusing.
+    """
+    length = extended_length(config)
+    if length is None:
+        return ()
+    cycle = cycle_length(config)
+    count = int(length.total_seconds() // cycle.total_seconds())
+    return tuple(cycle * n for n in range(1, count + 1))
+
+
+def _check_extended(config):
+    """The long forecast's own relations, once its cadences are known."""
+    length = extended_length(config)
+    if length is None:
+        return
+    extended = config["forecast"]["extended"]
+    leads = extended_leads(config)
+    slots = extended_slots(config)
+
+    # Every kept lead lands on an analysis time. That is what makes the
+    # verification comparable and the implementation small: the observations a
+    # lead is scored against are then exactly some cycle's observers, with that
+    # cycle's window, so `hofx.ext` reuses `observations.observers` rather than
+    # learning to select at an arbitrary instant, and the score at a lead is
+    # against the same observations the cycling background was scored against at
+    # that time. Which is the comparison forecast verification is *for*.
+    cycle = cycle_length(config)
+    if extended.get("interval") and \
+            parse_duration(extended["interval"]).total_seconds() % cycle.total_seconds():
+        raise GraphError(
+            f"forecast.extended.interval ({extended['interval']}) is not a whole "
+            f"number of cycles ({config['cycle']['length']}), so a kept lead "
+            f"would fall between two analysis times and be scored against no "
+            f"cycle's observations"
+        )
+
+    # The kept states have to be a subset of the states the model writes, or
+    # keeping one would mean a second write cadence and a lead the trajectory
+    # does not contain.
+    step = slots[0]
+    for lead in leads:
+        if lead.total_seconds() % step.total_seconds():
+            raise GraphError(
+                f"forecast.extended.slots ({_spell(step)}) does not divide the "
+                f"kept lead {_spell(lead)}, so the state that lead names is not "
+                f"one the model writes"
+            )
+
+    # And the slot cadence tiles a cycle, because `hofx.ext` evaluates one
+    # cycle's window at a time: the observations exist per cycle, so the
+    # trajectory handed to the four-dimensional application is the slot states
+    # inside that cycle's window. A cadence that straddles an analysis time
+    # would leave a window with no state at its own centre.
+    if step.total_seconds() % cycle.total_seconds() and \
+            cycle.total_seconds() % step.total_seconds():
+        raise GraphError(
+            f"forecast.extended.slots ({_spell(step)}) neither divides nor is a "
+            f"multiple of the cycle length ({config['cycle']['length']}), so the "
+            f"long forecast's states do not line up with the windows its "
+            f"departures are computed over"
+        )
+
+    _check_coupling(config, "forecast.extended.slots", step)
+    _check_coupling(config, "the extended forecast", length)
+
+
 def build_graph(config):
     """The whole experiment: every cycle, every task, every edge."""
     _check_ensemble_source(config)
+    _check_hours(config)
     _check_window(config)
+    _check_extended(config)
     count = config["cycle"]["count"]
     canonical = member_set(config)
     graph = Graph(
@@ -112,7 +256,11 @@ def build_graph(config):
         for task in enabled:
             if not _runs_in_cycle(task.name, cycle, count, long_forecast):
                 continue
-            if task.name == "forecast.ext":
+            if task.name in ("forecast.ext", "hofx.ext", "post.fcst"):
+                # The same set as the long forecast, and it has to be: the
+                # `aftercorr` between them is elementwise by array index, so two
+                # different member sets would silently pair member *i* of one
+                # with a different member of the other.
                 members = long_members
             elif task.member_level:
                 members = canonical
@@ -185,6 +333,43 @@ def _check_ensemble_source(config):
             f"filter beside the variational analysis, and solver states no "
             f"{' and no '.join(missing)}. Inherit a layer that configures one."
         )
+
+
+def _check_hours(config):
+    """Every duration an experiment states is a whole number of hours.
+
+    An assumption rather than a discovery, and it is written down here so that
+    the places relying on it can rely on it. Two do. `paths.lead_name` spells a
+    forecast lead as `F###` in hours and has no spelling for ninety minutes, and
+    `paths.CYCLE_DATE` carries minutes and seconds that are always zero. Both
+    would be wrong rather than merely awkward for a sub-hourly experiment, and
+    wrong in the quiet way: two leads colliding in one directory name, with the
+    second overwriting the first.
+
+    Ocean windows are hours at the shortest, so this costs nothing real. It is
+    checked rather than assumed because the cost of being wrong is silent, and
+    an experiment that states `PT90M` should learn about it at create time and
+    not from a verification curve with a lead missing.
+    """
+    for key, value in (
+        ("cycle.length", (config.get("cycle") or {}).get("length")),
+        ("solver.window.length",
+         ((config.get("solver") or {}).get("window") or {}).get("length")),
+        ("forecast.slots", (config.get("forecast") or {}).get("slots")),
+    ) + tuple(
+        (f"forecast.extended.{name}", extended.get(name))
+        for extended in [(config.get("forecast") or {}).get("extended") or {}]
+        for name in ("length", "every", "interval", "slots")
+    ):
+        if value is None:
+            continue
+        if parse_duration(value).total_seconds() % 3600:
+            raise GraphError(
+                f"{key} is {value}, which is not a whole number of hours. "
+                f"ACKBAR names forecast leads in hours (`F###`) and cycle "
+                f"directories to the hour, so a sub-hourly duration has no "
+                f"spelling and two of them would land in one directory."
+            )
 
 
 def _check_window(config):
@@ -326,7 +511,7 @@ def _runs_in_cycle(name, cycle, count, long_forecast):
     if name == "cleanup":
         # Nothing to clean before the first cycle has produced anything.
         return cycle > 1
-    if name == "forecast.ext":
+    if name in ("forecast.ext", "hofx.ext", "post.fcst"):
         return cycle in long_forecast
     return True
 

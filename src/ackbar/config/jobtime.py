@@ -227,12 +227,42 @@ def seed_for(config, cycle, member):
     return zlib.crc32(f"{name}:{cycle}:{member}".encode()) & 0x7FFFFFFF
 
 
-def symbols(config, cycle, member=0):
-    """The job-time symbol table for one (cycle, member)."""
+def extended_run(config):
+    """How long the long forecast integrates for, or None if there is not one."""
+    declared = ((config.get("forecast") or {}).get("extended") or {}).get("length")
+    return parse_duration(declared) if declared else None
+
+
+def extended_interval(config):
+    """How often the long forecast writes a state, or None.
+
+    `slots` when it is set, because that is the cadence the departures want and
+    it is the finer of the two; the kept states are a subset of what it writes.
+    Falls back to `interval`, so a forecast that names only a state cadence
+    still writes at it. See `forecast.extended` in the schema.
+    """
+    extended = (config.get("forecast") or {}).get("extended") or {}
+    declared = extended.get("slots") or extended.get("interval")
+    return parse_duration(declared) if declared else None
+
+
+def symbols(config, cycle, member=0, task="forecast"):
+    """The job-time symbol table for one (cycle, member), as *task* sees it.
+
+    *task* exists for one reason: `forecast.ext` is the same executable run for
+    a different length, writing at a different cadence, and both of those reach
+    the model through this table. Defaulting to the cycling forecast keeps every
+    other caller, none of which is integrating anything, unchanged.
+    """
     length = cycle_length(config)
     now = cycle_time(config, cycle)
     begin, end = window_bounds(config, cycle)
-    run = forecast_length(config)
+    if task == "forecast.ext":
+        run = extended_run(config)
+        interval = extended_interval(config)
+    else:
+        run = forecast_length(config)
+        interval = slot_length(config)
     hours, rest = divmod(int(run.total_seconds()), 3600)
     minutes, seconds = divmod(rest, 60)
     return {
@@ -258,7 +288,7 @@ def symbols(config, cycle, member=0):
         "mom6_hours": hours,
         "mom6_minutes": minutes,
         "mom6_seconds": seconds,
-        "mom6_restart_interval": mom6_interval(slot_length(config)),
+        "mom6_restart_interval": mom6_interval(interval),
     }
 
 

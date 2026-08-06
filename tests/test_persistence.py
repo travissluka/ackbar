@@ -9,6 +9,8 @@ correcting the wrong ocean.
 
 import pytest
 
+from conftest import PATHS_CYCLE
+
 from ackbar import persistence
 from ackbar.mom6sis2 import STAMP, ModelError
 from ackbar.paths import Paths
@@ -34,7 +36,7 @@ COUPLER_RES = (
 @pytest.fixture
 def scene(tmp_path):
     paths = Paths(experiment="e", output_root=tmp_path / "o",
-                  scratch_root=tmp_path / "s").ensure()
+                  scratch_root=tmp_path / "s", **PATHS_CYCLE).ensure()
     source = paths.member_out("ana", 1, 0)
     source.mkdir(parents=True)
     (source / "MOM.res.nc").write_bytes(b"ocean\n")

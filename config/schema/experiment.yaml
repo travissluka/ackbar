@@ -85,22 +85,33 @@ properties:
       count: { type: integer, minimum: 1 }
       throttle: { type: integer, minimum: 1 }
 
-  # What survives the cycling. `cleanup` reaps every state directory at or
-  # below `n-2`, which is all any later task can read, so by the end of a run
-  # the only model states left are the last two cycles'. A keep rule pins one
-  # cycle in every `keep_every`, which is what makes a long experiment
-  # branchable: `model.initial_condition` can then name another experiment's
-  # `rst/<n>/mem000` and start a variant from the middle of it.
+  # What survives the cycling. Two rules, and they answer different questions.
   #
-  # In cycles, not v2's `SAVE_RST_REGEX` date pattern, because ackbar numbers
-  # cycles; the regex existed there only because directories were named by
-  # date. Cycle 0 is pinned by any keep rule, being the materialized initial
-  # condition.
+  # `keep_cycles` is the rolling window: how many completed cycles behind the
+  # current one keep their model state under `run/<date>/`. One is the default
+  # and the tightest correct answer, since cycle n's forecast reads cycle n-1's
+  # restarts and nothing reads further back. Raise it for headroom while an
+  # experiment is being healed repeatedly.
+  #
+  # `keep_every` is the pin, and it is what makes a long experiment branchable:
+  # `model.initial_condition` can name another experiment's
+  # `run/<date>/rst/mem000` and start a variant from the middle of it. Without
+  # it a fifty cycle run holds only its last two states the moment it finishes.
+  # It pins `rst` alone; `ana` and `slot` at the same date carry nothing the
+  # pinned `rst` and the compressed `ana/`, `bkg/` products do not, and they are
+  # the two that grow fastest.
+  #
+  # A duration, not v2's `SAVE_RST_REGEX="^......01.."`. A regex over a date
+  # changes meaning when the date format does and cannot express "every three
+  # days" at all; a duration divides. Cycle n is pinned when its analysis time
+  # is an exact multiple of it after `cycle.start`, so cycle 1 is always pinned
+  # and cycle 0, the materialized initial condition, is never reaped anyway.
   cleanup:
     type: object
     additionalProperties: false
     properties:
-      keep_every: { type: integer, minimum: 1 }
+      keep_cycles: { type: integer, minimum: 1 }
+      keep_every: { type: string, pattern: '^P' }
 
   model:
     type: object
@@ -435,3 +446,31 @@ properties:
           length: { type: string, pattern: '^P' }
           every: { type: string, pattern: '^P' }
           members: { type: array, items: { type: integer, minimum: 0 } }
+          # Two cadences, because the two products want different ones.
+          #
+          # `interval` is how often a *state* is kept, and therefore which leads
+          # the state verification has points at: F024, F048, F072 for PT24H.
+          # These are full compressed fields and are the expensive product, so
+          # daily is usually enough. Without it the run keeps one state, at the
+          # end, and a skill curve with one point on it is not a curve.
+          #
+          # `slots` is how often the model writes a state for the *departures*
+          # to be computed against, and wants to be finer: an observation is
+          # compared against the trajectory nearest its own time, so a coarse
+          # cadence throws away the timing of every observation between two
+          # writes. These states are intermediate, reaped once `hofx.ext` has
+          # reduced them to departures, so the cost is disk for one cycle rather
+          # than disk for the life of the experiment.
+          #
+          # Same mechanism for both, and it is `forecast.slots`': FMS dumps in
+          # place each time its clock reaches the interval, so every lead costs
+          # one write and not a second model run. The model writes at `slots`,
+          # and the kept states are the subset of those at `interval`.
+          #
+          # Relations, all checked in `ackbar/graph/build.py`: both divide
+          # `length`; `slots` divides `interval`, so the kept states really are
+          # a subset; `interval` is a whole number of cycles, so every kept lead
+          # lands on an analysis time and is scored against the same
+          # observations the cycling background was.
+          interval: { type: string, pattern: '^P' }
+          slots: { type: string, pattern: '^P' }

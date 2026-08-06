@@ -1,0 +1,51 @@
+# soca_hofx.x: evaluate observers against a forecast trajectory.
+#
+# The four-dimensional form, and the difference from `hofx.yaml` is the whole
+# point of it: an observation is compared against the state nearest its own
+# time rather than against one state standing in for a whole window. Over a five
+# day forecast that is the difference between a departure and a number.
+#
+# The shape of the document lives here; the values live in `ackbar/soca.py`,
+# which fills every $(SLOT) below. Nothing in this file is a value an experiment
+# states somewhere else, which is the rule that makes a template safe: there is
+# nothing here for a configuration to drift away from.
+#
+# `{{...}}` is the job-time pass, resolved from the closed table in
+# `ackbar/config/jobtime.py`. `$(UPPERCASE)` is filled by `hofx4d_config`.
+
+geometry: $(GEOMETRY)
+
+# The trajectory, as states already on disk. `PseudoModel` does not integrate:
+# it hands out the state at each step in turn, which is exactly what a forecast
+# that has already run leaves behind, so the departures cost a read rather than
+# a second five day integration.
+#
+# `tstep` is `forecast.extended.slots`, and the states are every one the long
+# forecast wrote, in time order. The initial condition is separate and is *not*
+# repeated here, matching SOCA's own `hofx_4d_pseudo` test: the model's first
+# state is one step in.
+model:
+  name: PseudoModel
+  tstep: $(TSTEP)
+  states: $(STATES)
+
+# Where the trajectory starts, which is the same set the cycling forecast
+# started from. `$(BACKGROUND_DIR)` carries a trailing separator, because SOCA
+# concatenates basename and filename without one.
+initial condition:
+  read_from_file: 1
+  basename: $(BACKGROUND_DIR)
+  ocn_filename: $(RESTART_FILE)
+  date: '{{forecast_begin}}'
+  state variables: $(STATE_VARIABLES)
+
+# The whole forecast, not one cycle's window. Every observation the forecast
+# reaches is selected here and binned by lead afterwards, from its own time,
+# rather than by which file it came out of.
+time window:
+  begin: $(WINDOW_BEGIN)
+  length: $(WINDOW_LENGTH)
+forecast length: $(WINDOW_LENGTH)
+
+observations:
+  observers: $(OBSERVERS)

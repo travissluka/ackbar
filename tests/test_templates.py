@@ -16,6 +16,8 @@ mode every comment in those files is about. A variational document with no
 from pathlib import Path
 
 import pytest
+
+from conftest import PATHS_CYCLE
 import yaml
 
 from ackbar import soca
@@ -29,7 +31,7 @@ TEMPLATES = REPO / "config" / "soca"
 #: Which template each task's builder fills. The builders are exercised against
 #: a real config elsewhere (`tests/test_soca.py`); what is pinned here is the
 #: correspondence itself.
-DOCUMENTS = ("hofx", "var", "letkf", "recenter")
+DOCUMENTS = ("hofx", "hofx4d", "var", "letkf", "recenter")
 
 #: The slots each document is built with, spelled out rather than read back from
 #: the builder. A test that derived both sides from the same call would pass for
@@ -38,6 +40,8 @@ DOCUMENTS = ("hofx", "var", "letkf", "recenter")
 EXPECTED = {
     "hofx": {"GEOMETRY", "BACKGROUND_DIR", "RESTART_FILE", "STATE_VARIABLES",
              "OBSERVERS"},
+    "hofx4d": {"GEOMETRY", "TSTEP", "STATES", "BACKGROUND_DIR", "RESTART_FILE",
+               "STATE_VARIABLES", "WINDOW_BEGIN", "WINDOW_LENGTH", "OBSERVERS"},
     "var": {"GEOMETRY", "ANALYSIS_VARIABLES", "BACKGROUND_DIR", "RESTART_FILE",
             "BACKGROUND_VARIABLES", "BACKGROUND_ERROR", "OBSERVERS",
             "VARIATIONAL", "ANALYSIS_OUTPUT", "INCREMENT_OUTPUT"},
@@ -68,6 +72,25 @@ def test_every_job_time_token_is_in_the_closed_set(name):
     for _, value in unresolved_jobtime(load(name)):
         for token in TOKEN.findall(value):
             assert token.partition(":")[0].strip() in SYMBOL_NAMES
+
+
+@pytest.mark.parametrize("name", DOCUMENTS)
+def test_every_document_names_an_executable(name):
+    """A template and a builder are not enough to run anything.
+
+    `run_application` looks the executable up in `soca.APPLICATIONS`, and a
+    document with no entry there raises a KeyError from inside a Slurm job
+    rather than here. That is the whole distance this test closes: minutes of
+    scheduler round trip against a millisecond.
+    """
+    assert name in soca.APPLICATIONS
+    assert soca.APPLICATIONS[name].endswith(".x")
+
+
+def test_there_are_no_executables_nothing_builds():
+    # The other direction. An entry with no template is an application ACKBAR
+    # believes it can run and has no document for.
+    assert set(soca.APPLICATIONS) == set(DOCUMENTS)
 
 
 def test_there_are_no_templates_nothing_builds():
@@ -182,7 +205,7 @@ def test_create_freezes_every_template_into_the_experiment(tmp_path):
     from ackbar.paths import Paths
 
     paths = Paths(experiment="e", output_root=tmp_path / "o",
-                  scratch_root=tmp_path / "s").ensure()
+                  scratch_root=tmp_path / "s", **PATHS_CYCLE).ensure()
     _freeze_templates(paths, REPO)
 
     frozen = {p.name for p in paths.templates.glob("*.yaml")}

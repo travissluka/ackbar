@@ -779,9 +779,9 @@ def test_what_the_model_said_about_itself_outlives_the_run_directory(env, tmp_pa
     (run_dir / "ocean.stats").write_text("En 4.3e-04, CFL 0.03\n")
     (run_dir / "model.log").write_text("NOTE: ...\n")
 
-    mom6sis2.keep_traces(run_dir, paths.sub("log") / "2", "forecast", 0)
+    mom6sis2.keep_traces(run_dir, paths.log_dir(2), "forecast", 0)
 
-    kept = sorted(p.name for p in (paths.sub("log") / "2").iterdir())
+    kept = sorted(p.name for p in (paths.log_dir(2)).iterdir())
     assert kept == ["forecast.mem000.model.log", "forecast.mem000.ocean.stats"]
 
 
@@ -799,7 +799,7 @@ def test_a_failed_run_keeps_its_trace_too(env, tmp_path, monkeypatch):
     with pytest.raises(mom6sis2.ModelError):
         mom6sis2.forecast(config, site, paths, 1, "forecast", 0,
                           source=source, target=paths.member_out("rst", 1, 0))
-    assert (paths.sub("log") / "1" / "forecast.mem000.ocean.stats").exists()
+    assert (paths.log_dir(1) / "forecast.mem000.ocean.stats").exists()
 
 
 def test_a_nonzero_exit_names_the_log_that_explains_it(env, tmp_path, monkeypatch):
@@ -816,10 +816,16 @@ def test_a_nonzero_exit_names_the_log_that_explains_it(env, tmp_path, monkeypatc
 
 # --- how run.py sees it ------------------------------------------------------
 
-def test_only_the_cycling_forecast_runs_the_real_model_so_far(config):
+def test_both_forecasts_run_the_real_model(config):
+    """One model layer, two tasks, and no branch in it.
+
+    They differ in how long they integrate, how often they write and where the
+    result goes. All three reach the model through `symbols(..., task=...)` and
+    the target `_forecast` computes, so nothing below that point knows which of
+    the two it is running.
+    """
     assert run.real_model(config, "forecast")
-    # Same executable, different product, and nothing reads it yet.
-    assert not run.real_model(config, "forecast.ext")
+    assert run.real_model(config, "forecast.ext")
     assert not run.real_model(config, "da")
 
 
@@ -893,8 +899,13 @@ def test_cleanup_looks_for_the_model_s_own_restarts_and_not_the_stub_s(env):
         restart_set(paths.member_out("rst", cycle, 0))
     # A free run evaluates observations against the set being dropped, and that
     # `hofx` is a leaf, so `cleanup` waits for it as well as for the restarts.
-    paths.sentinel(2, "hofx").parent.mkdir(parents=True, exist_ok=True)
-    paths.sentinel(2, "hofx").write_text("{}")
+    # `post.state` reads the same dropped set and is a leaf on the same event,
+    # so it is in the proof for the same reason.
+    for task in ("hofx", "post.state"):
+        member = None if task == "hofx" else 0
+        proof = paths.sentinel(2, task, member)
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text("{}")
 
     run.run_task(config, site, paths, 3, "cleanup")
     assert not paths.cycle_out("rst", 1).exists()

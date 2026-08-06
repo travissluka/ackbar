@@ -11,6 +11,7 @@ Regenerate the goldens with ACKBAR_UPDATE_GOLDENS=1, and read the diff.
 import json
 import os
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph import GraphError, build_graph, member_set, to_dot, to_text
+from ackbar.graph.build import extended_leads, extended_slots
 
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
@@ -111,7 +113,12 @@ class TestInvariants:
         name, graph = named_graph
         canonical = member_set(load(name, keys))
         for node in graph.nodes:
-            if node.members and node.task != "forecast.ext":
+            # The long forecast and its evaluation run over
+            # `forecast.extended.members`, which is the control alone by
+            # default. They are exempt from the canonical set and not from each
+            # other: `test_aftercorr_only_ever_joins_matching_index_sets` is
+            # what holds those two together.
+            if node.members and node.task not in ("forecast.ext", "hofx.ext", "post.fcst"):
                 assert node.members == canonical, node.id
 
     def test_aftercorr_only_ever_joins_matching_index_sets(self, named_graph):
@@ -124,10 +131,27 @@ class TestInvariants:
     def test_leaves_have_no_successor(self, named_graph):
         # The whole reason cycles can overlap.
         _, graph = named_graph
-        for task in ("post.obs", "post.state", "verify", "stats", "forecast.ext"):
+        for task in ("post.obs", "post.state", "verify", "stats", "hofx.ext", "post.fcst"):
             for node in graph.nodes:
                 if node.task == task:
                     assert graph.children(node.id) == [], node.id
+
+    def test_no_leaf_waits_on_another_leaf_s_array(self, named_graph):
+        """The reason `post.state -> verify` is not an edge.
+
+        A leaf array hangs off the forecast by `aftercorr`, so a failed forecast
+        member leaves its element *stranded* rather than failed. A stranded
+        element never terminates on a permissive Slurm, so an `afterany` waiting
+        on it never fires, and the leaf most wanted when something failed would
+        be the one thing that never ran. Tier 2 found this; the invariant keeps
+        it found.
+        """
+        _, graph = named_graph
+        leaves = {"post.obs", "post.state", "verify", "stats", "hofx.ext", "post.fcst"}
+        for edge in graph.edges:
+            parent = edge.parent.split(".", 1)[1]
+            child = edge.child.split(".", 1)[1]
+            assert not (parent in leaves and child in leaves), edge
 
     def test_leaf_edges_tolerate_a_failed_upstream(self, named_graph):
         # afterok on an array is all-or-nothing, and the harvest is exactly the
@@ -290,6 +314,99 @@ class TestCadence:
         config["forecast"]["extended"]["members"] = [0, 99]
         with pytest.raises(GraphError, match="do not exist"):
             build_graph(config)
+
+
+class TestTheLongForecastsTwoCadences:
+    """`interval` keeps states, `slots` writes them for the departures.
+
+    Two cadences because the two products want different ones: a compressed
+    state per lead is the expensive kept product and daily is usually enough,
+    while a departure wants the trajectory fine enough that an observation is
+    compared against a state near its own time.
+    """
+
+    def extended(self, keys, **overrides):
+        config = load("hybrid_om1deg", keys)
+        config["forecast"]["extended"].update(overrides)
+        return config
+
+    def test_the_kept_leads_run_to_the_length_of_the_forecast(self, keys):
+        config = self.extended(keys, length="P5D", interval="P1D")
+        assert extended_leads(config) == tuple(timedelta(days=n) for n in range(1, 6))
+
+    def test_without_an_interval_there_is_one_state_at_the_end(self, keys):
+        # A legitimate experiment, just not a skill curve.
+        config = self.extended(keys, length="P5D")
+        config["forecast"]["extended"].pop("interval", None)
+        assert extended_leads(config) == (timedelta(days=5),)
+
+    def test_the_slots_are_finer_than_the_kept_leads(self, keys):
+        config = self.extended(keys, length="P1D", interval="P1D", slots="PT6H")
+        assert extended_slots(config) == tuple(
+            timedelta(hours=h) for h in (6, 12, 18, 24))
+        assert extended_leads(config) == (timedelta(days=1),)
+
+    def test_the_slots_fall_back_to_the_kept_leads(self, keys):
+        # So that a forecast with no sub-window cadence evaluates its
+        # observations against the states it was keeping anyway.
+        config = self.extended(keys, length="P2D", interval="P1D")
+        config["forecast"]["extended"].pop("slots", None)
+        assert extended_slots(config) == extended_leads(config)
+
+    def test_a_kept_lead_the_model_never_writes_is_refused(self, keys):
+        # The kept states have to be a subset of the written ones, or keeping
+        # one would name a state the trajectory does not contain.
+        config = self.extended(keys, length="P2D", interval="P1D", slots="PT16H")
+        with pytest.raises(GraphError, match="not one the model writes"):
+            build_graph(config)
+
+    def test_an_interval_that_misses_the_analysis_times_is_refused(self, keys):
+        """A kept lead has to land on a cycle time.
+
+        That is what makes the verification comparable: the lead is scored
+        against the same observations the cycling background was scored against
+        at that time. A lead between two analysis times is scored against no
+        cycle's observations at all.
+        """
+        config = self.extended(keys, length="P3D", interval="PT36H")
+        with pytest.raises(GraphError, match="whole number of cycles"):
+            build_graph(config)
+
+    def test_an_interval_that_does_not_divide_the_length_is_refused(self, keys):
+        config = self.extended(keys, length="P5D", interval="P2D")
+        with pytest.raises(GraphError, match="does not divide"):
+            build_graph(config)
+
+
+class TestEverythingIsWholeHours:
+    """An assumption, written down so the places relying on it can.
+
+    `paths.lead_name` spells a lead as `F###` in hours and has no spelling for
+    ninety minutes, and cycle directories carry minutes and seconds that are
+    always zero. Both would be wrong quietly for a sub-hourly experiment: two
+    leads colliding in one name, the second overwriting the first.
+    """
+
+    @pytest.mark.parametrize("where,value", [
+        (("cycle", "length"), "PT90M"),
+        (("forecast", "slots"), "PT90M"),
+    ])
+    def test_a_sub_hourly_duration_is_refused(self, keys, where, value):
+        config = load("hybrid_om1deg", keys)
+        config[where[0]][where[1]] = value
+        with pytest.raises(GraphError, match="whole number of hours"):
+            build_graph(config)
+
+    def test_a_sub_hourly_extended_cadence_is_refused(self, keys):
+        config = load("hybrid_om1deg", keys)
+        config["forecast"]["extended"]["slots"] = "PT30M"
+        with pytest.raises(GraphError, match="whole number of hours"):
+            build_graph(config)
+
+    def test_the_fixtures_are_all_whole_hours(self, named_graph):
+        # The assumption is only free if nothing already violates it.
+        _, graph = named_graph
+        assert graph.nodes
 
     def test_a_slot_cadence_that_does_not_divide_the_window_is_refused(self, keys):
         """The last state would land short of the end of the window.

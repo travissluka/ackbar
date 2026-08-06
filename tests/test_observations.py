@@ -10,6 +10,8 @@ import json
 
 import pytest
 
+from conftest import PATHS_CYCLE
+
 from ackbar import observations
 from ackbar.paths import Paths
 
@@ -49,7 +51,7 @@ def env(tmp_path):
             engine["obsfile"] = engine["obsfile"].replace(
                 "ARCHIVE", str(root)).replace("OUT", str(root))
     paths = Paths(experiment="e", output_root=tmp_path / "o",
-                  scratch_root=tmp_path / "s").ensure()
+                  scratch_root=tmp_path / "s", **PATHS_CYCLE).ensure()
     return config, paths, tmp_path / "obs"
 
 

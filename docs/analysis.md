@@ -11,8 +11,8 @@ Up to four tasks, and the last one carries the risk.
 
 `da`, `da.ens` and `recenter` are each one MPI job for the whole cycle;
 `writeback` is a member array. The handoff between them is
-`ana/<n>/mem###/analysis/`, and the handoff out of `writeback` is
-`ana/<n>/mem###/` itself, which the forecast reads exactly as it reads a restart
+`run/<date>/ana/mem###/analysis/`, and the handoff out of `writeback` is
+`run/<date>/ana/mem###/` itself, which the forecast reads exactly as it reads a restart
 set the model wrote.
 
 **`da` is the analysis that produces the control's answer, whichever solver that
@@ -31,15 +31,15 @@ other member's is the recentred one wherever there is a recentring.
 ## Where things go
 
 ```
-ana/<n>/mem000/                       the analysed restart set: MOM.res.nc,
+run/<date>/ana/mem000/                the analysed restart set: MOM.res.nc,
                                       ice_model.res.nc, coupler.res
-ana/<n>/mem000/analysis/              what the application itself wrote
+run/<date>/ana/mem000/analysis/       what the application itself wrote
     ocn.ana.an.<date>.nc                the analysis state
     ocn.incr.incr.<date>.nc             analysis minus background
-obs_out/<n>/<experiment>.<obs>.nc4    the departures
+obs_out/<date>/<experiment>.<obs>.nc4 the departures
 ```
 
-The subdirectory is not tidiness. `ana/<n>/mem###` is a *restart set*: writeback
+The subdirectory is not tidiness. `run/<date>/ana/mem###` is a *restart set*: writeback
 fills it by copying every file of the background's, `model: persistence` fills
 the next cycle's by copying every file of this one, and the forecast links all
 of them into `INPUT/`. A state file loose among them is inert to the model and
@@ -127,7 +127,7 @@ the centre it would be moved onto is the mean it already has.
 
 **Inside a hybrid the same application's mean is a diagnostic**, because the
 control's answer came from the variational solve instead. It goes to
-`ana/<n>/mem000/analysis/ensemble/`, one directory down, and so do the filter's
+`run/<date>/ana/mem000/analysis/ensemble/`, one directory down, and so do the filter's
 increment and its two spread files. Two of those four share a filename with the
 deterministic analysis and its increment, and every one of those collisions
 would leave a file that exists and holds the wrong state.
@@ -217,7 +217,7 @@ largest localization radius in use. What an experiment chooses is that size.
 **The departures need two homes.** Both applications write an observation-space
 file per observer, and the observer layer names one path. The control's are the
 experiment's product and keep it; the filter's are a diagnostic of the ensemble
-and go to `obs_out/<n>/ensemble/`, which is the same split v2 expressed as
+and go to `obs_out/<date>/ensemble/`, which is the same split v2 expressed as
 `OBS_OUT_CTRL_DIR` and `OBS_OUT_ENS_DIR`.
 
 The land mask threshold is not in this list. It differs by solver in both
@@ -241,7 +241,7 @@ three different experiments rather than three degrees of tolerance:
 `run_degraded` needs care. A filter given eighteen members where it expected
 twenty produces an analysis of lower rank, more sampling noise and less spread,
 and the effect outlives the cycle that caused it. So every cycle writes
-`ana/<n>/members.json`, whether or not anything was missing: two experiments
+`run/<date>/ana/members.json`, whether or not anything was missing: two experiments
 that differ in which members ran are not comparable, and nothing else would say
 so.
 

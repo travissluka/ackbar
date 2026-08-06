@@ -42,11 +42,12 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import slurm
 from ackbar.cli import main
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -128,13 +129,13 @@ def run(archive, tmp_path_factory):
     path = tmp_path_factory.mktemp("cfg") / f"{NAME}.yaml"
     path.write_text(yaml.safe_dump(source))
 
-    paths = Paths.of({"experiment": {"name": NAME}}, load_site())
+    paths = experiment_paths(NAME, load_site())
     _purge(paths)
     assert main(["create", str(path)]) == 0
     assert main(["start", NAME]) == 0
     assert wait_for_quiet(NAME, QUIET) == "drained"
-    yield Paths.of({"experiment": {"name": NAME}}, load_site())
-    _purge(Paths.of({"experiment": {"name": NAME}}, load_site()))
+    yield experiment_paths(NAME, load_site())
+    _purge(experiment_paths(NAME, load_site()))
 
 
 # --- reading what a run left behind ------------------------------------------
@@ -316,13 +317,15 @@ def test_every_cycle_records_which_members_it_had(run):
     nothing else in the output would say so. "All seven were there" belongs in
     the same file and the same shape as "one was not".
     """
-    for cycle in KEPT:
-        record = json.loads(
-            (run.cycle_out("ana", cycle) / "members.json").read_text())
+    # Every cycle, not just the ones whose restarts survive. The record moved
+    # out of `run/<date>/ana/`, where it was reaped along with the restart sets
+    # it describes, and is beside the compressed analysis now, which is kept.
+    for cycle in CYCLES:
+        record = json.loads(run.member_list(cycle).read_text())
         assert record["policy"] == "replace_from_mean"
         assert record["assimilated"] == list(MEMBERS)
 
 
 def test_the_experiment_finished(run):
-    assert sorted(p.name for p in run.sub("stats").glob("*.json")) == [
-        f"{cycle}.json" for cycle in CYCLES]
+    assert [run.stats_file(cycle).exists() for cycle in CYCLES] == \
+        [True] * len(CYCLES)

@@ -60,18 +60,19 @@ def _frozen(name):
     could change under it between cycle 1 and cycle 50.
     """
     site = load_site()
-    paths = Paths(
-        experiment=name,
-        output_root=Path(site["output_root"]),
-        scratch_root=Path(site["scratch_root"]),
-    )
-    if not paths.frozen_config.exists():
+    # The frozen config is found by name alone, because `Paths` needs the cycle
+    # dates to spell any other path and those come out of the very file being
+    # located. One literal join, here and nowhere else, and everything after it
+    # goes through `Paths.of`.
+    frozen = Path(site["output_root"]) / name / "cfg" / "experiment.yaml"
+    if not frozen.exists():
         raise CreateError(
             f"no experiment named {name!r} under {site['output_root']} "
-            f"({paths.frozen_config} does not exist). Run `ackbar create` first."
+            f"({frozen} does not exist). Run `ackbar create` first."
         )
-    with open(paths.frozen_config) as handle:
-        return yaml.safe_load(handle), site, paths
+    with open(frozen) as handle:
+        config = yaml.safe_load(handle)
+    return config, site, Paths.of(config, site)
 
 
 def cmd_create(args):

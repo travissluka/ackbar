@@ -1,10 +1,10 @@
 {
   "cycles": 50,
-  "nodes": 658,
-  "jobs": 3658,
+  "nodes": 678,
+  "jobs": 3678,
   "edges": {
     "afterok": 556,
-    "aftercorr": 100,
+    "aftercorr": 120,
     "afterany": 400
   },
   "tasks": {
@@ -29,6 +29,14 @@
       "jobs": 1050
     },
     "forecast.ext": {
+      "nodes": 10,
+      "jobs": 10
+    },
+    "hofx.ext": {
+      "nodes": 10,
+      "jobs": 10
+    },
+    "post.fcst": {
       "nodes": 10,
       "jobs": 10
     },

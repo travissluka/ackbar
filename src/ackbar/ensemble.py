@@ -47,7 +47,8 @@ POLICIES = ("fail_cycle", "run_degraded", "replace_from_mean")
 
 #: What ACKBAR calls the record of which members a cycle had. Beside the
 #: analysis rather than under `cfg/`, for the same reason the realized observer
-#: list is: it is a product of the cycle and not of the configuration.
+#: list is: it is a product of the cycle and not of the configuration. The path
+#: is `Paths.member_list`, which puts it on the kept tier.
 LEDGER = "members.json"
 
 
@@ -113,10 +114,12 @@ def resolve(config, paths, cycle, members, stamp=STAMP):
 def _record(paths, cycle, policy, present, missing, rebuilt):
     """The cycle's own account of its ensemble.
 
-    Written next to the analysis so that a comparison between two experiments
-    can find it without knowing how either of them was run.
+    Written next to the compressed analysis so that a comparison between two
+    experiments can find it without knowing how either of them was run, and so
+    that it is still there when that comparison happens: the restart sets it
+    describes are reaped within a couple of cycles.
     """
-    target = paths.cycle_out("ana", cycle) / LEDGER
+    target = paths.member_list(cycle)
     payload = {
         "cycle": cycle,
         "policy": policy,
@@ -134,7 +137,7 @@ def _record(paths, cycle, policy, present, missing, rebuilt):
 
 def read(paths, cycle):
     """The record `resolve` wrote, or None if this cycle has no ensemble."""
-    target = paths.cycle_out("ana", cycle) / LEDGER
+    target = paths.member_list(cycle)
     if not target.exists():
         return None
     return json.loads(target.read_text())

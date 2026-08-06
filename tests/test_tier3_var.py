@@ -50,11 +50,12 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import slurm
 from ackbar.cli import main
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -156,12 +157,12 @@ def run_experiment(name, archive, tmp_path_factory):
     path = tmp_path_factory.mktemp("cfg") / f"{name}.yaml"
     path.write_text(yaml.safe_dump(source))
 
-    paths = Paths.of({"experiment": {"name": name}}, load_site())
+    paths = experiment_paths(name, load_site())
     _purge(paths)
     assert main(["create", str(path)]) == 0
     assert main(["start", name]) == 0
     assert wait_for_quiet(name, QUIET[name]) == "drained"
-    return Paths.of({"experiment": {"name": name}}, load_site())
+    return experiment_paths(name, load_site())
 
 
 @pytest.fixture(scope="module")
@@ -206,7 +207,7 @@ def analysis_products(paths, cycle, member=0):
 
 def emitted(paths, cycle):
     """The document the analysis actually read, kept out of scratch."""
-    document = sorted((paths.sub("log") / str(cycle)).glob("da.*.var.yaml"))
+    document = sorted((paths.log_dir(cycle)).glob("da.*.var.yaml"))
     assert len(document) == 1, f"cycle {cycle}: {document}"
     return yaml.safe_load(document[0].read_text())
 
@@ -341,15 +342,20 @@ def test_the_analysis_recovers_the_anomaly_the_observations_saw(persist, archive
 
 
 def test_each_cycle_corrects_its_own_background(persist):
-    """`rst/<n-1>`, never the analysis directory this task writes into.
+    """The previous cycle's restart, never the analysis this task writes into.
 
     With a solver configured, "where does the forecast start" and "what does the
     analysis correct" are different questions with different answers, and one
     function answering both would make the analysis correct the analysis.
+
+    Compared against the path `Paths` computes rather than a suffix of it: the
+    suffix form passed for every layout that happened to end in the same three
+    components, which is most of them.
     """
     for cycle in CYCLES:
         basename = emitted(persist, cycle)["cost function"]["background"]["basename"]
-        assert basename.rstrip("/").endswith(f"rst/{cycle - 1}/mem000")
+        assert basename.rstrip("/") == \
+            str(persist.member_out("rst", cycle - 1, 0))
 
 
 # --- what reaches the restart -------------------------------------------------
@@ -435,8 +441,8 @@ def test_mom6_integrates_the_analysed_restart(cycled):
     # restarts, which is itself evidence that the cycles after them completed.
     for cycle in KEPT:
         assert (cycled.member_out("rst", cycle, 0) / "coupler.res").exists()
-    assert sorted(p.name for p in cycled.sub("stats").glob("*.json")) == [
-        f"{cycle}.json" for cycle in CYCLES]
+    assert [cycled.stats_file(cycle).exists() for cycle in CYCLES] == \
+        [True] * len(CYCLES)
 
 
 def test_the_model_read_the_analysed_restart(cycled):
@@ -480,5 +486,40 @@ def test_the_cycle_over_the_gap_still_assimilated_what_it_had(persist):
 def test_the_experiment_finished(persist):
     """Nothing above proves the run got past the gap: a workflow that stopped at
     cycle 2 would satisfy every assertion about cycles 1 and 2."""
-    assert sorted(p.name for p in persist.sub("stats").glob("*.json")) == [
-        f"{cycle}.json" for cycle in CYCLES]
+    assert [persist.stats_file(cycle).exists() for cycle in CYCLES] == \
+        [True] * len(CYCLES)
+
+
+# --- the compressed record, which nothing used to check ----------------------
+
+def test_the_compressed_states_were_actually_written(cycled):
+    """`post.state` is a leaf, so its failure does not strand the cycle.
+
+    Which is right, and it is also why this test has to exist. Nothing in the
+    graph waits on the state record, so a `post.state` that raised every cycle
+    left a drained experiment, a full `run/` tree and an empty `bkg/`, and the
+    whole tier 3 suite passed. It did exactly that on this domain: a regional
+    MOM6 is built with symmetric memory and writes `u` a column wider than the
+    gridspec's staggered grid, and the reduction refused the shape instead of
+    taking the tracer-sized corner `writeback` writes into.
+    """
+    for cycle in CYCLES:
+        product = cycled.product("bkg", cycle + 1, 0)
+        assert product.exists(), product
+        assert not product.with_name(product.name + ".partial").exists()
+
+
+def test_the_record_carries_the_velocities_on_their_own_grids(cycled):
+    """The fields that made the reduction fail, checked for rather than skipped.
+
+    A record without `u` and `v` is one a Loop Current comparison cannot see the
+    currents in, and the failure mode this guards is silent: a field whose grid
+    does not match is easy to drop and nothing downstream would say so.
+    """
+    netCDF4 = pytest.importorskip("netCDF4")
+    with netCDF4.Dataset(cycled.product("bkg", CYCLES[0] + 1, 0)) as data:
+        for name in ("temperature", "salinity", "sea_surface_height",
+                     "eastward_velocity", "northward_velocity"):
+            assert name in data.variables, name
+        assert data["eastward_velocity"].shape[-2:] == data["mask_u"].shape
+        assert data["temperature"].shape[-2:] == data["mask"].shape

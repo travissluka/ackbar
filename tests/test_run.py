@@ -166,31 +166,54 @@ def test_scratch_is_removed_on_success_and_kept_on_failure(env):
     assert paths.scratch(3, "da").exists()
 
 
-def test_a_task_with_no_body_yet_says_so_plainly(env):
-    """A task in the data path with no implementation is an error, not a no-op.
+def test_a_deferred_task_says_so_rather_than_pretending(env):
+    """A declared task with no body announces itself instead of exiting 0 quietly.
 
-    `forecast.ext` is the one left: it is the same executable as the forecast
-    with a different diag_table and a different product, and it arrives with the
-    phase that scores those diagnostics. A stub body standing in for it would
-    write a file claiming to be a long forecast. The deferred leaves say so
-    through DEFERRED instead, and `recenter` is among them for a reason that is
-    not "unimplemented"; see the comment there.
+    `DEFERRED` is down to `b.vt` and `verify`. `forecast.ext` used to be here and
+    is not any more: it runs the real model, for `forecast.extended.length`,
+    writing at `forecast.extended.slots` into `run/<init>/fcst/`.
     """
     config, site, paths = env
     config = json.loads(json.dumps(config))
     config["model"] = {"name": "mom6sis2"}
-    with pytest.raises(run.TaskError, match="phase"):
+    assert run.deferred_task(config, "verify")
+    assert not run.deferred_task(config, "forecast.ext")
+
+
+def test_a_long_forecast_with_nothing_configured_is_an_error_not_a_traceback(env):
+    """Unreachable through the graph, which is exactly why it needs a message.
+
+    The node only exists when `forecast.extended` is set, so this can only be
+    reached by hand or by a heal against an edited config. Without the guard the
+    symptom is an AttributeError from inside the path layer, which says nothing
+    about what is actually wrong.
+    """
+    config, site, paths = env
+    config = json.loads(json.dumps(config))
+    config["model"] = {"name": "mom6sis2"}
+    config.pop("forecast", None)
+    with pytest.raises(run.TaskError, match="forecast.extended is not configured"):
         run.run_task(config, site, paths, 1, "forecast.ext", 1)
 
 
 # --- cleanup -----------------------------------------------------------------
 
 def _complete_cycle(env, cycle):
+    """The restart set *and* the proof every declared consumer is done with it.
+
+    `post.state` reads `rst/<n-1>`, is a leaf off the same forecast cleanup
+    keys on, and is therefore in cleanup's proof for exactly the reason hofx is.
+    A helper that writes the restarts alone would describe a cycle that has not
+    finished, so every test built on it would be testing the refusal.
+    """
     _, _, paths = env
     for member in (1, 2):
         target = paths.member_out("rst", cycle, member) / "restart.stub"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"x")
+        proof = paths.sentinel(cycle, "post.state", member)
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text("{}")
 
 
 def test_cleanup_drops_only_what_no_forecast_can_still_read(env):
@@ -202,12 +225,19 @@ def test_cleanup_drops_only_what_no_forecast_can_still_read(env):
     assert paths.cycle_out("rst", 2).exists()
 
 
-def test_cleanup_reaps_the_analysis_on_the_same_rule_as_the_restarts(env):
-    """`ana/` grows at the same rate as `rst/` and used to grow forever.
+def test_cleanup_reaps_the_analysis_a_cycle_before_the_restarts(env):
+    """`ana/` grows at the same rate as `rst/` and is released a cycle sooner.
 
     In a DA run the forecast starts from `ana/<n>/mem###`, so writeback leaves a
     whole restart set there per member per cycle. Reaping `rst/` alone is an
     experiment that cycles happily for a week and fills the disk in the second.
+
+    The horizon is its own, though, and that is the point of this test. `ana/n`
+    is read by `forecast(n)` and by nothing else, so `rst/n` existing, which is
+    the proof this task already requires, says nothing can read it again.
+    `rst/n` and `slot/n` are read by cycle *n+1* and have to wait a cycle
+    longer. On a twenty member run that difference is a whole cycle of member
+    restart sets held for nothing.
     """
     _, _, paths = env
     for cycle in (1, 2):
@@ -219,32 +249,34 @@ def test_cleanup_reaps_the_analysis_on_the_same_rule_as_the_restarts(env):
 
     do(env, 3, "cleanup")
     assert not paths.cycle_out("ana", 1).exists()
-    # And it is the same rule, not a second one: the cycle whose restarts are
-    # kept keeps its analysis too.
-    assert paths.cycle_out("ana", 2).exists()
+    # Cycle 2 is the horizon cycle: its restarts are kept, because cycle 3 has
+    # still to read them, and its analysis is not, because cycle 2's own
+    # forecast is the only thing that ever wanted it and has demonstrably run.
+    assert not paths.cycle_out("ana", 2).exists()
+    assert paths.cycle_out("rst", 2).is_dir()
 
 
 def test_cleanup_reaps_the_sub_window_states_too(env):
-    """`bkg/` grows faster than either of the other two.
+    """`slot/` grows faster than either of the other two.
 
     A slot state is a full 3D field, so a six slot window is six times the
     per-cycle output of the restarts it sits beside. It is safe under the same
-    proof: those are `forecast(drop)`'s states, read by `da(drop + 1)`, and
-    `rst/<keep>` existing means that analysis and the forecast after it are both
-    done with them.
+    proof: those are `forecast(drop)`'s states, read by `da(drop + 1)`, and the
+    horizon cycle's `rst` existing means that analysis and the forecast after it
+    are both done with them.
     """
     _, _, paths = env
     for cycle in (1, 2):
         _complete_cycle(env, cycle)
         for member in (1, 2):
             for hour in ("20180415T060000Z", "20180415T120000Z"):
-                slot = paths.member_out("bkg", cycle, member) / hour / "MOM.res.nc"
+                slot = paths.member_out("slot", cycle, member) / hour / "MOM.res.nc"
                 slot.parent.mkdir(parents=True, exist_ok=True)
                 slot.write_bytes(b"x")
 
     do(env, 3, "cleanup")
-    assert not paths.cycle_out("bkg", 1).exists()
-    assert paths.cycle_out("bkg", 2).exists()
+    assert not paths.cycle_out("slot", 1).exists()
+    assert paths.cycle_out("slot", 2).exists()
 
 
 def test_a_forecast_declares_every_state_it_was_asked_to_write(env):
@@ -331,24 +363,85 @@ def test_a_cleanup_that_refused_collects_the_arrears_on_its_next_pass(env):
     assert paths.cycle_out("rst", 3).exists()
 
 
-def test_a_keep_rule_pins_one_cycle_in_every_n(env):
+def test_a_keep_rule_pins_a_restart_every_so_often(env):
     """What makes a long experiment branchable.
 
     Without it the states left when a fifty cycle run finishes are cycles 49 and
     50, so re-running a segment after a mistake found at cycle 40 means starting
     from cycle 0.
+
+    A duration rather than a cycle count, so the rule survives a change of cycle
+    length and can say "every three days", which v2's `SAVE_RST_REGEX` over the
+    directory name could not.
     """
     config, _, paths = env
-    config["cleanup"] = {"keep_every": 2}
+    config["cleanup"] = {"keep_every": "P2D"}   # cycles are PT24H here
     for cycle in (1, 2, 3, 4):
+        _complete_cycle(env, cycle)
+
+    do(env, 4, "cleanup")
+    assert not paths.cycle_out("rst", 2).exists()
+    assert paths.cycle_out("rst", 1).exists()
+    assert paths.cycle_out("rst", 3).exists()
+    # And the initial condition, which is cycle 0 and is what a variant would
+    # actually be branched from.
+    assert paths.cycle_out("rst", 0).exists()
+
+
+def test_a_pin_holds_the_restart_and_not_the_states_beside_it(env):
+    """`ana` and `slot` at a pinned date carry nothing the pinned `rst` does not.
+
+    A pinned cycle exists so an experiment can be branched from it, and that
+    needs the set the next forecast would start from. Pinning the other two as
+    well would hold the fastest-growing directories open for the life of the run
+    and buy nothing.
+    """
+    config, _, paths = env
+    config["cleanup"] = {"keep_every": "P1D"}   # every cycle is pinned
+    for cycle in (1, 2, 3):
+        _complete_cycle(env, cycle)
+        for member in (1, 2):
+            target = paths.member_out("ana", cycle, member) / "restart.stub"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"x")
+
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists()
+    assert not paths.cycle_out("ana", 1).exists()
+
+
+def test_cleanup_collects_the_scratch_a_failure_left_behind(env):
+    """The one thing nothing else was collecting.
+
+    A task deletes its own scratch on success and keeps it on failure, which is
+    right: it is the whole debugging trace. Nothing then removed it, so every
+    failed attempt of a long experiment left a full model run directory behind
+    for the life of the run.
+    """
+    _, _, paths = env
+    for cycle in (1, 2):
+        _complete_cycle(env, cycle)
+    for cycle in (1, 2):
+        stranded = paths.scratch(cycle, "forecast", 1)
+        stranded.mkdir(parents=True, exist_ok=True)
+        (stranded / "MOM_input").write_bytes(b"x")
+
+    do(env, 3, "cleanup")
+    assert not paths.scratch(1, "forecast", 1).exists()
+    assert paths.scratch(2, "forecast", 1).exists()
+
+
+def test_the_rolling_window_is_a_setting(env):
+    # One completed cycle behind the current one is the tightest correct answer
+    # and the default; an experiment being healed repeatedly wants headroom.
+    config, _, paths = env
+    config["cleanup"] = {"keep_cycles": 2}
+    for cycle in (1, 2, 3):
         _complete_cycle(env, cycle)
 
     do(env, 4, "cleanup")
     assert not paths.cycle_out("rst", 1).exists()
     assert paths.cycle_out("rst", 2).exists()
-    # And the initial condition, which is cycle 0 and is what a variant would
-    # actually be branched from.
-    assert paths.cycle_out("rst", 0).exists()
 
 
 def test_cleanup_waits_for_the_hofx_reading_the_set_it_would_delete(env):
@@ -379,6 +472,12 @@ def test_cleanup_waits_for_the_long_forecast_still_integrating(env):
     That is the whole reason its cadence is a setting. A running model has
     already opened its restarts, but a requeued one rebuilds `INPUT/` from
     scratch and would find the tree gone.
+
+    And not only the forecast: `post.fcst` reduces its trajectory afterwards,
+    out of `run/<n>/fcst/`, which this task reaps. Both are leaves, so nothing
+    in the graph orders cleanup after either of them, and waiting on the
+    forecast alone would delete the states in the window between the model
+    exiting and its own reduction reading them.
     """
     config, _, paths = env
     config["forecast"] = {"extended": {"length": "P7D", "every": "PT24H"}}
@@ -388,10 +487,23 @@ def test_cleanup_waits_for_the_long_forecast_still_integrating(env):
     do(env, 3, "cleanup")
     assert paths.cycle_out("rst", 1).exists()
 
-    for cycle in (1, 2):
-        sentinel = paths.sentinel(cycle, "forecast.ext", 1)
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text("{}")
+    def finish(task):
+        for cycle in (1, 2):
+            sentinel = paths.sentinel(cycle, task, 1)
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.write_text("{}")
+
+    finish("forecast.ext")
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists(), \
+        "the model exited but nothing has reduced its trajectory yet"
+
+    finish("post.fcst")
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("rst", 1).exists(), \
+        "the departures have still to be computed from the same trajectory"
+
+    finish("hofx.ext")
     do(env, 3, "cleanup")
     assert not paths.cycle_out("rst", 1).exists()
 

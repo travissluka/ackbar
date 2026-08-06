@@ -189,6 +189,46 @@ TASKS = (
         description="long forecast on its own cadence, a leaf with no successor",
     ),
     TaskDef(
+        name="hofx.ext",
+        # Unlike `hofx`, this runs whatever the solver is. In a DA run the
+        # analysis application produces departures for the *cycling* background
+        # and for nothing else, so without this the long forecast is the one
+        # thing in the experiment with no observation-space score, which is the
+        # score forecast verification is made of.
+        # The four-dimensional application, because that is what a forecast
+        # trajectory is: states at a cadence, and each observation compared
+        # against the one nearest its own time. The three-dimensional one would
+        # need a run per slot and would compare a 06Z observation against an 00Z
+        # state.
+        #
+        # One application run per cycle the forecast covers, rather than one
+        # over the whole five days. That is a memory decision as much as a
+        # bookkeeping one: the four-dimensional application holds the whole
+        # trajectory it is given, so a single run over a five day forecast at a
+        # three hour cadence holds forty states at once. At `gom_25km` that is
+        # nothing; on a real domain it is the thing that will not fit, and the
+        # per-cycle split is already the smaller unit to fall back to. If even a
+        # cycle is too much the next split is by sub-window, which needs no
+        # graph change, only a loop inside the body.
+        when=lambda config: (bool(config.get("forecast", {}).get("extended"))
+                             and _has_obs(config)),
+        member_level=True,
+        exe=lambda config: f"{SOCA_BIN}/soca_hofx.x",
+        description="observation evaluation of the long forecast, lead by lead",
+    ),
+    TaskDef(
+        name="post.fcst",
+        # Not folded into `post.state`, and the reason is the graph rather than
+        # tidiness. `post.state` is an array over every member hanging off the
+        # cycling forecast; the long forecast runs for a subset, so an edge from
+        # it into `post.state` could not upgrade to `aftercorr` and would make
+        # one failed long forecast member cancel the record of every member's
+        # background. Its own task hangs off `forecast.ext` elementwise instead.
+        when=lambda config: bool(config.get("forecast", {}).get("extended")),
+        member_level=True,
+        description="the compressed states of the long forecast, lead by lead",
+    ),
+    TaskDef(
         name="post.obs",
         when=_has_obs,
         description="observation-space statistics and the realized observer list",
@@ -197,7 +237,7 @@ TASKS = (
         name="post.state",
         when=lambda config: True,
         member_level=True,
-        description="state compression, ensemble mean and spread",
+        description="the compressed state record that outlives the cycle",
     ),
     TaskDef(
         name="verify",
@@ -248,6 +288,19 @@ EDGES = (
     ("writeback", "forecast", "afterok"),
     ("forecast", "forecast.ext", "afterok"),
     ("forecast", "post.state", "afterok"),
+    # Elementwise, because both endpoints are arrays over the same members, so
+    # this upgrades to `aftercorr` and member *i*'s evaluation waits only on
+    # member *i*'s forecast. That also keeps the stranding hazard contained: a
+    # long forecast member that fails strands its own evaluation and no one
+    # else's, which is the same shape as `forecast -> post.state`.
+    #
+    # It reads the observation archive directly rather than waiting on
+    # `stage.obs`, because the observations it needs are valid days *ahead* of
+    # this cycle and `stage.obs` stages this cycle's. Where a lead reaches past
+    # the end of the archive the observer drops for that lead and says so, which
+    # is the behaviour `observations.py` already has for a gap.
+    ("forecast.ext", "hofx.ext", "afterok"),
+    ("forecast.ext", "post.fcst", "afterok"),
     # Leaves take afterany: the harvest and the observation statistics are
     # exactly what is most wanted when a member has failed, so they must not be
     # cancelled along with it.
@@ -257,6 +310,19 @@ EDGES = (
     ("da", "verify", "afterany"),
     ("da.ens", "verify", "afterany"),
     ("forecast", "verify", "afterany"),
+    # There is deliberately no `post.state -> verify` edge, and tier 2 is what
+    # settled it. Scoring does read the compressed record rather than the
+    # restarts, so the edge looks right on paper. What it does in practice is
+    # strand `verify`: `post.state` is an array whose elements hang off the
+    # forecast by `aftercorr`, so a failed forecast member leaves its element
+    # *stranded* rather than failed, a stranded element never terminates on a
+    # permissive Slurm, and an `afterany` waiting on it never fires. The leaf
+    # most wanted when something failed would be the one thing that never ran.
+    #
+    # So `verify` keys off artifact existence instead, which is the same rule
+    # `cleanup` follows and for the same reason. Its `afterany` on the forecast
+    # already puts it after the states it reads; whichever records exist when it
+    # runs are the ones it scores, and it says which those were.
     ("da", "stats", "afterany"),
     ("da.ens", "stats", "afterany"),
     ("forecast", "stats", "afterany"),

@@ -41,11 +41,12 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import slurm
 from ackbar.cli import main
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -116,13 +117,13 @@ def run(archive, tmp_path_factory):
     path = tmp_path_factory.mktemp("cfg") / f"{NAME}.yaml"
     path.write_text(yaml.safe_dump(source))
 
-    paths = Paths.of({"experiment": {"name": NAME}}, load_site())
+    paths = experiment_paths(NAME, load_site())
     _purge(paths)
     assert main(["create", str(path)]) == 0
     assert main(["start", NAME]) == 0
     assert wait_for_quiet(NAME, QUIET) == "drained"
-    yield Paths.of({"experiment": {"name": NAME}}, load_site())
-    _purge(Paths.of({"experiment": {"name": NAME}}, load_site()))
+    yield experiment_paths(NAME, load_site())
+    _purge(experiment_paths(NAME, load_site()))
 
 
 # --- reading what a run left behind ------------------------------------------
@@ -150,7 +151,7 @@ def document(paths, cycle, task, name):
     file is stamped with the job id, so that a healed attempt lands beside the
     failed one instead of overwriting the evidence.
     """
-    found, = sorted((paths.sub("log") / str(cycle)).glob(f"{task}.*.{name}.yaml"))
+    found, = sorted((paths.log_dir(cycle)).glob(f"{task}.*.{name}.yaml"))
     return yaml.safe_load(found.read_text())
 
 
@@ -205,7 +206,8 @@ def test_the_ensemble_component_read_the_previous_cycles_forecasts(run):
     members = error["components"][1]["covariance"]["members"]
     assert len(members) == len(MEMBERS)
     for member, entry in zip(MEMBERS, members):
-        assert entry["basename"].rstrip("/").endswith(f"rst/{LAST - 1}/mem{member:03d}")
+        assert entry["basename"].rstrip("/") == \
+            str(run.member_out("rst", LAST - 1, member))
         assert entry["ocn_filename"] == "MOM.res.nc"
 
 
@@ -351,7 +353,7 @@ def test_one_record_says_which_members_both_halves_used(run):
     """
     import json
 
-    ledger = json.loads((run.cycle_out("ana", LAST) / "members.json").read_text())
+    ledger = json.loads(run.member_list(LAST).read_text())
     assert ledger["assimilated"] == list(MEMBERS)
 
     error = var_document(run, LAST)["cost function"]["background error"]

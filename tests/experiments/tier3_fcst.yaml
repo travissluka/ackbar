@@ -1,0 +1,53 @@
+# Tier 3: the long forecast and its verification, at gom_25km.
+#
+# `tier3_var` with `forecast.extended` switched on, and nothing else changed.
+# Everything about the cycling has already been proved there, so a failure here
+# is about the one path no other experiment exercises: a second forecast, run
+# from the same analysis as the cycling one, for longer, writing a trajectory
+# that three tasks then read.
+#
+# The reason this needs the real model rather than the stub is a collision the
+# stub could not see. `forecast.ext` used to write into `run/<n>/rst/mem###`,
+# the same directory as the cycling forecast, and `mom6sis2.commit` deletes
+# whatever it was not asked to claim: one real long forecast would have
+# destroyed the restart set the next cycle starts from. Under the stub the two
+# tasks wrote differently named files into that directory and coexisted.
+#
+# Cheap: a 2 day forecast at gom_25km is about 13 seconds of integration, and it
+# runs on cycles 1 and 3 of 3.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_fcst
+  description: phase 11, the long forecast and its departures at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+solver:
+  variational:
+    iterations:
+    - ninner: 3
+      gradient norm reduction: 1.0e-10
+forecast:
+  extended:
+    # Two days off a twelve hour cycle, so four cycles' worth of lead from each
+    # of cycles 1 and 3.
+    length: P2D
+    every: P1D
+    # Kept states every twelve hours, which is the cycle length, so the first
+    # kept lead is F012 and is the one `bkg/` already holds: this experiment is
+    # the one that proves that lead is a symlink rather than a second copy.
+    interval: PT12H
+    # And the trajectory the departures are computed against, four times finer.
+    # A three hour cadence over two days is sixteen states, which is what the
+    # four-dimensional application holds at once.
+    slots: PT3H

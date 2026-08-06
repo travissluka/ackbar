@@ -40,18 +40,23 @@ solver:
   # sources use; the stochastic alternative would need an observation
   # perturbation seed and is a different experiment.
   #
-  # The inflation numbers are the bundle's example, and they are three
-  # different mechanisms rather than three settings of one. `rtps` relaxes the
-  # posterior *spread* back towards the prior's, `rtpp` relaxes the posterior
-  # *perturbations*, and `mult` is a flat multiplier. They are here to be
-  # tuned: an ensemble that collapses and an ensemble that never converges are
-  # both this block, and neither announces itself as an inflation problem.
+  # One inflation mechanism, not three. SOCA offers `rtps`, which relaxes the
+  # posterior *spread* back towards the prior's, `rtpp`, which relaxes the
+  # posterior *perturbations*, and `mult`, a flat multiplier. The bundle's own
+  # example switches all three on at once because it is a unit test exercising
+  # three code paths, and inheriting that gives an ensemble whose spread is set
+  # by three interacting knobs none of which can be attributed afterwards.
+  #
+  # `rtps: 0.95` is soca-science's, and it is deliberately strong. Nothing on
+  # these domains maintains spread from outside: the atmosphere is a
+  # climatology, the open boundary is frozen, and the ensemble is time-lagged
+  # rather than continuously perturbed, so every source of spread is the filter
+  # relaxing what its own analysis removed. An LETKF here collapses without this
+  # and does not announce that it has.
   local ensemble DA:
     solver: Deterministic LETKF
     inflation:
-      rtps: 0.5
-      rtpp: 0.6
-      mult: 1.1
+      rtps: 0.95
 
   # The halo is what makes an LETKF parallel: each rank solves the points it
   # owns using every observation within `halo size` of them, so the number is a
@@ -73,16 +78,32 @@ vars:
 
 # Localization is added per observer. Each element names only the observer it
 # addresses; nothing else about the observer is restated.
+#
+# `rossby mult: 1.5` rather than soca-science's 1.0, which is a deliberate
+# departure and the one place this layer does not follow it. The localization
+# radius is what decides how far an observation is allowed to reach, and at one
+# Rossby radius on a domain that barely resolves one the filter sees so few
+# observations per analysis point that the update is rank starved before the
+# ensemble size is even reached. Widening it trades some spurious long-range
+# correlation for a better conditioned local problem, which is the right side of
+# that trade at these resolutions.
+#
+# It interacts with the halo above: `halo size` has to exceed the largest
+# localization radius anywhere on the domain or the filter solves with
+# observations it cannot see. 500 km against 1.5 x 45 km leaves an enormous
+# margin in the Gulf and much less of one near the equator, where the first
+# baroclinic radius grows past 200 km. A global domain needs the halo revisited
+# alongside this number.
 observations:
 - obs space:
     name: adt_3a
   obs localizations:
   - localization method: Rossby
-    rossby mult: 1.0
+    rossby mult: 1.5
     min grid mult: 1.0
 - obs space:
     name: sst_noaa19
   obs localizations:
   - localization method: Rossby
-    rossby mult: 1.0
+    rossby mult: 1.5
     min grid mult: 1.0

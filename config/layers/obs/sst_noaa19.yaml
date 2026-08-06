@@ -11,7 +11,7 @@ observations:
     obsdataout:
       engine:
         type: H5File
-        obsfile: $(obs_out_dir)/{{cycle}}/$(experiment).sst_noaa19.{{window_begin:%Y%m%d%H}}.nc4
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).sst_noaa19.{{window_begin:%Y%m%d%H}}.nc4
     simulated variables: [seaSurfaceTemperature]
     io pool:
       max pool size: 1

@@ -10,3 +10,6 @@ venv/
 pkg/jedi/build/
 pkg/jedi/test-data-release/
 .pytest_cache/
+
+# the monitor writes its site here
+site/monitor/

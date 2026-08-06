@@ -80,12 +80,15 @@ solver:
   # is recentred onto the deterministic analysis every cycle, which removes the
   # mean but not the spread, and an ensemble that both collapses and gets pulled
   # somewhere new each cycle is one whose covariance stops describing anything.
+  #
+  # `rtps` alone, at the same 0.95 `da/letkf` uses, and for the reasons recorded
+  # there. Equal on purpose: `osse-letkf` and `osse-hybrid` are meant to differ
+  # by their covariance and by nothing else, and an ensemble inflated differently
+  # between the two makes the pair uninterpretable.
   local ensemble DA:
     solver: Deterministic LETKF
     inflation:
-      rtps: 0.5
-      rtpp: 0.6
-      mult: 1.1
+      rtps: 0.95
   ensemble distribution: {name: Halo, halo size: 500000}
 
 ensemble:
@@ -95,20 +98,25 @@ ensemble:
   # which is cheaper and is a different experiment rather than a degraded one.
   source: letkf
 
-# Localization, per observer, for `da.ens`. The same values `da/letkf` uses:
+# Localization, per observer, for `da.ens`. The same values `da/letkf` uses,
+# including the 1.5 Rossby multiplier and the reasoning for it recorded there:
 # this is the observation-space localization the filter applies, and it is a
 # different mechanism from the model-space localization of the covariance above,
 # which is why both exist and neither implies the other.
+#
+# They have to stay equal to each other. `osse-letkf` and `osse-hybrid` differ
+# by their covariance and are meant to differ by nothing else, so a filter that
+# localizes differently between them makes the pair uninterpretable.
 observations:
 - obs space:
     name: adt_3a
   obs localizations:
   - localization method: Rossby
-    rossby mult: 1.0
+    rossby mult: 1.5
     min grid mult: 1.0
 - obs space:
     name: sst_noaa19
   obs localizations:
   - localization method: Rossby
-    rossby mult: 1.0
+    rossby mult: 1.5
     min grid mult: 1.0

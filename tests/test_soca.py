@@ -9,6 +9,8 @@ been allocated eight nodes.
 from pathlib import Path
 
 import pytest
+
+from conftest import PATHS_CYCLE
 import yaml
 
 from ackbar import soca
@@ -88,7 +90,7 @@ def config(tmp_path):
 @pytest.fixture
 def paths(tmp_path):
     return Paths(experiment="e", output_root=tmp_path / "o",
-                 scratch_root=tmp_path / "s").ensure()
+                 scratch_root=tmp_path / "s", **PATHS_CYCLE).ensure()
 
 
 # --- the configuration -------------------------------------------------------

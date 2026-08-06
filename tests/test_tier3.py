@@ -31,13 +31,14 @@ import time
 from pathlib import Path
 
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import ledger, slurm
 from ackbar.cli import main
 from ackbar.config.jobtime import member_dir
 from ackbar.duration import parse_duration, parse_instant
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, _rows, wait_for_quiet
@@ -67,7 +68,7 @@ def require_everything():
 def paths_for():
     # `Paths` needs the experiment name and the site roots, and nothing else, so
     # this works before the experiment exists as well as after.
-    return Paths.of({"experiment": {"name": NAME}}, load_site())
+    return experiment_paths(NAME, load_site())
 
 
 def digests(paths, cycles):
@@ -146,8 +147,8 @@ def both_runs():
     """The same experiment twice: once undisturbed, once killed and healed."""
     clean = cycle_through()
     reference = digests(clean, (2, 3))
-    stats = sorted(p.name for p in clean.sub("stats").glob("*.json"))
-    kept = sorted(p.name for p in clean.sub("rst").iterdir())
+    stats = [c for c in (1, 2, 3) if clean.stats_file(c).exists()]
+    kept = [c for c in (0, 1, 2, 3) if clean.cycle_out("rst", c).is_dir()]
 
     healed = cycle_through(kill_cycle=2)
     result = {"reference": reference, "stats": stats, "kept": kept,
@@ -196,7 +197,7 @@ def initial_energy(paths, cycle, member=0):
     a step, and `En` is a global integral of the velocity field.
     """
     stem = f"forecast.{member_dir(member)}"
-    written = sorted((paths.sub("log") / str(cycle)).glob(f"{stem}*.ocean.stats"))
+    written = sorted((paths.log_dir(cycle)).glob(f"{stem}*.ocean.stats"))
     assert written, f"cycle {cycle} left no ocean.stats"
     line = written[-1].read_text().splitlines()[2]
     return float(line.split("En")[1].split(",")[0])
@@ -225,11 +226,11 @@ def test_cleanup_keeps_only_what_a_forecast_can_still_read(both_runs):
     # Cycle n's forecast reads n-1, so with the run finished at cycle 3 the sets
     # worth keeping are 2 and 3. Cheap here, but the same rule runs at OM4_025,
     # where a restart set is gigabytes and this is not tidiness.
-    assert both_runs["kept"] == ["2", "3"]
+    assert both_runs["kept"] == [2, 3]
 
 
 def test_every_cycle_leaves_a_harvest(both_runs):
-    assert both_runs["stats"] == ["1.json", "2.json", "3.json"]
+    assert both_runs["stats"] == [1, 2, 3]
 
 
 # --- resuming ----------------------------------------------------------------

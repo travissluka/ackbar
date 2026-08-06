@@ -108,7 +108,7 @@ carry the real risk can be exercised until an HPC allocation is on the line.
 
 - **Build:** `sacct --json` parsing joined to the ledger, `squeue` reason reading, `scancel` of
   the stranded closure before resubmission, artifact-existence cleanup, and the per cycle
-  resource harvest into `stats/<cycle>.json`.
+  resource harvest into `run/<date>/stats.json`.
 - **Test:** tier 2, reusing the phase 2 fault matrix. Additionally: heal after each fault, heal
   twice, heal while the next cycle is already running, and cleanup racing a heal.
 - **Done when:** every fault in the matrix is recoverable with `ackbar heal` and no manual
@@ -201,7 +201,7 @@ attempt is precisely the wrong-time case.
 
 **The date lives in the restart, not in the configuration.** Once `INPUT/coupler.res` exists it
 overrides `coupler_nml`'s `current_date`, and what the namelist still controls is the *length* of
-the integration. Since setup materializes an initial condition into `rst/0`, every cycle
+the integration. Since setup materializes an initial condition into cycle 0's `rst`, every cycle
 including the first resumes, and `current_date` is a fallback a correct experiment never reaches.
 It gets written to match the cycle anyway, because the one case that reads it is a misconfigured
 cold start, and starting at the right date beats starting in 1958.
@@ -461,7 +461,7 @@ differ in what they need, and only one of them needs a new task.
 
 **Where this stands.** The mechanism and the arithmetic are both built and exercised on the free
 run: `forecast.slots`, one model run that dumps a state at each interval,
-`bkg/<n>/mem###/<valid time>/`, `cleanup` reaping them, and the window arithmetic below.
+`run/<date>/slot/mem###/<valid time>/`, `cleanup` reaping them, and the window arithmetic below.
 `solver.window` is now a mapping of a type and a length; the length is read, sets the window every
 document is given, and makes the cycling forecast overshoot by half of itself when the type is
 `fgat` or `4d`.
@@ -536,9 +536,9 @@ shorter window puts every date `C - W` out. `W` defaults to `C`, so it would nev
 The mechanism for that already existed, which is the one piece of luck in it. A forecast that runs
 past the analysis time and hands over an intermediate restart uses the same `restart_interval` the
 sub-window states are written by, so what changed is the length of the run and which of its sets
-`rst/<n>` is taken from. Every interval is a *complete* set: `coupler_restart` writes the calendar
+the cycle's `rst` is taken from. Every interval is a *complete* set: `coupler_restart` writes the calendar
 and the model time at that interval, FMS writes each component's restart under the same stamp,
-and MOM6 writes the ocean under its own, so `mom6sis2.commit` assembles `rst/<n>` by matching on
+and MOM6 writes the ocean under its own, so `mom6sis2.commit` assembles the set by matching on
 the stamp and undoing all three conventions. Nothing downstream can tell it was written mid-run.
 
 `cleanup` did **not** have to key off the longest window, which is what this used to say. Every
@@ -602,7 +602,7 @@ model. Item 5 is what is left.
    a forecast given an interval rewrites `MOM.res.nc` once per interval and ends with the single
    state it would have had anyway, while `coupler_main` reports having written an intermediate
    restart each time. Bit 1 is the time-stamped write. The symptom of getting this wrong is an
-   empty `bkg/` and a model log full of notes saying the opposite, which is why `commit` claims
+   empty slot directory and a model log full of notes saying the opposite, which is why `commit` claims
    each state by the name it should have rather than filing whatever it finds.
 
    The name is MOM6's own and not FMS's, which matters because the two are in the same directory.
@@ -632,7 +632,7 @@ model. Item 5 is what is left.
    The handoff time always falls inside the series when there is a window, because it is that
    window's own centre, so that one slot is a hard link into the restart set rather than a second
    copy of a gigabyte.
-3. **Where they go.** `bkg/<n>/mem###/<valid time>/MOM.res.nc`. `bkg/` was in `SUBDIRS` already
+3. **Where they go.** `run/<date>/slot/mem###/<valid time>/MOM.res.nc`. The directory was in the layout already
    and unused, which is where this was always going to land. Named by valid time and not by an
    `f###` offset: v2's symlink farm existed because its names were offsets and every consumer had
    to recompute them. A directory per slot rather than one directory of date-stamped files, so
@@ -657,7 +657,7 @@ without a linear model anywhere. `4denvar.yml` in the bundle is the shape, and
 `4dhybenvar.yml` is it with the static component beside it.
 
 Everything above applies, and one thing is added: the slot states have to exist **for every
-member**, not just for the control. So the `bkg/` output and its reaping become member-level,
+member**, not just for the control. So the slot output and its reaping become member-level,
 and the disk figure is slots times members times a full state per cycle. On a regional domain
 that is affordable and on `OM4_025` it is the constraint the phase is designed around.
 
@@ -692,6 +692,9 @@ what the slot states are for.
 As an ensemble source. Mostly falls out of phase 7.
 
 ## Phase 11. A Gulf of Mexico OSSE
+
+**The plan for the first one is [`osse.md`](osse.md).** What follows is why the phase is here
+and what it is blocked on; that file is what it runs.
 
 Not in the original plan. It was written as phase 7.5 on the argument that it belongs before any
 comparison between solvers, and that argument still holds: without a nature run, "did LETKF beat

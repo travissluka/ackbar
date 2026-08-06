@@ -47,3 +47,12 @@ solver:
     # its wall clock.
     - ninner: 3
       gradient norm reduction: 1.0e-10
+cleanup:
+  # Two, matching `tier3_var`, and for the same reason: `ana` under `run/` is
+  # released by its own cycle's forecast and so is reaped a cycle before the
+  # restarts, which at the default of one leaves a single analysis directory
+  # standing. The assertions here compare one cycle's analysis against another's.
+  # The rule itself is pinned at tier 0
+  # (`test_cleanup_reaps_the_analysis_a_cycle_before_the_restarts`); what this
+  # buys is a run with two of them left to compare.
+  keep_cycles: 2

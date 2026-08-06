@@ -9,7 +9,17 @@ scratch root happens to be where it is would be a test of rancor.
 site layer itself are unaffected by this.
 """
 
+from datetime import timedelta
+from pathlib import Path
+
 import pytest
+import yaml
+
+from ackbar.duration import parse_instant
+from ackbar.paths import Paths
+
+#: The committed experiment definitions tiers 2 and 3 run.
+EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 
 #: Deliberately not any real machine's roots.
 SITE = {
@@ -49,3 +59,29 @@ def fixed_site(request, monkeypatch):
     # the shell exported would make the executable check depend on which
     # checkout was activated last.
     monkeypatch.delenv("ACKBAR_ROOT", raising=False)
+
+
+#: The cycle a bare `Paths` is built against, for the tests that construct one
+#: directly rather than out of a config.
+#:
+#: `Paths` needs `start` and `length` because every directory it names is keyed
+#: by a date computed from them. A test that only cares about the *shape* of a
+#: path still has to supply them, so it supplies these, and a test that cares
+#: which date builds its own.
+PATHS_CYCLE = {
+    "start": parse_instant("2018-04-15T00:00:00Z"),
+    "length": timedelta(hours=24),
+}
+
+
+def experiment_paths(name, site):
+    """`Paths` for a committed test experiment, created or not.
+
+    `Paths` is keyed by cycle dates, so it needs a config. The frozen one is
+    authoritative once the experiment exists; before that the fixture it will be
+    created from says the same thing, which is what lets a purge run against an
+    experiment that was never created.
+    """
+    frozen = Path(site["output_root"]) / name / "cfg" / "experiment.yaml"
+    source = frozen if frozen.exists() else EXPERIMENTS / f"{name}.yaml"
+    return Paths.of(yaml.safe_load(source.read_text()), site)

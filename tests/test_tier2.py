@@ -125,8 +125,13 @@ EXPERIMENTS = {
     # an experiment that has moved on rather than of one that stopped dead, and
     # it is the case where the closure has to reach across a cycle boundary
     # without dragging in the healthy cycle 1 that produced it.
+    #
+    # `verify` and not `post.state`, which was the obvious leaf and is not one
+    # for this purpose: `post.state` reads the set `cleanup` drops, so it is in
+    # cleanup's proof, and failing it makes cleanup refuse rather than makes a
+    # leaf fail. That is correct behaviour and the wrong thing to test here.
     "t2_heal": dict(cycles=2, members=2, seconds=1,
-                    fail={"exit_nonzero": ["1.post.state.2", "2.writeback.2"]}),
+                    fail={"exit_nonzero": ["1.verify", "2.writeback.2"]}),
     # Its own experiment, and not part of the matrix, purely for wall clock. A
     # Slurm-enforced timeout costs a whole minute, and inside the matrix that
     # minute would run after the other faults rather than alongside them.
@@ -162,10 +167,15 @@ class Run:
 
 
 def _paths_for(name):
+    """Paths for an experiment that has already been created.
+
+    Out of its frozen config rather than out of its name, because every
+    directory `Paths` names is keyed by a cycle date and the dates come from
+    that file. `_purge` therefore cannot go through this, and takes a name.
+    """
     site = load_site()
-    return Paths(experiment=name,
-                 output_root=Path(site["output_root"]),
-                 scratch_root=Path(site["scratch_root"]))
+    frozen = Path(site["output_root"]) / name / "cfg" / "experiment.yaml"
+    return Paths.of(yaml.safe_load(frozen.read_text()), site)
 
 
 @pytest.fixture(scope="module")
@@ -174,11 +184,10 @@ def runs(tmp_path_factory):
     tmp_path = tmp_path_factory.mktemp("tier2")
     started = {}
     for name, options in EXPERIMENTS.items():
-        paths = _paths_for(name)
-        _purge(paths)
+        _purge(name)
         assert main(["create", str(build(tmp_path, name, **options))]) == 0
         assert main(["start", name]) == 0
-        started[name] = paths
+        started[name] = _paths_for(name)
 
     finished = {}
     for name, paths in started.items():
@@ -187,8 +196,8 @@ def runs(tmp_path_factory):
 
     yield finished
 
-    for paths in started.values():
-        _purge(paths)
+    for name in started:
+        _purge(name)
 
 
 @pytest.fixture
@@ -197,24 +206,35 @@ def experiment(tmp_path):
     created = []
 
     def factory(name, **kwargs):
-        paths = _paths_for(name)
-        _purge(paths)
-        created.append(paths)
+        _purge(name)
+        created.append(name)
         assert main(["create", str(build(tmp_path, name, **kwargs))]) == 0
-        return paths
+        return _paths_for(name)
 
     yield factory
 
-    for paths in created:
-        _purge(paths)
+    for name in created:
+        _purge(name)
 
 
-def _purge(paths):
-    if paths.ledger_file.exists():
+def _purge(target):
+    """Remove an experiment, whether or not it was ever created.
+
+    Takes a name or a `Paths`. It has to accept a name because `Paths` is built
+    out of the frozen config and purging has to work before that file exists;
+    it accepts a `Paths` because every tier 3 module already holds one, and
+    making each of them unpack a name would be churn for nothing.
+    """
+    name = target if isinstance(target, str) else target.experiment
+    site = load_site()
+    experiment_dir = Path(site["output_root"]) / name
+    ledger_file = experiment_dir / "run" / "ledger.jsonl"
+    if ledger_file.exists():
+        paths = _paths_for(name)
         live = set(slurm.queue()) & {r["job_id"] for r in ledger.read(paths)}
         slurm.scancel(sorted(live))
-    shutil.rmtree(paths.experiment_dir, ignore_errors=True)
-    shutil.rmtree(paths.scratch_dir, ignore_errors=True)
+    shutil.rmtree(experiment_dir, ignore_errors=True)
+    shutil.rmtree(Path(site["scratch_root"]) / name, ignore_errors=True)
 
 
 def wait_for_quiet(name, timeout=QUIET_TIMEOUT):
@@ -494,7 +514,7 @@ def test_exit_zero_having_written_nothing_is_caught_by_the_consumer(runs):
     assert silent[(1, "writeback", 1)] == "COMPLETED"
     assert silent[(1, "forecast", 1)] == "FAILED"
 
-    log = next(silent.paths.sub("log").joinpath("1").glob("forecast.*_1.out"))
+    log = next(silent.paths.log_dir(1).glob("forecast.*_1.out"))
     assert "missing" in log.read_text()
 
 
@@ -570,13 +590,13 @@ def healed(runs, profile):
 
 
 def test_a_leaf_failure_does_not_stop_the_next_cycle(healed):
-    """Cycle 1's post.state failed and cycle 2 ran anyway.
+    """Cycle 1's verify failed and cycle 2 ran anyway.
 
-    An `aftercorr` leaf has no dependents, so fail-stop does not apply to it,
-    and this is the case where a heal has to work on an experiment that has
-    moved on rather than on one that stopped dead.
+    A leaf has no dependents, so fail-stop does not apply to it, and this is the
+    case where a heal has to work on an experiment that has moved on rather than
+    on one that stopped dead.
     """
-    assert healed.before["1.post.state"].broken == (2,)
+    assert healed.before["1.verify"].broken == (None,)
     assert healed.before["2.da"].summary == state.COMPLETE
 
 
@@ -588,7 +608,7 @@ def test_the_blast_radius_is_the_failure_and_its_dependents(healed):
     # rather than merely waiting, while anything further down reads plain
     # `Dependency` and is only pending. Under `kill_invalid_depend` the whole
     # tail has been cancelled and every one of them is broken.
-    assert {"1.post.state", "2.writeback"} <= set(broken)
+    assert {"1.verify", "2.writeback"} <= set(broken)
     assert not {"1.forecast", "1.da", "2.da", "2.stage.obs"} & set(broken)
 
     # Downstream of the cycle 2 failure, all of it.
@@ -633,7 +653,7 @@ def test_members_that_already_succeeded_skip_rather_than_rerun(healed):
     between two arrays; the cost of it is paid back by the sentinel, which is
     the only thing that makes rerunning a finished member free.
     """
-    log = sorted(healed.paths.sub("log").joinpath("2").glob("writeback.*_1.out"))
+    log = sorted(healed.paths.log_dir(2).glob("writeback.*_1.out"))
     assert len(log) >= 2, "member 1 was not resubmitted with the array"
     assert "already complete, skipping" in log[-1].read_text()
 

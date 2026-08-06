@@ -26,11 +26,12 @@ import shutil
 from pathlib import Path
 
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import slurm
 from ackbar.cli import main
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -66,7 +67,7 @@ def require_everything():
 
 
 def paths_for():
-    return Paths.of({"experiment": {"name": NAME}}, load_site())
+    return experiment_paths(NAME, load_site())
 
 
 @pytest.fixture(scope="module")
@@ -136,7 +137,7 @@ def emitted(paths, cycle):
     Named with the job id, like every other trace, so that a healed attempt
     lands beside the failed one instead of overwriting the evidence.
     """
-    document = sorted((paths.sub("log") / str(cycle)).glob("hofx.*.hofx.yaml"))
+    document = sorted((paths.log_dir(cycle)).glob("hofx.*.hofx.yaml"))
     assert len(document) == 1, f"cycle {cycle}: {document}"
     return yaml.safe_load(document[0].read_text())
 
@@ -173,7 +174,7 @@ def test_the_output_is_a_departure_and_not_an_empty_file(run):
 
 
 def test_the_first_cycle_evaluates_the_initial_condition(run):
-    """Cycle 1's background is `rst/0`, which no forecast wrote.
+    """Cycle 1's background is cycle 0's restart, which no forecast wrote.
 
     The claim the whole "cycle 1 is not special" design rests on, asked of the
     one task that would most easily get it wrong: hofx in the first cycle has no
@@ -181,7 +182,8 @@ def test_the_first_cycle_evaluates_the_initial_condition(run):
     the wrong state.
     """
     document = emitted(run, 1)
-    assert document["state"]["basename"].rstrip("/").endswith("rst/0/mem000")
+    assert document["state"]["basename"].rstrip("/") == \
+        str(run.member_out("rst", 0, 0))
     assert document["state"]["date"] == \
         yaml.safe_load(EXPERIMENT.read_text())["cycle"]["start"]
 
@@ -190,8 +192,8 @@ def test_each_cycle_evaluates_its_own_background(run):
     # Cycle n reads what cycle n-1 wrote. A workflow that reads `rst/0` every
     # time passes the test above and is wrong from cycle 2 on.
     for cycle in (2, 3):
-        assert emitted(run, cycle)["state"]["basename"].rstrip("/").endswith(
-            f"rst/{cycle - 1}/mem000")
+        assert emitted(run, cycle)["state"]["basename"].rstrip("/") == \
+            str(run.member_out("rst", cycle - 1, 0))
 
 
 # --- the gap -----------------------------------------------------------------
@@ -224,6 +226,5 @@ def test_the_cycles_either_side_of_the_gap_are_untouched(run):
 def test_the_experiment_finished(run):
     # Nothing above proves the run got past the gap: a workflow that stopped at
     # cycle 2 would satisfy every assertion about cycles 1 and 2.
-    assert sorted(p.name for p in run.sub("stats").glob("*.json")) == [
-        "1.json", "2.json", "3.json"
-    ]
+    assert [run.stats_file(cycle).exists() for cycle in (1, 2, 3)] == \
+        [True, True, True]

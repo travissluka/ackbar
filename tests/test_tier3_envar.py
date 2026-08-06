@@ -23,11 +23,12 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from conftest import experiment_paths
 import yaml
 
 from ackbar import slurm
 from ackbar.cli import main
-from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -82,13 +83,13 @@ def run(tmp_path_factory):
     path = tmp_path_factory.mktemp("cfg") / f"{NAME}.yaml"
     path.write_text(yaml.safe_dump(source))
 
-    paths = Paths.of({"experiment": {"name": NAME}}, load_site())
+    paths = experiment_paths(NAME, load_site())
     _purge(paths)
     assert main(["create", str(path)]) == 0
     assert main(["start", NAME]) == 0
     assert wait_for_quiet(NAME, QUIET) == "drained"
-    yield Paths.of({"experiment": {"name": NAME}}, load_site())
-    _purge(Paths.of({"experiment": {"name": NAME}}, load_site()))
+    yield experiment_paths(NAME, load_site())
+    _purge(experiment_paths(NAME, load_site()))
 
 
 def test_the_cycle_ran_one_analysis_and_no_filter(run):
@@ -97,7 +98,7 @@ def test_the_cycle_ran_one_analysis_and_no_filter(run):
     The graph says so and this says the graph was obeyed: there is no `da.ens`
     sentinel, and every member's only state for the cycle is the recentred one.
     """
-    done = {path.stem for path in (run.sub("done") / str(LAST)).glob("*.json")}
+    done = {path.stem for path in (run.done_dir(LAST)).glob("*.json")}
     assert "da" in done
     assert "da.ens" not in done
     assert "recenter" in done

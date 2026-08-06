@@ -407,9 +407,12 @@ def _graph_step(config, graph):
     findings = []
     canonical = member_set(config)
     for node in sorted(graph.nodes, key=lambda n: n.id):
-        # forecast.ext is the one declared subset, and it is why the edge into
-        # it stays afterok rather than upgrading to aftercorr.
-        if node.members and node.task != "forecast.ext" and node.members != canonical:
+        # The long forecast and its evaluation are the declared subset, which is
+        # why the edge into `forecast.ext` stays afterok rather than upgrading.
+        # The edge *between* them does upgrade, and is safe to: they carry the
+        # same set as each other, which is the property `aftercorr` needs.
+        if node.members and node.task not in ("forecast.ext", "hofx.ext", "post.fcst") \
+                and node.members != canonical:
             findings.append(Finding(6, node.id, (
                 f"member array {list(node.members)} differs from the canonical "
                 f"index set {list(canonical)}"

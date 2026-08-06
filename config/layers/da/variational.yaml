@@ -164,9 +164,11 @@ solver:
           nlayers: 2
 
   variational:
-    # RPCG in both sources. The iteration count and the reduction target are
-    # v2's, and they are the two knobs to turn first if the minimization is
-    # either not converging or spending wall clock after it has.
+    # RPCG in both sources. The iteration count and the reduction target are the
+    # two knobs to turn first if the minimization is either not converging or
+    # spending wall clock after it has, and neither is soca-science's: it ran 50
+    # iterations against a reduction of 1e-3, so its solves stopped on the target
+    # and ours stop on the count. See `ninner` below.
     minimizer:
       algorithm: RPCG
     iterations:
@@ -184,4 +186,14 @@ vars:
 
   # Inner iterations per outer loop. One outer loop, which is what `3d` means
   # here; FGAT and 4D add loops rather than iterations.
-  ninner: 10
+  #
+  # 20, and every solve stops here rather than on the reduction target above:
+  # 1.0e-10 is far below what RPCG reaches in any affordable number of
+  # iterations on this problem, so the target is a guard against running forever
+  # and the count is what actually terminates. That means the analysis is a
+  # truncated minimization, which is a real and ordinary choice and not a
+  # failure, but it also means this number is the cost knob and the convergence
+  # knob at once. Raise it and watch the cost function trace before reading
+  # anything into a comparison between two experiments that used different
+  # values of it.
+  ninner: 20

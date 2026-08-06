@@ -2,10 +2,22 @@
 # Cold start a domain and promote the restarts it writes to the IC stage.
 #
 #   tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <source-slug>
-#   tools/coldstart-ic.sh gom_25km 2015-01-04T13 12 hycom-smoke
+#   tools/coldstart-ic.sh gom_25km 2015-01-04T12 12 hycom-smoke
 #
 # Writes $ACKBAR_STATIC_ROOT/ic/<domain>/<source-slug>/<YYYYmmddThh>, which is
 # what an experiment's `model.initial_condition` names.
+#
+# **Choose the start hour so that start + hours lands on 00, 06, 12 or 18Z.**
+# That is not a preference, it is the only chance anyone gets to choose it. The
+# product is named for the end of the integration, an experiment's `cycle.start`
+# has to equal its initial condition's valid time, and every analysis time after
+# that is `start + n * cycle.length`. So the hour picked here is the hour every
+# experiment built on this initial condition cycles on, for as long as it exists.
+#
+# The example above used to read `2015-01-04T13`, which is why the smoke initial
+# condition is valid at 01:00 and every tier 3 experiment cycles at 01Z and 13Z.
+# Analysis times are synoptic everywhere in operational and reanalysis practice,
+# and observation archives are binned on them.
 #
 # Cycling needs a restart set to start from, and a domain that initializes from
 # z-level temperature and salinity does not have one: MOM6 builds its state from

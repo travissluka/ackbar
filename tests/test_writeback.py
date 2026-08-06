@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+from conftest import PATHS_CYCLE
 import yaml
 
 netCDF4 = pytest.importorskip("netCDF4")
@@ -111,7 +113,7 @@ def scene(tmp_path):
     analysis = tmp_path / "ocn.ana.an.nc"
     write_analysis(analysis)
     paths = Paths(experiment="e", output_root=tmp_path / "o",
-                  scratch_root=tmp_path / "s").ensure()
+                  scratch_root=tmp_path / "s", **PATHS_CYCLE).ensure()
     return config, paths, background, analysis, paths.member_out("ana", 1, 0)
 
 

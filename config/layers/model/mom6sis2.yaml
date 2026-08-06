@@ -80,10 +80,22 @@ model:
     # file explains itself and is meant to be deleted.
     MOM_override.soca: $(mom6_override_dir)/MOM_override.soca
 
-  # Diagnostics chosen by what the forecast is for, which is the one thing that
-  # genuinely differs between the two forecast tasks. A cycling forecast's
-  # product is the restart set the next cycle reads; writing model history
-  # alongside it every cycle is how a free run fills a disk. Scoring output comes
-  # from `post.state` off the restarts, or from an extended forecast.
+  # Diagnostics chosen by what the forecast is for. A cycling forecast's product
+  # is the restart set the next cycle reads; writing model history alongside it
+  # every cycle is how a free run fills a disk.
+  #
+  # The extended forecast gets the same empty table, and that is a statement
+  # about where ACKBAR's scoring comes from rather than an omission. Everything
+  # scored here is read from a restart: `post.fcst` reduces the trajectory's
+  # states to `fcst/<init>/F###/`, and `hofx.ext` computes its departures from
+  # the same states. Model history would be a second, differently named copy of
+  # fields already being kept, and SOCA reads restart variable names (`Temp`,
+  # `Salt`, `ave_ssh`) rather than the diagnostic ones, which is why the
+  # `fields metadata` contract is with the restarts.
+  #
+  # Both entries are written out rather than one defaulting to the other,
+  # because a forecast with no diag_table is a decision and `_diag_table`
+  # refuses to guess it.
   diag_table:
     forecast: $(ackbar_root)/config/model/mom6sis2/diag_table.cycling
+    forecast.ext: $(ackbar_root)/config/model/mom6sis2/diag_table.cycling

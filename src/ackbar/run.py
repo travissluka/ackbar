@@ -25,11 +25,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (ensemble, ledger, mom6sis2, observations, persistence, soca,
-               writeback)
-from .config.jobtime import (cycle_time, forecast_overshoot, handoff_time,
-                             slot_times)
-from .graph.build import extended_cycles, extended_members, member_set
+from . import (ensemble, ledger, mom6sis2, observations, persistence, post,
+               soca, writeback)
+from .config.jobtime import (cycle_length, cycle_time, forecast_overshoot,
+                             handoff_time, slot_times)
+from .duration import format_duration, format_instant, parse_duration
+from .graph.build import (extended_cycles, extended_lead_cycles, extended_leads,
+                          extended_length, extended_members, extended_slots,
+                          member_set)
+from .paths import REAPED, cycle_of, lead_name
 from .graph.tasks import BY_NAME, ensemble_covariance, ensemble_source
 
 #: Faults the stub can inject, each named for the terminal state it produces.
@@ -114,9 +118,24 @@ def stub_io(config, paths, task, cycle, member):
         return [start], [rst(cycle, member)] + slots
     if task == "forecast.ext":
         start = restart_source(config, paths, cycle, member) / "restart.stub"
-        # Where a long forecast's output really belongs is a phase 4 question.
-        # The stub needs only a file that no other task writes.
-        return [start], [paths.member_out("rst", cycle, member) / "extended.stub"]
+        # Deliberately not `rst/`, which is where this used to write. Both
+        # forecasts start from the same set, so a state the long one wrote at a
+        # time the cycling one also reaches is a different trajectory from that
+        # point on, and `commit` deletes whatever it was not asked to claim. The
+        # stub exercises the separation on the scheduler, where a cycle is
+        # seconds, rather than leaving it to first run under the real model.
+        return [start], [paths.fcst_out(cycle, member, lead) / "restart.stub"
+                         for lead in extended_slots(config)]
+    if task == "hofx.ext":
+        return [paths.fcst_out(cycle, member, lead) / "restart.stub"
+                for lead in extended_slots(config)], \
+               [paths.fcst_obs(cycle, extended_length(config), member)
+                / "hofx.stub"]
+    if task == "post.fcst":
+        return [paths.fcst_out(cycle, member, lead) / "restart.stub"
+                for lead in stored_leads(config)], \
+               [paths.fcst_product(cycle, lead, member)
+                for lead in stored_leads(config)]
 
     # stage.obs, post.obs, post.state, verify: real work with no artifact worth
     # faking. They are here to exercise arrays, leaves and `afterany`.
@@ -163,7 +182,7 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: `config/layers/da/variational.yaml` naming a per-cycle file instead of a
 #: static one; at that moment this entry has to go, and the analysis would fail
 #: on a missing input rather than silently reading last month's mixed layer.
-DEFERRED = ("b.vt", "post.obs", "post.state", "verify")
+DEFERRED = ("b.vt", "verify")
 
 
 def deferred_task(config, task):
@@ -187,12 +206,13 @@ REAL_STATE = ("mom6sis2", "persistence")
 def real_model(config, task):
     """Whether this exact job runs a forecast rather than the stub.
 
-    Only `forecast`. `forecast.ext` is the same executable with a different
-    diag_table and a different product (diagnostics to score, not a restart set
-    anything reads), and it arrives with the phase that scores them; until then
-    it falls through to the stub's "no implementation yet", which says so.
+    Both forecasts. They are the same executable run for different lengths, at
+    different write cadences, into different directories, and every one of those
+    three differences reaches the model through `symbols(..., task=...)` and
+    `_forecast`'s target. Nothing about the model layer distinguishes them.
     """
-    return config["model"]["name"] in REAL_STATE and task == "forecast"
+    return config["model"]["name"] in REAL_STATE and \
+        task in ("forecast", "forecast.ext")
 
 
 #: Solvers with an implemented analysis. Anything else falls through to the
@@ -258,7 +278,23 @@ def real_observations(config, task):
         return False
     if task == "stage.obs":
         return True
-    return task == "hofx" and config["model"]["name"] in REAL_STATE
+    return task in ("hofx", "hofx.ext") and config["model"]["name"] in REAL_STATE
+
+
+def real_post(config, task):
+    """Whether this job runs a real post-processing body.
+
+    Both bodies reduce files the model and the analysis wrote, so both need a
+    model that writes them. Under the stub they fall through to `_stub`, which
+    is the right answer and not a gap: tier 2 exists to exercise the array
+    fan-out and the leaf edges of these two tasks, and a stub that summarized
+    nothing would still exercise both.
+
+    `post.obs` is not gated on the experiment having observers, because
+    `BY_NAME["post.obs"].when` already is: the node does not exist without them.
+    """
+    return (task in ("post.obs", "post.state", "post.fcst")
+            and config["model"]["name"] in REAL_STATE)
 
 
 def background(config, paths, cycle):
@@ -328,6 +364,8 @@ def task_io(config, paths, task, cycle, member):
         return _writeback_io(config, paths, cycle, member)
     if real_observations(config, task):
         return _observation_io(config, paths, task, cycle)
+    if real_post(config, task):
+        return _post_io(config, paths, task, cycle, member)
     return stub_io(config, paths, task, cycle, member)
 
 
@@ -518,6 +556,35 @@ def _observation_io(config, paths, task, cycle):
     return inputs, outputs
 
 
+def _post_io(config, paths, task, cycle, member):
+    """What the post-processing tasks read and write.
+
+    `post.obs` declares no inputs, for the reason `stage.obs` does not: it hangs
+    off `afterany` precisely so that it runs when the analysis has failed, and
+    the document it writes in that case is the one that says which observer has
+    no output. A declared input would make the missing file a refusal instead of
+    the finding.
+
+    `post.state` reads this cycle's own forecast output and declares the
+    compressed background as its output. The analysis is genuinely optional (a
+    free run has none) and is discovered rather than required, so naming either
+    side of it here would make every free run's post.state look unsatisfiable.
+    """
+    if task == "post.obs":
+        return [], [paths.obs_summary(cycle)]
+    if task == "post.fcst":
+        # The kept leads, minus the one `bkg/` already holds: that lead's
+        # product is a symlink this task creates, and a symlink whose target has
+        # not landed yet does not `exists()`, so declaring it here would make the
+        # task look unfinished for as long as `post.state` is still running.
+        return [paths.fcst_out(cycle, member, lead) / restart_stamp(config)
+                for lead in stored_leads(config)], \
+               [paths.fcst_product(cycle, lead, member)
+                for lead in stored_leads(config)]
+    return [paths.member_out("rst", cycle, member) / restart_stamp(config)], \
+           [paths.product("bkg", cycle + 1, member)]
+
+
 def run_task(config, site, paths, cycle, task, member=None):
     """Run one job to completion. Raises TaskError on anything unrecoverable."""
     sentinel = paths.sentinel(cycle, task, member)
@@ -550,8 +617,12 @@ def run_task(config, site, paths, cycle, task, member=None):
         _writeback(config, paths, cycle, task, member)
     elif task == "stage.obs" and real_observations(config, task):
         _stage_obs(config, paths, cycle)
+    elif task == "hofx.ext" and real_observations(config, task):
+        _hofx_ext(config, site, paths, cycle, task, member)
     elif task == "hofx" and real_observations(config, task):
         _hofx(config, site, paths, cycle, task)
+    elif real_post(config, task):
+        _post(config, paths, cycle, task, member)
     elif deferred_task(config, task):
         print(f"ackbar: {cycle}.{task} has no body yet and writes nothing that "
               f"anything reads; see DEFERRED in ackbar/run.py")
@@ -760,12 +831,34 @@ def _forecast(config, site, paths, cycle, task, member):
     run directory around them.
     """
     source = restart_source(config, paths, cycle, member)
-    target = paths.member_out("rst", cycle, member)
     # Only the cycling forecast. An extended forecast integrates past the
     # window on its own cadence, so a state it wrote at the same clock time is
     # a different trajectory, and putting it in the same directory would give
-    # the analysis two answers for one slot.
+    # the analysis two answers for one slot. That applies to the restart set it
+    # ends on as much as to the states along the way, which is why the target
+    # moves too: both forecasts start from the same set, and `commit` deletes
+    # whatever it was not asked to claim, so one directory for the two of them
+    # is the cycling forecast's output being destroyed by the long one.
     slots, handoff = None, None
+    if task == "forecast.ext":
+        start = cycle_time(config, cycle)
+        length = extended_length(config)
+        if length is None:
+            # Unreachable through the graph, which only creates this node when
+            # `forecast.extended` is set. Said plainly anyway, because without
+            # it the symptom is an AttributeError from inside the path layer.
+            raise TaskError(
+                f"{cycle}.{task}: forecast.extended is not configured, so there "
+                f"is no length to integrate for and nowhere for the result to go"
+            )
+        target = paths.fcst_out(cycle, member, length)
+        # Every state but the last, which is the unstamped set at the end of the
+        # run and is what `target` claims. No handoff: nothing resumes from a
+        # long forecast, which is what makes it a leaf.
+        slots = {start + lead: paths.fcst_out(cycle, member, lead)
+                 for lead in extended_slots(config) if lead != length} or None
+    else:
+        target = paths.member_out("rst", cycle, member)
     if task == "forecast":
         slots = {when: paths.slot_out(cycle, member, when)
                  for when in slot_times(config, cycle)} or None
@@ -965,6 +1058,52 @@ def _stage_obs(config, paths, cycle):
         print(f"ackbar:   dropped {name}, no input file for this window")
 
 
+def _hofx_ext(config, site, paths, cycle, task, member):
+    """Evaluate the long forecast's trajectory, over every cycle it reaches.
+
+    The observers are every covered cycle's own, which is what makes the result
+    comparable: a lead is scored against exactly the observations the cycling
+    background was scored against at that time. Their output is redirected under
+    `fcst/`, and that is not tidiness. The observer layer's `obsdataout` is
+    `obs_out/<T>/...`, rendered at the cycle being evaluated, so leaving it
+    alone would have a five day forecast overwrite the cycling departures of
+    every cycle it reaches.
+
+    Departures are not split by lead here. Each observation carries its own
+    time, so lead is `time - initialized` and the split is a grouping the
+    comparison does, not a set of files this has to produce.
+    """
+    start = cycle_time(config, cycle)
+    length = extended_length(config)
+    section = paths.fcst_obs(cycle, length, member)
+
+    observers = []
+    for lead in extended_lead_cycles(config):
+        for record in observations.observers(config, cycle + int(
+                lead.total_seconds() // cycle_length(config).total_seconds())):
+            if not record["present"]:
+                continue
+            record["output"] = str(section / Path(record["output"]).name)
+            observers.append(record)
+
+    states = {start + lead: paths.fcst_out(cycle, member, lead)
+              for lead in extended_slots(config)}
+    try:
+        written = soca.hofx4d(
+            config, site, paths, cycle, task,
+            initial=restart_source(config, paths, cycle, member),
+            states=states, observers=observers,
+            tstep=extended_slots(config)[0], begin=start, length=length,
+        )
+    except (mom6sis2.ModelError, observations.ObservationError) as error:
+        raise TaskError(f"{cycle}.{task} member {member}: {error}") from error
+
+    print(f"ackbar: {cycle}.{task} member {member}: {len(observers)} observer(s) "
+          f"over {len(states)} state(s) -> {section}")
+    for path in written:
+        print(f"ackbar: wrote {path}")
+
+
 def _hofx(config, site, paths, cycle, task):
     """Evaluate the staged observers against this cycle's background."""
     try:
@@ -978,6 +1117,128 @@ def _hofx(config, site, paths, cycle, task):
 
     for path in written:
         print(f"ackbar: wrote {path}")
+
+
+def _post(config, paths, cycle, task, member):
+    """Reduce what this cycle produced to something that outlives it.
+
+    Neither body raises on a missing input. They run under `afterany` and their
+    whole purpose at that moment is to record what did and did not appear, so a
+    refusal here would delete the diagnostic instead of writing it. What they
+    do raise on is a state that exists and is not the shape it claims to be,
+    which is a different thing entirely.
+    """
+    if task == "post.obs":
+        # Every configured observer, not only the staged ones: an observer that
+        # had no file for this window is a fact about the cycle, and the
+        # document that omits it cannot be told from one where it assimilated
+        # nothing.
+        payload = post.obs_stats(observations.observers(config, cycle),
+                                 paths.obs_summary(cycle))
+        totals = payload["totals"]
+        print(f"ackbar: {cycle}.post.obs: {totals['assimilated']} of "
+              f"{totals['count']} observations assimilated across "
+              f"{totals['observers']} observer(s), {totals['failed']} with no "
+              f"output -> {paths.obs_summary(cycle)}")
+        return
+
+    if task == "post.fcst":
+        _post_fcst(config, paths, cycle, member)
+        return
+
+    # **This cycle records only what this cycle produced.** Its forecast wrote a
+    # state valid at the *next* analysis time, which is the next cycle's
+    # background, so that is what goes to `bkg/<T(n+1)>`; its analysis is valid
+    # now and goes to `ana/<T(n)>`.
+    #
+    # Reading the previous cycle's restart instead would put the same numbers in
+    # the same files, and it cost two things. It made this task a consumer of
+    # the set `cleanup` drops, so the two raced and the proof that settles the
+    # race made the last cleanup of a run refuse, permanently, because nothing
+    # comes after it to try again. And the final cycle's forecast was recorded
+    # by nobody: `post.state` only ever looked backwards, so the last state the
+    # experiment produced had no `bkg/` file and its restart was reaped.
+    #
+    # The cost is that `bkg/` starts one cycle in. The state at the first
+    # analysis time is the offline initial condition, which is read-only in the
+    # static root and is not this experiment's output to record.
+    sources = {"bkg": (paths.member_out("rst", cycle, member), cycle + 1)}
+    analysed = paths.member_out("ana", cycle, member)
+    if (analysed / "MOM.res.nc").exists():
+        # A free run has no analysis, and that is a complete record of a free
+        # run rather than half a record of an experiment.
+        sources["ana"] = (analysed, cycle)
+
+    gridspec = Path(config["domain"]["static"]) / soca.GRIDSPEC
+    for state, (source, when) in sources.items():
+        target = paths.product(state, when, member)
+        try:
+            written = post.state_record(
+                state, source, gridspec, target, cycle=cycle, member=member,
+                valid=format_instant(cycle_time(config, when)))
+        except post.PostError as error:
+            raise TaskError(f"{cycle}.{task}: {error}") from error
+        print(f"ackbar: {cycle}.post.state: {state} {len(written)} field(s), "
+              f"{target.stat().st_size / 1e6:.1f} MB -> {target}")
+
+
+def stored_leads(config):
+    """The leads the long forecast keeps a state of its own for.
+
+    Every kept lead except the cycle length, which `bkg/` already holds. Both
+    forecasts start from the same set and the model is deterministic, so
+    integrating five days does not change the state at twelve hours: that lead
+    is the cycling forecast's background, recorded by `post.state` and linked
+    here rather than reduced a second time.
+
+    A link rather than a duplicate because it makes the equality *structural*.
+    Two independent reductions of what is supposed to be the same state can
+    quietly disagree, over rounding or a `FIELDS` change made on one path only,
+    and a link cannot.
+    """
+    step = cycle_length(config)
+    return tuple(lead for lead in extended_leads(config) if lead != step)
+
+
+def linked_lead(config):
+    """The lead `bkg/` supplies, or None when the cadences do not produce one."""
+    step = cycle_length(config)
+    return step if step in extended_leads(config) else None
+
+
+def _post_fcst(config, paths, cycle, member):
+    """Reduce the long forecast's states, and link the one `bkg/` already has."""
+    gridspec = Path(config["domain"]["static"]) / soca.GRIDSPEC
+    start = cycle_time(config, cycle)
+    for lead in stored_leads(config):
+        target = paths.fcst_product(cycle, lead, member)
+        try:
+            written = post.state_record(
+                "fcst", paths.fcst_out(cycle, member, lead), gridspec, target,
+                cycle=cycle, member=member,
+                valid=format_instant(start + lead),
+                extra={"initialized": format_instant(start),
+                       "lead": format_duration(lead)})
+        except post.PostError as error:
+            raise TaskError(f"{cycle}.post.fcst: {error}") from error
+        print(f"ackbar: {cycle}.post.fcst: {lead_name(lead)} {len(written)} "
+              f"field(s), {target.stat().st_size / 1e6:.1f} MB -> {target}")
+
+    lead = linked_lead(config)
+    if lead is None:
+        return
+    link = paths.fcst_product(cycle, lead, member)
+    target = paths.product("bkg", cycle + 1, member)
+    # Relative, so the experiment survives being moved, copied or rsynced whole,
+    # and so the link may be made before `post.state` has written its target:
+    # the two hang off different forecasts and race, and a relative link
+    # resolves whenever the file lands.
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(os.path.relpath(target, link.parent))
+    print(f"ackbar: {cycle}.post.fcst: {lead_name(lead)} -> {link.readlink()} "
+          f"(the cycling background, not a second copy of it)")
 
 
 # --- the tasks that are real from day one ------------------------------------
@@ -1049,27 +1310,37 @@ def _cleanup(config, paths, cycle):
     earlier still. So the horizon here is a property of the cycle rather than of
     the solver, and stays one setting the moment a window grows.
 
-    All three state directories go, not just `rst/`. In a DA run the forecast
-    starts from `ana/<n>/mem###`, which `writeback` fills with a whole restart
-    set per member per cycle, so `ana/` grows at the same rate as `rst/` and for
-    the same reason. `bkg/` grows *faster* than either once `forecast.slots` is
-    set: it is a full 3D state per slot per member per cycle, so a six slot
-    window is six times the per-cycle output of the restarts it sits beside.
-    Reaping one and not the others is how an experiment that cycles happily for
-    a week fills the disk in the second week. `obs_out/` is deliberately not
-    here: the departures are the experiment's product rather than an
-    intermediate, and they are kilobytes where these are gigabytes.
+    All three of `REAPED` go, not just `rst/`. In a DA run the forecast starts
+    from `run/<n>/ana/mem###`, which `writeback` fills with a whole restart set
+    per member per cycle, so it grows at the same rate as `rst/` and for the same
+    reason. `slot/` grows *faster* than either once `forecast.slots` is set: it
+    is a full 3D state per slot per member per cycle, so a six slot window is six
+    times the per-cycle output of the restarts it sits beside. Reaping one and
+    not the others is how an experiment that cycles happily for a week fills the
+    disk in the second week.
 
-    Everything at or below the horizon goes, not only `<n-2>` itself. A refusal
-    has to be a delay rather than a leak: this task considers one cycle, runs
-    once, and nothing revisits it, so indexing a single directory means one
-    incomplete cycle strands its predecessor's state for the life of the
-    experiment. Sweeping the range instead collects on the next pass whatever
+    They do not go at the same time, though, and the offsets in `REAPED` are why.
+    `ana/<n>` is consumed by `forecast(n)` inside its own cycle, so `rst/<n>`
+    existing, which is this task's proof, already says nothing can read it again.
+    `rst/<n>` and `slot/<n>` are read by cycle *n+1* and need `rst/<n+1>`. So
+    `ana` goes one cycle earlier than the other two, which is the earliest this
+    task ever sees it.
+
+    Nothing outside `run/<date>/` is ever touched. The compressed states under
+    `ana/` and `bkg/`, the departures under `obs_out/`, and the log, sentinel and
+    accounting inside the cycle's own run directory are the record of what
+    happened, and they are kilobytes where the states are gigabytes.
+
+    Everything at or below the horizon goes, not only the horizon cycle itself.
+    A refusal has to be a delay rather than a leak: this task considers one
+    cycle, runs once, and nothing revisits it, so indexing a single directory
+    means one incomplete cycle strands its predecessor's state for the life of
+    the experiment. Sweeping the range instead collects on the next pass whatever
     the last one declined to touch.
     """
     members = member_set(config)
     keep = cycle - 1
-    drop = cycle - 2
+    drop = keep - keep_cycles(config)
     if drop < 0:
         return
 
@@ -1090,6 +1361,14 @@ def _cleanup(config, paths, cycle):
     if BY_NAME["hofx"].when(config):
         proof.append(paths.sentinel(keep, "hofx"))
 
+    # `post.state` is deliberately *not* in this proof, and that is a property
+    # of what it reads rather than an omission. It reduces its own cycle's
+    # output, so by the time this task considers that cycle the reduction ran
+    # two cycles ago and cannot still be pending on it. It was a consumer of the
+    # dropped set once, and the entry that settled that race also made the last
+    # cleanup of a run refuse permanently, because nothing comes after it to try
+    # again. See `_post`.
+
     # A long forecast outlives the cycle it started from by construction, which
     # is the whole reason its cadence is a setting. It starts from the same
     # state as the cycling forecast (`ana/<n>` with an analysis, `rst/<n-1>`
@@ -1100,8 +1379,18 @@ def _cleanup(config, paths, cycle):
     if BY_NAME["forecast.ext"].when(config):
         long_forecast = extended_cycles(config, config["cycle"]["count"])
         for when in (drop, keep):
-            if when in long_forecast:
-                proof.extend(paths.sentinel(when, "forecast.ext", m)
+            if when not in long_forecast:
+                continue
+            # The long forecast itself, and both things that reduce it. Its
+            # trajectory now lives in `run/<n>/fcst/`, which is reaped, and
+            # `hofx.ext` and `post.fcst` run *after* it: waiting only on the
+            # forecast would delete the states between the forecast finishing
+            # and its own consumers reading them. They are leaves, so nothing
+            # else in the graph orders this task after them.
+            for task in ("forecast.ext", "hofx.ext", "post.fcst"):
+                if not BY_NAME[task].when(config):
+                    continue
+                proof.extend(paths.sentinel(when, task, m)
                              for m in extended_members(config, members))
 
     absent = [str(p) for p in proof if not p.exists()]
@@ -1110,44 +1399,120 @@ def _cleanup(config, paths, cycle):
               f"incomplete ({len(absent)} artifact(s) missing)")
         return
 
-    # `ana/<drop>` is safe under the same proof: it is what `forecast(drop)`
-    # started from, and `rst/<drop>` existing is what says that forecast ran.
-    # `bkg/<drop>` is safe under it too, and this is the one that needs saying:
-    # those are the slot states of `forecast(drop)`, read by `da(drop + 1)`,
-    # and `rst/<keep>` existing means that analysis and the forecast after it
-    # are both done with them.
-    for kind in ("rst", "ana", "bkg"):
-        for target in _reapable(paths, kind, drop, config):
-            shutil.rmtree(target)
-            print(f"ackbar: removed {target}")
+    # `ana` at the horizon is safe under the same proof: it is what that cycle's
+    # forecast started from, and its `rst` existing is what says that forecast
+    # ran. `slot` is safe under it too, and this is the one that needs saying:
+    # those are the sub-window states of the horizon cycle's forecast, read by
+    # the analysis one cycle later, and `rst/<keep>` existing means that analysis
+    # and the forecast after it are both done with them.
+    for target, kind in _reapable(paths, drop, config):
+        shutil.rmtree(target)
+        print(f"ackbar: removed {target}")
+
+    # Scratch too, and this is the one nothing else was collecting. A task
+    # deletes its own scratch on success and *keeps* it on failure, which is
+    # right: it is the whole debugging trace. But nothing then removed it, so
+    # every failed attempt of a long experiment left a full model run directory
+    # behind for the life of the run. By the time a cycle is this far behind the
+    # horizon its logs have been kept by `keep_traces` and its trace is no
+    # longer what anyone is reading.
+    for target in _reapable_scratch(paths, drop):
+        shutil.rmtree(target, ignore_errors=True)
+        print(f"ackbar: removed {target}")
 
 
-def _reapable(paths, kind, drop, config):
-    """The cycle directories of one kind at or below the horizon, oldest first.
+def keep_cycles(config):
+    """How many completed cycles behind the current one keep their state.
 
-    Skips the ones a keep rule pins. Without one an experiment holds only its
-    last two cycles the moment it finishes, so branching a variant off the
-    middle of a fifty cycle run, or re-running a segment after a mistake found
-    at cycle forty, means starting again from cycle zero. The deletion happens
-    in-cycle and is not reversible, so noticing afterwards is too late.
-
-    Counted in cycles rather than v2's `SAVE_RST_REGEX` date pattern, because
-    ackbar numbers cycles: a date regex existed there only because directories
-    were named by date.
+    One by default, which is the tightest correct answer: cycle n's forecast
+    reads cycle n-1's restarts, so n-2 is the earliest set nothing can need. It
+    is a setting because that is also the tightest *possible* answer, and an
+    experiment being healed repeatedly, or one whose analysis is being compared
+    against a rerun, wants more headroom than the minimum.
     """
-    keep_every = (config.get("cleanup") or {}).get("keep_every")
-    root = paths.sub(kind)
+    return (config.get("cleanup") or {}).get("keep_cycles", 1)
+
+
+def pinned(config, paths, cycle):
+    """Whether a keep rule holds this cycle's restarts open forever.
+
+    Without one an experiment holds only its last two cycles the moment it
+    finishes, so branching a variant off the middle of a fifty cycle run, or
+    re-running a segment after a mistake found at cycle forty, means starting
+    again from cycle zero. The deletion happens in-cycle and is not reversible,
+    so noticing afterwards is too late.
+
+    Stated as a duration rather than as v2's `SAVE_RST_REGEX="^......01.."`,
+    which pinned the first of each month by matching the directory name. A regex
+    over a date is a rule that changes meaning when the date format does, and it
+    cannot express "every three days" at all. A duration divides: cycle *n* is
+    pinned when its analysis time is an exact multiple of `keep_every` after
+    `cycle.start`.
+    """
+    every = (config.get("cleanup") or {}).get("keep_every")
+    if not every:
+        return False
+    if cycle <= 0:
+        # The materialized initial condition, and the branch point every other
+        # one is measured from. An experiment that kept a pin every week and
+        # dropped the state cycle 1 started from could be re-run from anywhere
+        # except its own beginning.
+        return True
+    offset = (cycle - 1) * paths.length
+    return not offset.total_seconds() % parse_duration(every).total_seconds()
+
+
+def _reapable(paths, drop, config):
+    """Every state directory at or below the horizon, oldest first.
+
+    Sweeps `run/` rather than indexing the horizon cycle, so that a cycle the
+    last pass declined to touch is collected by the next one.
+
+    Each kind has its own horizon, `drop` plus its offset in `REAPED`, because
+    each is released by a different event. `rst` and `slot` are read by the cycle
+    after them and go at `drop`; `ana` is read only by its own cycle's forecast
+    and goes one cycle later, which is as soon as this task can see it at all.
+
+    The keep rule pins `rst` alone. A pinned cycle exists so an experiment can be
+    branched or rerun from it, and that needs the restart set the next forecast
+    would start from; `ana` and `slot` at the same date carry nothing the pinned
+    `rst` and the compressed products do not already hold, and they are the two
+    that grow fastest.
+    """
+    root = paths.sub("run")
     if not root.is_dir():
         return
     for entry in sorted(root.iterdir(), key=lambda p: p.name):
-        if not entry.is_dir() or not entry.name.isdigit():
+        if not entry.is_dir():
             continue
-        number = int(entry.name)
-        if number > drop:
+        number = cycle_of(paths, entry.name)
+        if number is None:
             continue
-        if keep_every and not number % keep_every:
-            continue
-        yield entry
+        held = pinned(config, paths, number)
+        for kind, offset in REAPED.items():
+            if number > drop + offset:
+                continue
+            if held and kind == "rst":
+                continue
+            target = entry / kind
+            if target.is_dir():
+                yield target, kind
+
+
+def _reapable_scratch(paths, drop):
+    """Scratch directories of cycles at or below the horizon.
+
+    Never pinned. A keep rule is about branch points, and a branch starts from a
+    restart set; the working directory a task was killed in is not something an
+    experiment is ever resumed from.
+    """
+    root = paths.scratch_dir
+    if not root.is_dir():
+        return
+    for entry in sorted(root.iterdir(), key=lambda p: p.name):
+        number = cycle_of(paths, entry.name)
+        if entry.is_dir() and number is not None and number <= drop:
+            yield entry
 
 
 def _stats(site, paths, cycle):

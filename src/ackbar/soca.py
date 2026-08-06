@@ -46,6 +46,7 @@ from .config.jobtime import FOUR_D, cycle_time, member_dir, window_type
 from .config.jobtime import render as render_jobtime
 from .config.jobtime import symbols
 from .config.template import fill
+from .duration import format_duration, format_instant
 from .duration import ISO_INSTANT
 from .graph.tasks import SOCA_BIN
 from .mom6sis2 import (OVERRIDE, SOCA_OVERRIDE, ModelError, keep_traces,
@@ -83,6 +84,10 @@ DIAG_TABLE = "soca\n{0.year} {0.month} {0.day} {0.hour} {0.minute} {0.second}\n"
 #: a template and a line here.
 APPLICATIONS = {
     "hofx": "soca_hofx3d.x",
+    # The four-dimensional form, which is what a forecast trajectory needs: each
+    # observation is compared against the state nearest its own time rather than
+    # against one state standing in for the whole window.
+    "hofx4d": "soca_hofx.x",
     "var": "soca_var.x",
     "letkf": "soca_letkf.x",
     "recenter": "soca_ensrecenter.x",
@@ -238,7 +243,7 @@ def run_application(name, config, site, paths, cycle, task, document):
         launch(config, site, run, task, APPLICATIONS[name],
                f"{name}.yaml", f"{name}.log")
     finally:
-        keep_traces(run, paths.sub("log") / str(cycle), task, None,
+        keep_traces(run, paths.log_dir(cycle), task, None,
                     names=traces(name))
     return run
 
@@ -261,6 +266,35 @@ def hofx(config, site, paths, cycle, task, *, background, observers):
         "hofx", config, site, paths, cycle, task,
         hofx_config(config, cycle, observers, background=background,
                     templates=paths.templates))
+    return commit(products)
+
+
+def hofx4d(config, site, paths, cycle, task, *, initial, states, observers,
+           tstep, begin, length):
+    """Evaluate *observers* against a forecast trajectory already on disk.
+
+    *states* maps each state's valid time to the directory holding it, and
+    *initial* is where the trajectory starts. `PseudoModel` does not integrate,
+    so this costs a read of each state rather than a second forecast.
+
+    One application over the whole trajectory. That is a memory decision as much
+    as a bookkeeping one, and it is the one that will need revisiting first on a
+    larger domain: the application holds every state it is given at once, so a
+    five day forecast at a three hour cadence is forty states resident. The
+    fallback is sections, a day at a time, which needs no graph change and no
+    path change, only a loop here and a `length` per section.
+    """
+    if not observers:
+        print(f"ackbar: {cycle}.{task} has no observers with input files; "
+              f"nothing to evaluate")
+        return []
+
+    products = _redirect_output(observers, paths.scratch(cycle, task) / "out")
+    run_application(
+        "hofx4d", config, site, paths, cycle, task,
+        hofx4d_config(config, cycle, observers, initial=initial, states=states,
+                      tstep=tstep, begin=begin, length=length,
+                      templates=paths.templates))
     return commit(products)
 
 
@@ -540,6 +574,32 @@ def hofx_config(config, cycle, observers, *, background, templates=None):
         "BACKGROUND_DIR": _basename(background),
         "RESTART_FILE": _restart(model),
         "STATE_VARIABLES": list(_require(model, "state variables")),
+        "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
+    }, templates=templates)
+
+
+def hofx4d_config(config, cycle, observers, *, initial, states, tstep, begin,
+                  length, templates=None):
+    """The whole `soca_hofx.x` YAML. See `config/soca/hofx4d.yaml`."""
+    model = config["model"]
+    restart = _restart(model)
+    return build_document("hofx4d", config, cycle, {
+        "GEOMETRY": _geometry(model),
+        "TSTEP": format_duration(tstep),
+        # In time order, and the initial condition is not among them: SOCA's own
+        # `hofx_4d_pseudo` starts this list one step in, and a list that
+        # repeated the start would step the pseudo model off the end.
+        "STATES": [{
+            "read_from_file": 1,
+            "date": format_instant(when),
+            "basename": _basename(directory),
+            "ocn_filename": restart,
+        } for when, directory in sorted(states.items())],
+        "BACKGROUND_DIR": _basename(initial),
+        "RESTART_FILE": restart,
+        "STATE_VARIABLES": list(_require(model, "state variables")),
+        "WINDOW_BEGIN": format_instant(begin),
+        "WINDOW_LENGTH": format_duration(length),
         "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
     }, templates=templates)
 
