@@ -194,6 +194,28 @@ def test_cleanup_drops_only_what_no_forecast_can_still_read(env):
     assert paths.cycle_out("rst", 2).exists()
 
 
+def test_cleanup_reaps_the_analysis_on_the_same_rule_as_the_restarts(env):
+    """`ana/` grows at the same rate as `rst/` and used to grow forever.
+
+    In a DA run the forecast starts from `ana/<n>/mem###`, so writeback leaves a
+    whole restart set there per member per cycle. Reaping `rst/` alone is an
+    experiment that cycles happily for a week and fills the disk in the second.
+    """
+    _, _, paths = env
+    for cycle in (1, 2):
+        _complete_cycle(env, cycle)
+        for member in (1, 2):
+            analysis = paths.member_out("ana", cycle, member) / "MOM.res.nc"
+            analysis.parent.mkdir(parents=True, exist_ok=True)
+            analysis.write_bytes(b"x")
+
+    do(env, 3, "cleanup")
+    assert not paths.cycle_out("ana", 1).exists()
+    # And it is the same rule, not a second one: the cycle whose restarts are
+    # kept keeps its analysis too.
+    assert paths.cycle_out("ana", 2).exists()
+
+
 def test_cleanup_keeps_everything_when_the_proof_is_incomplete(env):
     # Keyed off artifacts rather than job state, so a retried cleanup cannot
     # conclude that a resubmitted consumer is gone and delete what it is about

@@ -564,6 +564,14 @@ def _cleanup(config, paths, cycle):
     Cycle n's forecast reads cycle n-1's restarts, so with one cycle in flight
     the earliest set nothing can need is n-2, and it goes only once n-1 is
     complete for every member.
+
+    Both restart directories go, not just `rst/`. In a DA run the forecast
+    starts from `ana/<n>/mem###`, which `writeback` fills with a whole restart
+    set per member per cycle, so `ana/` grows at the same rate as `rst/` and for
+    the same reason. Reaping one and not the other is how an experiment that
+    cycles happily for a week fills the disk in the second week. `obs_out/` is
+    deliberately not here: the departures are the experiment's product rather
+    than an intermediate, and they are kilobytes where these are gigabytes.
     """
     members = member_set(config)
     keep = cycle - 1
@@ -579,10 +587,13 @@ def _cleanup(config, paths, cycle):
               f"({len(absent)} restart(s) missing)")
         return
 
-    target = paths.cycle_out("rst", drop)
-    if target.exists():
-        shutil.rmtree(target)
-        print(f"ackbar: removed {target}")
+    # `ana/<drop>` is safe under the same proof: it is what `forecast(drop)`
+    # started from, and `rst/<drop>` existing is what says that forecast ran.
+    for kind in ("rst", "ana"):
+        target = paths.cycle_out(kind, drop)
+        if target.exists():
+            shutil.rmtree(target)
+            print(f"ackbar: removed {target}")
 
 
 def _stats(site, paths, cycle):

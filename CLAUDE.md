@@ -43,14 +43,14 @@ in its own config file as "the regional hack", is not the model to follow.
 | Path | What |
 |---|---|
 | `~/work/ackbar` | this project (the new workflow) |
-| `~/work/jedi` | JEDI Skylab bundle; has its own `CLAUDE.md` and `claude/` doc set |
-| `~/work/jedi/bundle/soca` | SOCA source (model interface for MOM6/SIS2) |
-| `~/work/jedi/build/bin` | built `soca_*.x` executables |
+| `~/work/jedi` | JEDI Skylab bundle, a separate workspace with its own `CLAUDE.md` and `claude/` doc set. ACKBAR does not read anything from it |
+| `~/work/jedi/bundle/soca` | SOCA source, for reading. The copy ACKBAR builds is `pkg/jedi/soca` |
 | `~/work/soca-science` | reference: old bash workflow (read-only reference) |
 | `~/work/soca-science-v3` | reference: unfinished Python rewrite |
 | `~/work/soca-science-v3.test` | its test experiment dir; has a 1deg `model_data/` tree |
 | `~/work/ackbar/pkg/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
-| `~/work/ackbar/pkg/jedi` | planned: the vendored JEDI bundle, one submodule per repo. Not created yet |
+| `~/work/ackbar/pkg/jedi` | the vendored JEDI bundle, one submodule per repo. `build-jedi.sh` builds it |
+| `~/work/ackbar/pkg/jedi/build/bin` | the `soca_*.x` ACKBAR runs. `graph/tasks.py` names this path and no other |
 | `~/work/ackbar/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
 | `/data/ackbar` | our experiment and test-run output |
 | `~/work/mom6sis2` | old (2022) clone with a hand-rolled mkmf `build.sh`; reference only |
@@ -69,7 +69,10 @@ Sets `JEDI_ROOT`, `OMP_NUM_THREADS=1`, ccache/mold/Ninja build accelerators.
 `$SPACK_STACK_VER` reports the stack version. spack-stack provides an `fms` module and an
 `ecflow` module; both are candidates to avoid building things ourselves.
 
-Machine budget: 8 physical cores / 16 threads. `mpiexec -n 8` for MPI runs, `make -j16`.
+Machine budget: 8 physical cores / 16 threads. `make -j16`, and `mpiexec -n 8` for a run
+started by hand outside Slurm, which is what the offline `tools/` scripts do. Inside the
+workflow MPI is launched by `$ACKBAR_LAUNCHER` from the site layer (`srun --mpi=pmi2` here),
+never by a spelling written into a job.
 
 ### Batch scheduler
 
@@ -107,8 +110,9 @@ works, how it is wired here, the full inventory of GFDL's FTP tarballs with what
 for, and the SOCA-era data already sitting in `/data/OLD`. Read it before downloading
 anything.
 
-`OM_1deg` and `OM4_05` resolve fully today; `OM4_025` resolves except for its
-`mask_table.*` files.
+Which configurations resolve is a property of what has been downloaded, not of this file:
+`docs/model-data.md` says how to check, and a broken `INPUT/` symlink is what an unresolved
+one looks like.
 
 ### SOCA-specific model config
 
@@ -125,35 +129,51 @@ Both prior workflows carry a copy of the GFDL config plus overrides. See
   whether to read a restart), not copied verbatim. The rest of the config files are
   symlinked in.
 
-Restart layout used by the workflow: `restart_input_dir='RESTART_IN'`,
-`restart_output_dir='RESTART'` (upstream default is `INPUT`/`RESTART`).
+Restart layout used by the *prior* workflows: `restart_input_dir='RESTART_IN'`,
+`restart_output_dir='RESTART'`. ACKBAR keeps upstream's `INPUT`/`RESTART` instead, because
+`coupler_main` hardcodes `INPUT/coupler.res` regardless of `restart_input_dir`, so moving the
+input directory splits a restart set across two places. The long version is at the top of
+`src/ackbar/mom6sis2.py`.
 
 ## SOCA (the DA)
 
-Built as part of the JEDI bundle in `~/work/jedi`. Executables land in
-`~/work/jedi/build/bin/soca_*.x`. SOCA links MOM6 as a *library* from its own
+Built by `./build-jedi.sh` from the vendored bundle in `pkg/jedi`. Executables land in
+`pkg/jedi/build/bin/soca_*.x`, which is the only place ACKBAR looks: `SOCA_BIN` in
+`src/ackbar/graph/tasks.py` is that path, relative to the checkout, so an experiment records
+which build it ran against by recording the checkout. SOCA links MOM6 as a *library* from its own
 `external/mom6/MOM6` submodule, which tracks **NOAA-EMC/MOM6**, not NOAA-GFDL. The
 standalone forecast executable and SOCA's internal MOM6 are therefore two different MOM6
 versions. Keeping them compatible (restart file layout, parameter names) is a standing
 risk for this project.
 
-Check what SOCA branch is checked out before trusting anything:
-`git -C ~/work/jedi/bundle/soca status`.
+Check what SOCA is checked out before trusting anything:
+`git -C pkg/jedi/soca status`.
 
-### Executables the workflow will need
+### Executables the workflow needs
 
-Present today: `soca_gridgen.x`, `soca_var.x`, `soca_letkf.x`, `soca_hofx.x`,
-`soca_hofx3d.x`, `soca_error_covariance_toolbox.x`, `soca_setcorscales.x`,
-`soca_enspert.x`, `soca_ensrecenter.x`, `soca_ensmeanandvariance.x`, `soca_forecast.x`,
-`soca_postproc.x`, `soca_addincrement.x`, `soca_convertstate.x`, `soca_hybridgain.x`.
+`ls pkg/jedi/build/bin` is the inventory; `ls pkg/jedi/soca/src/mains` is what could be built.
+Do not keep a list here, it goes stale silently and the answer is one command away.
 
-**Gone since both prior workflows were written**: `soca_checkpoint_model.x` (and
-`soca_staticbinit.x` is not built either, though `src/mains/StaticBInit.cc` still exists).
-Both old workflows call `soca_checkpoint_model.x` to write the analysis back into MOM6
-restarts. The replacement path needs to be decided; the old workflow's non-model
-alternative was a pure-Python dump
-(`~/work/soca-science/tools/regional/soca_domom6_action.py checkpoint`, plus
-`socaincr2mom6` for IAU increments), which is probably the better model to follow anyway.
+**Two apps both prior workflows call do not exist in the pinned SOCA.**
+`soca_checkpoint_model.x` has no `Checkpoint.cc` in `src/mains` and no CMake target, and
+`soca_staticbinit.x` is not built either, though `src/mains/StaticBInit.cc` still exists. Both
+old workflows call the checkpoint app to write the analysis back into MOM6 restarts, so that
+path is closed rather than merely unfashionable: the writeback has to be a direct restart
+write, modelled on `~/work/soca-science/tools/regional/soca_domom6_action.py checkpoint` (plus
+`socaincr2mom6` if IAU is ever wanted).
+
+**A third is gone and matters as much.** `BkgErrGODAS`, the linear variable change v2 built its
+background error standard deviations with, is not in this SOCA: `LinearVariableChange/` holds
+only `Balance` and `LinearModel2GeoVaLs`. Its replacement is the SABER outer block
+`SOCAParametricOceanStdDev`, whose parameter tree is not a rename of the old one. So a ported
+v2 analysis yaml fails on a config key, and the rule when porting is: science values from
+soca-science, schema from `pkg/jedi/soca/test/testinput/`, which is CI-verified against this
+exact bundle.
+
+One trap in that CI config: `testinput/3dvar.yml` writes no departures. Copy it as a template
+and the analysis produces no `ombg`/`oman`, post-processing has nothing to read, and the run
+looks healthy the whole way through. ACKBAR builds those keys itself rather than configuring
+them.
 
 Static B is now built with `soca_error_covariance_toolbox.x` running SABER diffusion
 calibration (`configs/soca/saber_init/soca_diffusion_calibrate_{hz,vt}.yaml` in the old
@@ -213,20 +233,11 @@ Its `TODO` when abandoned: real obs dates, saving obs stats, ensemble coldstart.
 Its config references are stale in the ways described above (`soca_staticbinit.x`,
 `soca_checkpoint_model.x`, 2022-era SOCA YAML schema).
 
-## Status
+## Where the build has got to
 
-Model side is up:
-
-- `mom6sis2` cloned on `dev/gfdl` with the needed submodules, `.datasets` wired, builds
-  clean to `ice_ocean_SIS2/build/coupler_main`.
-- `OM_1deg` runs: a 12-hour cold start on 8 PEs from WOA13 completes and writes a full
-  restart set. Built from either the `main` or the `dev/gfdl` MOM6 pin it gives identical
-  `ocean.stats`, because the config carries back-compat pins for every answer-changing
-  default that moved in between.
-- `OM_1deg` and `OM4_05` input data resolves fully; `OM4_025` is short only its
-  `mask_table.*` files (see `docs/model-data.md`).
-
-Not started: anything SOCA-side or workflow-side.
+There is no status list here on purpose: a phase list in a file nobody re-reads is how a
+project ends up documenting a state it left months ago. `docs/build-order.md` carries the
+phases and the test tier each is verified at, and `git log --oneline` says which have landed.
 
 ## Design
 
@@ -238,19 +249,18 @@ test tier each is verified at, and the spikes that must land before particular p
 **`docs/prior-workflows.md`** records what the two prior attempts did and which of their
 mistakes the design exists to avoid.
 
-Settled since those docs were written: Slurm is assumed rather than abstracted over (rancor's
-single-node install, `docs/slurm.md`, is the development target); observations are never
-downloaded in-cycle and OSSE is the first obs source; spinup, static B, observations and
-forcing are all offline stages.
-
-Settled by the design review: the cycle throttle is 1; the healer is a manual command, not a
-recurring job; config provenance is layer replay rather than wrapped values; scratch and output
-are separate roots named by the site layer; every member including the control is `mem###`;
-task completion is temp-then-rename plus a sentinel, never skip-if-exists; cleanup keys off
-artifact existence rather than job state; the whole config is schema-validated and every job's
-YAML is generated up front before anything is submitted; the model is a config axis
-(`mom6sis2`, `persistence`, `stub`); a stub model plus fault injection is milestone 0, because
-8 cores cannot demonstrate member parallelism with the real model.
+The decisions those docs rest on, in one place, because they are the ones an agent is most
+likely to relitigate by accident: Slurm is assumed rather than abstracted over, and rancor's
+single-node install (`docs/slurm.md`) is the development target; observations are never
+downloaded in-cycle, and spinup, static B, observations and forcing are all offline stages;
+the cycle throttle is 1; the healer is a manual command, not a recurring job; config
+provenance is layer replay rather than wrapped values; scratch and output are separate roots
+named by the site layer; every member including the control is `mem###`; task completion is
+temp-then-rename plus a sentinel, never skip-if-exists; cleanup keys off artifact existence
+rather than job state; the whole config is schema-validated and every job's YAML is generated
+up front before anything is submitted; the model is a config axis (`mom6sis2`, `persistence`,
+`stub`); and a stub model plus fault injection came before the real one, because 8 cores
+cannot demonstrate member parallelism with MOM6.
 
 Four Slurm behaviors the design now handles explicitly, all easy to get wrong: unsatisfiable
 dependents pend forever rather than being cancelled unless the site sets
@@ -259,29 +269,39 @@ job ids; a requeued batch script reruns from its first line, so the submitter ne
 `--no-requeue` plus an `O_EXCL` marker; and `afterok` edges cannot be attached to a job that
 ended more than `MinJobAge` ago.
 
-**`pkg/` is where everything ackbar builds lives.** `pkg/mom6sis2` is there now; `pkg/jedi`,
-the vendored bundle with one submodule per JEDI repo, is not created yet. Until it is,
-`~/work/jedi` is what SOCA executables come from.
+**`pkg/` is where everything ackbar builds lives**, and both halves are there: `pkg/mom6sis2`
+for the forecast model and `pkg/jedi` for the JEDI bundle, one submodule per repo. Nothing in
+ACKBAR reaches outside the checkout for an executable, which is what makes "which build
+produced this experiment" answerable from the experiment.
 
 ## Open decisions
 
-- How to write the analysis back into MOM6 restarts now that the checkpoint app is gone.
-  Direct restart write is first, behind a single writeback contract ("produce the restart set
-  the next forecast reads") so IAU is later an alternate implementation rather than a second
-  graph shape. Investigate what SOCA offers before writing anything; spike before milestone 3.
 - What a solver does with a missing or diverged ensemble member: fail the cycle, run degraded,
   or replace from the mean. Different graph shapes and different science, so it is per
-  experiment.
-- Whether getting `srun` to launch MOM6 on rancor (a PMI plugin Slurm can talk to) is worth the
-  effort. Decided yes; not done. Without it, job steps and per-task accounting differ between
-  rancor and production.
-- Whether the SOCA model config keeps MOM6's back-compat parameter pins
-  (`EQN_OF_STATE = "WRIGHT"` and friends) or drops them for the corrected physics with
-  `ENABLE_BUGS_BY_DEFAULT = False`. See `docs/model-build.md`. Decide before generating an
-  initial condition, since dropping them invalidates any state spun up under the old physics.
+  experiment. `ensemble.on_missing_member` is in the schema and read by no code, so the
+  behaviour today is "fail the cycle" whatever an experiment says.
 - How much of the workflow lives in a Python package versus in the job scripts it emits.
 - Ensemble geometry on rancor: 8 cores against an 8-PE model run means parallel members need
   fewer PEs each, or oversubscription.
+- The background error numbers in `config/layers/da/variational.yaml`. The structure is
+  right and the values are the pinned bundle's defaults, because v2's tuning lived in
+  `BkgErrGODAS` and does not map onto `SOCAParametricOceanStdDev` one for one. A science
+  call, and results should not be believed until it is made.
+
+Closed, and recorded here because the reasoning is easy to reopen by mistake:
+
+- **Writeback is a direct restart write.** Not a preference: the checkpoint app does not exist
+  in this SOCA (see above). The contract is "produce the restart set the next forecast reads",
+  so IAU stays a later alternate implementation rather than a second graph shape. On a regional
+  domain the writeback must copy the background and overwrite variables in place, never let
+  SOCA's MOM6 author the file, because it runs with `OBC_NUMBER_OF_SEGMENTS = 0` and would
+  drop the open-boundary fields the forecast restarts from.
+- **`srun` launches MPI here.** `site/rancor.sh` sets `ACKBAR_LAUNCHER="srun --mpi=pmi2"`, so
+  job steps and per-task accounting match production. `docs/slurm.md` has the how.
+- **The back-compat pins are dropped.** Every domain's `MOM_override` sets
+  `ENABLE_BUGS_BY_DEFAULT = False`, so the model runs the corrected physics and no state spun
+  up under the old defaults is reusable. `docs/model-build.md` and `docs/domains.md` have the
+  reasoning and the flag count.
 
 ## Conventions
 
