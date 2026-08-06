@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from ackbar import ledger, run
+from ackbar import ledger, run, soca
 from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
@@ -416,3 +416,138 @@ def test_persistence_hands_a_real_restart_set_forward(var):
     config, _ = var
     assert run.restart_stamp(config) == "coupler.res"
     assert run.real_model(config, "forecast") is True
+
+
+# --- a hybrid's two analyses and the recentring -------------------------------
+#
+# The asymmetry phase 8 introduces: an analysis that reads the whole ensemble
+# and writes one state, beside a filter that reads the ensemble and writes every
+# member, with a recentring between them and `writeback`.
+
+@pytest.fixture
+def hyb(base, tmp_path):
+    """A hybrid experiment: four members plus a control, on a real model."""
+    config = json.loads(json.dumps(base))
+    config["model"] = {"name": "persistence"}
+    config["solver"] = {"name": "variational", "covariance": "hybrid"}
+    config["ensemble"] = {"size": 4, "control": True, "source": "letkf",
+                          "on_missing_member": "fail_cycle"}
+    site = {"scratch_root": str(tmp_path / "s"), "output_root": str(tmp_path / "o")}
+    return config, Paths.of(config, site).ensure()
+
+
+def test_both_analyses_run_a_real_application(hyb):
+    config, _ = hyb
+    assert run.real_analysis(config, "da") is True
+    assert run.real_analysis(config, "da.ens") is True
+    assert run.real_recenter(config, "recenter") is True
+
+
+def test_an_letkf_does_not_recentre_onto_its_own_mean(base):
+    config = json.loads(json.dumps(base))
+    config["model"] = {"name": "persistence"}
+    config["solver"] = {"name": "letkf"}
+    assert run.recentres(config) is False
+    assert run.real_recenter(config, "recenter") is False
+
+
+def test_the_hybrid_reads_every_member_and_writes_one(hyb):
+    """The asymmetry, in one place.
+
+    The whole ensemble is half of the covariance, so every member's background
+    is an input; the answer is the control's, so there is one output state.
+    """
+    config, _ = hyb
+    assert run.read_members(config, "da") == (0, 1, 2, 3, 4)
+    assert run.analysed_members(config, "da") == (0,)
+
+
+def test_the_filter_reads_and_writes_the_ensemble_and_not_the_control(hyb):
+    config, _ = hyb
+    assert run.read_members(config, "da.ens") == (1, 2, 3, 4)
+    assert run.analysed_members(config, "da.ens") == (1, 2, 3, 4)
+
+
+def test_the_two_analyses_declare_the_backgrounds_they_read(hyb):
+    config, paths = hyb
+    stage(paths, 2, present=True)
+    var_in, _ = run.task_io(config, paths, "da", 2, None)
+    ens_in, _ = run.task_io(config, paths, "da.ens", 2, None)
+    assert paths.member_out("rst", 1, 0) / "coupler.res" in var_in
+    assert paths.member_out("rst", 1, 4) / "coupler.res" in var_in
+    # The filter never assimilates the control.
+    assert paths.member_out("rst", 1, 0) / "coupler.res" not in ens_in
+    assert paths.member_out("rst", 1, 4) / "coupler.res" in ens_in
+
+
+def test_the_filters_departures_do_not_overwrite_the_controls(hyb):
+    """Two applications, the same observers, one configured output name.
+
+    The control's are the experiment's product and keep that name. The
+    ensemble's are a diagnostic and go one level down, which is the same
+    arrangement v2 reached with OBS_OUT_CTRL_DIR and OBS_OUT_ENS_DIR.
+    """
+    config, paths = hyb
+    stage(paths, 2, present=True)
+    _, var_out = run.task_io(config, paths, "da", 2, None)
+    _, ens_out = run.task_io(config, paths, "da.ens", 2, None)
+    departures = paths.cycle_out("obs_out", 2) / "adt.nc4"
+    assert departures in var_out
+    assert departures not in ens_out
+    assert paths.cycle_out("obs_out", 2) / "ensemble" / "adt.nc4" in ens_out
+
+
+def test_the_filters_mean_is_a_diagnostic_and_not_the_controls_analysis(hyb):
+    """In a pure LETKF the posterior mean *is* the control's answer.
+
+    Here it is not: the control's came from the variational solve. Two of the
+    filter's control-level products share a filename with that answer and its
+    increment, so they go in a subdirectory of it.
+    """
+    config, paths = hyb
+    assert run.ensemble_dir(paths, 2) == \
+        paths.member_out("ana", 2, 0) / "analysis" / "ensemble"
+
+
+def test_writeback_reads_the_recentred_state_for_every_member_but_the_control(hyb):
+    """What makes a hybrid's ensemble follow its own experiment.
+
+    Without it each member cycles around the filter's mean while the run being
+    reported is the deterministic one, and the two drift apart silently.
+    """
+    config, paths = hyb
+    stage(paths, 2, present=True)
+    assert run.analysis_state(config, paths, 2, 0).name.startswith("ocn.ana.an.")
+    assert run.analysis_state(config, paths, 2, 3).name.startswith("ocn.rcnt.an.")
+
+
+def test_the_recentring_reads_the_analyses_a_filter_produced(hyb):
+    config, paths = hyb
+    stage(paths, 2, present=True)
+    inputs, outputs = run.task_io(config, paths, "recenter", 2, None)
+    assert run.analysis_product(config, paths, 2, 0) in inputs
+    assert run.analysis_product(config, paths, 2, 3) in inputs
+    assert outputs == [run.analysis_product(config, paths, 2, m, soca.RECENTERED)
+                       for m in (1, 2, 3, 4)]
+
+
+def test_the_recentring_reads_the_backgrounds_when_nothing_updated_them(hyb):
+    """`source: none`: the members run free and are only pulled back.
+
+    Not a degenerate case of the other. It is an ensemble that carries no
+    observation information of its own and exists to give the covariance flow
+    dependence, which is a cheaper experiment rather than a broken one.
+    """
+    config, paths = hyb
+    config["ensemble"]["source"] = "none"
+    stage(paths, 2, present=True)
+    inputs, _ = run.task_io(config, paths, "recenter", 2, None)
+    assert run.analysis_product(config, paths, 2, 0) in inputs
+    assert paths.member_out("rst", 1, 3) / "coupler.res" in inputs
+    assert run.analysis_product(config, paths, 2, 3) not in inputs
+
+
+def test_a_cycle_that_assimilated_nothing_recentres_nothing(hyb):
+    config, paths = hyb
+    stage(paths, 2, present=False)
+    assert run.task_io(config, paths, "recenter", 2, None) == ([], [])

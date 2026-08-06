@@ -16,6 +16,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 DIFFUSION = REPO / "config" / "diffusion.yaml"
 VARIATIONAL = REPO / "config" / "layers" / "da" / "variational.yaml"
+HYBRID = REPO / "config" / "layers" / "da" / "hybrid.yaml"
 
 
 @pytest.fixture(scope="module")
@@ -25,22 +26,47 @@ def calibration():
 
 @pytest.fixture(scope="module")
 def groups():
-    """The `read` groups of the analysis's central block."""
-    solver = yaml.safe_load(VARIATIONAL.read_text())["solver"]
-    central = solver["background error"]["saber central block"]
+    """Every diffusion `read` group any layer configures.
+
+    Two layers, because the calibration writes for two purposes: the correlation
+    of the static B, and the localization of the ensemble component. They are
+    the same operator reading different scale fields out of the same directory,
+    so a group that reads a file nothing calibrates is the same failure either
+    way, and it is one list here.
+    """
+    static = yaml.safe_load(VARIATIONAL.read_text())["solver"]
+    central = static["background error"]["saber central block"]
     assert central["saber block name"] == "diffusion"
-    return central["read"]["groups"]
+
+    hybrid = yaml.safe_load(HYBRID.read_text())["solver"]
+    localization = hybrid["ensemble error"]["localization"]["saber central block"]
+    assert localization["saber block name"] == "diffusion"
+
+    return central["read"]["groups"] + localization["read"]["groups"]
+
+
+def calibrated(groups, kind):
+    """Every horizontal or vertical block that reads a calibration.
+
+    A block with no `filepath` reads no file and configures no operator, which
+    is what `strategy: duplicated` is: the localization applies the same
+    horizontal structure at every level and does not localize in the vertical at
+    all. It is a real configuration rather than an omission, so it is skipped
+    here rather than asserted about.
+    """
+    return [group[kind] for group in groups
+            if kind in group and "filepath" in group[kind]]
 
 
 def stems(groups, kind):
-    """The `filepath` of every group's horizontal or vertical block, basename only.
+    """The `filepath` of every calibrated block, basename only.
 
     saber's `filepath` is a stem: the file it opens is this plus `.nc`. What is
     compared here is the last component, because the directory is the domain's
     and the name is the calibration's.
     """
-    return {group[kind]["filepath"].rsplit("/", 1)[-1]
-            for group in groups if kind in group}
+    return {block["filepath"].rsplit("/", 1)[-1]
+            for block in calibrated(groups, kind)}
 
 
 def test_every_horizontal_file_the_analysis_reads_is_one_the_calibration_writes(
@@ -65,11 +91,9 @@ def test_the_analysis_applies_the_vertical_scheme_the_normalization_was_built_wi
     after the fact, and it needs a calibrated domain to run.
     """
     wanted = calibration["vertical"]
-    for group in groups:
-        if "vertical" not in group:
-            continue
-        assert group["vertical"]["method"] == wanted["method"]
-        assert group["vertical"]["iterations"] == wanted["iterations"]
+    for block in calibrated(groups, "vertical"):
+        assert block["method"] == wanted["method"]
+        assert block["iterations"] == wanted["iterations"]
 
 
 def test_the_horizontal_is_left_explicit(calibration, groups):

@@ -4,7 +4,6 @@
 observations:
 - obs space:
     name: sst_noaa19
-    distribution: $(obs_distribution)
     obsdatain:
       engine:
         type: H5File

@@ -8,10 +8,9 @@
 solver:
   name: none
 
-# The observer layers reference these regardless of solver, because the values
-# were YAML anchors in soca-science that only the solver files defined. With no
-# solver they still need an answer, and the serial one is right: a free run's
-# hofx has no reason to want a halo decomposition.
+# The land mask threshold was a YAML anchor in soca-science that only the
+# solver files defined, so it still needs an answer with no solver. The
+# distribution is not here and is not anywhere in a layer: see
+# GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
 vars:
-  obs_distribution: {name: RoundRobin}
   obs_land_mask_min: 0.9

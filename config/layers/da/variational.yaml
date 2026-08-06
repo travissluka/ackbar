@@ -176,7 +176,6 @@ solver:
       gradient norm reduction: 1.0e-10
 
 vars:
-  obs_distribution: {name: RoundRobin}
   obs_land_mask_min: 0.9
 
   # `diffusion_levels` is the domain's, declared in the domain layer, because it

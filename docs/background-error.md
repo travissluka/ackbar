@@ -24,9 +24,11 @@ tools/soca-diffusion.sh <domain>          # calibrate
 tools/soca-dirac.sh <domain>              # check it
 ```
 
-`soca-diffusion.sh` writes `hz.nc`, `hz_ssh.nc` and `vt.nc` into
+`soca-diffusion.sh` writes `hz.nc`, `hz_ssh.nc`, `loc_hz.nc` and `vt.nc` into
 `$ACKBAR_STATIC_ROOT/static/<domain>/diffusion`, which is what the `filepath`
-entries in the variational layer name. Until it has run, `ackbar validate`
+entries in the variational and hybrid layers name. The list is the entries in
+`config/diffusion.yaml` rather than a list in the script, so adding a group is
+one edit. Until it has run, `ackbar validate`
 step 3 reports those files as missing inputs. Keyed on domain and nothing else,
 for the same reason the gridspec is: two experiments on a domain that disagree
 about their background error are not comparable, and nothing downstream would
@@ -54,6 +56,19 @@ variables and picking one field out of it, so every scale file would otherwise
 have to carry every variable, and the horizontal randomization would run over
 the whole column instead of over one level.
 
+**One of the four is not a correlation.** `loc_hz.nc` is the localization an
+ensemble covariance applies, and it is here because it is the same operator
+built from the same grid, not because it is the same quantity: the other three
+are correlation lengths for a background error that is *modelled*, and this is
+the radius beyond which a correlation *sampled* from twenty members is taken to
+be noise and tapered away. It is deliberately wider than `hz`, at twice the
+Rossby radius against one, and the reason is that localizing tighter than the
+true correlation length throws away exactly the long range structure the
+ensemble is there to provide. That failure looks like an ensemble component
+which is not contributing rather than like a mistake. Read by
+`config/layers/da/hybrid.yaml` and by nothing else; a static 3DVar never opens
+it.
+
 ## Reading it back
 
 The analysis reads what the calibration wrote, and two things about the read
@@ -66,8 +81,13 @@ normalization computed with the implicit operator; read back through the
 explicit one, every vertical increment is scaled by the ratio of two kernels.
 `method` and `iterations` therefore appear in both `config/diffusion.yaml` and
 the variational layer, and `tests/test_diffusion.py` exists to hold them
-together. The horizontal is explicit, which is saber's default and is stated in
-neither place.
+together, across both layers that read a calibration. The horizontal is
+explicit, which is saber's default and is stated in neither place. The
+localization's vertical block is `strategy: duplicated`, which reads no file and
+configures no operator: the same horizontal localization applies at every level
+and nothing localizes in the vertical. That is the bundle example's arrangement
+and the honest starting point, since vertical localization for an ensemble
+covariance is a different quantity again, computed by `soca_sqrtvertloc.x`.
 
 The **filepath** is the other. saber's `filepath` is a stem: the file it opens
 is the stem plus `.nc`. `ackbar validate` knows this, which is why a calibrated

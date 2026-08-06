@@ -119,14 +119,14 @@ EXPERIMENTS = {
     "t2_matrix": dict(cycles=2, members=3, seconds=1, fail=FAULTS,
                       resources=SHORT),
     "t2_silent": dict(cycles=1, members=2, seconds=1,
-                      fail={"write_nothing": ["1.recenter.*"]}),
+                      fail={"write_nothing": ["1.writeback.*"]}),
     # Two faults, one per cycle, and the first one deliberately lands on a leaf
     # so that cycle 1 still submits cycle 2. That is what makes this a heal of
     # an experiment that has moved on rather than of one that stopped dead, and
     # it is the case where the closure has to reach across a cycle boundary
     # without dragging in the healthy cycle 1 that produced it.
     "t2_heal": dict(cycles=2, members=2, seconds=1,
-                    fail={"exit_nonzero": ["1.post.state.2", "2.recenter.2"]}),
+                    fail={"exit_nonzero": ["1.post.state.2", "2.writeback.2"]}),
     # Its own experiment, and not part of the matrix, purely for wall clock. A
     # Slurm-enforced timeout costs a whole minute, and inside the matrix that
     # minute would run after the other faults rather than alongside them.
@@ -491,10 +491,10 @@ def test_exit_zero_having_written_nothing_is_caught_by_the_consumer(runs):
     notices; the consumer's input check is the only thing that can.
     """
     silent = runs["t2_silent"]
-    assert silent[(1, "recenter", 1)] == "COMPLETED"
-    assert silent[(1, "writeback", 1)] == "FAILED"
+    assert silent[(1, "writeback", 1)] == "COMPLETED"
+    assert silent[(1, "forecast", 1)] == "FAILED"
 
-    log = next(silent.paths.sub("log").joinpath("1").glob("writeback.*_1.out"))
+    log = next(silent.paths.sub("log").joinpath("1").glob("forecast.*_1.out"))
     assert "missing" in log.read_text()
 
 
@@ -588,7 +588,7 @@ def test_the_blast_radius_is_the_failure_and_its_dependents(healed):
     # rather than merely waiting, while anything further down reads plain
     # `Dependency` and is only pending. Under `kill_invalid_depend` the whole
     # tail has been cancelled and every one of them is broken.
-    assert {"1.post.state", "2.recenter"} <= set(broken)
+    assert {"1.post.state", "2.writeback"} <= set(broken)
     assert not {"1.forecast", "1.da", "2.da", "2.stage.obs"} & set(broken)
 
     # Downstream of the cycle 2 failure, all of it.
@@ -621,9 +621,9 @@ def test_heal_alone_takes_the_experiment_to_finished(healed):
 
 
 def test_a_healed_node_is_a_new_attempt_in_the_ledger(healed):
-    attempts = ledger.attempts(healed.paths, 2, "recenter")
+    attempts = ledger.attempts(healed.paths, 2, "writeback")
     assert attempts >= 2
-    assert healed.after["2.recenter"].attempt == attempts
+    assert healed.after["2.writeback"].attempt == attempts
 
 
 def test_members_that_already_succeeded_skip_rather_than_rerun(healed):
@@ -633,7 +633,7 @@ def test_members_that_already_succeeded_skip_rather_than_rerun(healed):
     between two arrays; the cost of it is paid back by the sentinel, which is
     the only thing that makes rerunning a finished member free.
     """
-    log = sorted(healed.paths.sub("log").joinpath("2").glob("recenter.*_1.out"))
+    log = sorted(healed.paths.sub("log").joinpath("2").glob("writeback.*_1.out"))
     assert len(log) >= 2, "member 1 was not resubmitted with the array"
     assert "already complete, skipping" in log[-1].read_text()
 
@@ -651,7 +651,7 @@ def test_the_stats_file_describes_the_healed_run_not_the_abandoned_one(healed):
     leaves a file describing the run that was thrown away.
     """
     records = [r for r in ledger.read(healed.paths)
-               if r["cycle"] == 2 and r["task"] == "recenter"]
+               if r["cycle"] == 2 and r["task"] == "writeback"]
     assert len(records) >= 2
     harvested = json.loads(healed.paths.stats_file(2).read_text())
     assert records[-1]["job_id"] in {j["job_id"] for j in harvested["jobs"]}

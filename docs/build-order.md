@@ -351,9 +351,10 @@ Four things this phase settled.
 **Recentring is not part of a pure LETKF, and this is not a deferral.** Recentring an ensemble
 onto a centre it already has is the identity, and the centre of an LETKF's analysis ensemble is
 its own mean: `LocalEnsembleDA` computes that mean and ACKBAR hands it to the control member.
-So `recenter` is in `DEFERRED` with a body that does nothing *because nothing is the right
+So `recenter` was in `DEFERRED` with a body that did nothing *because nothing was the right
 answer*. What brings a real body is a centre that is not the ensemble's own mean, which is a
-hybrid, and that is phase 8's to add along with the `da` split.
+hybrid; phase 8 added it, along with the `da` split, and moved the task off the LETKF entirely
+rather than leaving it there to compute an identity.
 
 **The index a member is written out as is its position, not its number.**
 `oops::DataSetBase::write` numbers by place in the list it was handed, so an ensemble with a
@@ -407,13 +408,168 @@ from.
 
 ## Phase 8. Ensemble and hybrid covariance
 
-Configuration only, once 6 and 7 both work. No new tasks. If this phase needs new machinery,
-something earlier was wrong.
+`solver.covariance` becomes a value that is read rather than one that is only validated. Three
+answers: `static`, which is what phase 6 built; `ensemble`, which drops the static B; and
+`hybrid`, which weights the two.
+
+- **Build:** the covariance assembly in `ackbar/soca.py`, the localization as a fourth product
+  of the offline diffusion stage, the `da` split, and a real `recenter`.
+- **Test:** tier 3, `tests/test_tier3_hybrid.py`, at gom_25km against the same domain, dates,
+  ensemble and observation archive as `tier3_var` and `tier3_letkf`, so that the three differ
+  in one inherited layer each. Plus tier 1 goldens for the two new shapes.
+- **Done when:** a hybrid cycles with MOM6 in the loop, both components are in the document the
+  application read, and every member ends its cycle centred on the deterministic analysis.
+
+**It was not configuration only, and the prediction that it would be was wrong in one specific
+way.** The covariance itself is configuration: three lines of assembly and a layer. What is not
+is *where the ensemble comes from*. A covariance drawn from an ensemble needs that ensemble
+maintained, cycle after cycle, and nothing in a variational experiment does that. So the cycle
+gains a second analysis, which is the split `design.md` left open, and it gains a recentring,
+which phase 7 predicted would arrive here.
+
+Five things this phase settled.
+
+**`da` split, and the name stayed.** `da` is the analysis that produces the *control's* answer,
+whichever solver that is; `da.ens` is what maintains the ensemble a hybrid's covariance is drawn
+from. Two nodes rather than one node parameterized by instance, because they are different
+applications with different configs, different resources and different member cardinality, and
+because `soca_letkf.x` running under a name that says `var` is the first thing to confuse
+anyone reading a queue. Keeping `da` for the first of them means no existing shape's graph,
+paths or sentinels moved.
+
+**`recenter` moved off the LETKF, where it never belonged.** Phase 7 left it deferred with a
+body that did nothing, because recentring an ensemble onto a centre it already has is the
+identity. A hybrid is where the centre is something else, so `recenter` is now present for
+exactly the covariances that read an ensemble and absent for the filter. It is also one job
+rather than an array: the mean it subtracts belongs to every member at once.
+
+**A distribution cannot be a layered value, and this is where that becomes visible.** soca-science
+varied `&obs_distribution` per solver file, which works right up until a cycle contains two
+applications reading the same observers: the solve wants round robin and the filter wants a halo.
+v2 met this exactly here and patched it with `sed` markers keyed on whether the LETKF was running
+solo or inside a `3dhyb`. The distribution is a property of the application, so ACKBAR sets it,
+an observer layer no longer mentions it, and what an experiment states is the halo size.
+
+**A per-member writer has to be told `type: ens`.** `soca_genfilename` puts the member index in
+a name for that type and no other, so any other value has six members writing one filename in
+turn while the application exits 0. What is left is a single file holding the last member's
+state, and `_positions` finding nothing is the only reason it was noticed at all.
+
+**Exactly one job may apply the divergence policy.** `replace_from_mean` rebuilds a member's
+restart set, and two jobs doing that concurrently write the same file. So `da.ens` resolves the
+ensemble and `da` reads the record it wrote, which is why the two are ordered rather than run
+side by side even though no file passes between them. The alternative is one half of a hybrid
+reading a member the other half rebuilt.
+
+Still owed, and not owed before a result: `ensemble.source` has three values in the schema that
+nothing implements (`eda`, `offline`, `perturbation`), and `graph/build.py` refuses them rather
+than letting a covariance be drawn from an ensemble that nothing updates. `eda` is phase 10.
 
 ## Phase 9. 4D windows
 
-Sub-window forecast slots. Design these deliberately rather than inheriting v2's `f###` symlink
-farm.
+Sub-window forecast slots, and the first phase in which the *window* stops being a property that
+only the configuration knows about. Design these deliberately rather than inheriting v2's `f###`
+symlink farm.
+
+`solver.window` has been validated and unread since phase 1, exactly as `solver.covariance` was
+until phase 8, and `fourd_om1deg` exists as a golden precisely so that the shape change shows up
+as a diff. What follows is what that diff has to contain. It is written per mode because the
+three modes differ in what they need, and only one of them needs a new task.
+
+### The window, which all three share
+
+**Where the analysis time sits in the window becomes a configured property of the solver.**
+Centred is the current assumption and it is what `config/jobtime.py` computes: `window_begin` is
+the cycle time minus half the cycle length. 3D-FGAT and 4DEnVar are both happy with that. Strong
+constraint 4DVar is not: its window must *begin* at the analysis time, because the state it
+solves for is the one the model is integrated forward from. So `window_begin` stops being a
+constant expression and becomes a function of `solver.window`, and every symbol derived from it
+follows. That is a change in `symbols()` and in the observation archive's window selection, and
+it is the one change here that can silently produce a working experiment assimilating the wrong
+half day of observations.
+
+**The window length stops being the cycle length.** They are equal today and the equality is
+implicit. A 4D window that overlaps its neighbours, which is common in practice, breaks it, and
+so does a window shorter than the cycle. `window_length` should become its own configured
+duration defaulting to the cycle length, and `cleanup` has to key off the longest window
+anything still reads rather than off `n-2`.
+
+### 3D-FGAT: no new task, one new relationship
+
+FGAT is a 3D analysis whose observation operator is evaluated against the background *at the
+observation's own time* rather than at the analysis time. The increment is still one state at
+one time, so writeback, the graph and the restart handoff are all unchanged.
+
+What changes is what the analysis reads. `cost type` becomes `3D-FGAT`, and the background stops
+being a single state and becomes a sequence of them across the window: the pinned bundle's
+`3dvarfgat_pseudo.yml` supplies the shape. SOCA gets those either from a `pseudo model`, which
+reads pre-written states off disk, or from a real linear model, which does not exist for MOM6.
+So the pseudo model is the answer, and it needs states at sub-window intervals, which is the one
+thing the workflow does not currently produce.
+
+**That is the whole of phase 9's real work, and it is the forecast's, not the analysis's.** The
+cycling forecast writes a restart set and no history at all, deliberately: writing history every
+cycle of an ensemble is how a free run fills a disk (`docs/design.md`, Model and DA modes). A 4D
+window needs it to write a state every *slot*. That is a `diag_table` selected by purpose, which
+is a mechanism phase 4 already built, plus a place for the slots to go and a rule for reaping
+them.
+
+Concretely, in order of how much they can go wrong:
+
+1. **A slot cadence**, `solver.slots` or a duration under `window`, validated to divide the
+   window length. The number of slots is what sets the cost of everything below.
+2. **A `diag_table` that writes a full state per slot**, chosen by the forecast task the way the
+   extended forecast's is chosen today. Not the restart writer: these are history files, and
+   what SOCA reads them with is its own state reader, so the fields metadata has to name every
+   background variable in them.
+3. **Where they go.** `bkg/<n>/mem###/` is in `SUBDIRS` already and is unused, which is where
+   this was always going to land. One file per slot, named by valid time and not by an `f###`
+   offset: v2's symlink farm existed because its names were offsets and every consumer had to
+   recompute them.
+4. **`cleanup` reaping them.** A slot state is a full 3D field, so an ensemble at a 6 slot window
+   is six times the per-cycle output of the restarts, and this is the item that fills a disk in
+   the second week rather than the first.
+5. **A `pseudo model` block in the var document**, built by `ackbar/soca.py` from the same slot
+   list, since a template and a directory listing that disagree is an analysis reading a state
+   from the wrong hour.
+
+### 4DEnVar: the slots, times the ensemble
+
+4DEnVar is phase 8's ensemble covariance with the members supplied *per slot*: the localized
+sample covariance is built across time as well as space, so the increment is four-dimensional
+without a linear model anywhere. `4denvar.yml` in the bundle is the shape, and
+`4dhybenvar.yml` is it with the static component beside it.
+
+Everything above applies, and one thing is added: the slot states have to exist **for every
+member**, not just for the control. So the `bkg/` output and its reaping become member-level,
+and the disk figure is slots times members times a full state per cycle. On a regional domain
+that is affordable and on `OM4_025` it is the constraint the phase is designed around.
+
+Structurally the analysis document changes and nothing else does. The ensemble the covariance
+reads becomes a list of *lists*, one per slot, and `soca.member_states` grows a time axis; the
+localization gains a time dimension in its own configuration. `da.ens`, `recenter`, `writeback`
+and the graph are untouched, because what a 4DEnVar writes back is still one analysis at one
+time per member.
+
+### 4DLETKF: the smallest change of the three
+
+An LETKF is already a 4D filter when its observations are distributed through a window: the
+solver interpolates each member to the observation's time, which is what `letkf.yml` does
+against `letkf3d.yml` in the bundle. So the ensemble filter needs the same per-member slot states
+4DEnVar needs and nothing else at all: no cost function, no pseudo model, no minimizer.
+
+Which means the ordering inside phase 9 is not the ordering in the title. Build the slot states
+first, on the free run, where they are cheap and where the only question is whether SOCA can read
+what MOM6 wrote. Then 4DLETKF, which consumes them and adds no other machinery. Then 3D-FGAT,
+which adds the pseudo model and the window placement. Then 4DEnVar, which is the second of those
+crossed with phase 8's covariance, and 4DVar last if at all, since it needs a linear model that
+does not exist for this model.
+
+### What phase 9 does not need
+
+No new solver, no new writeback, and no change to the restart handoff. The increment is still one
+state at one time in every mode above; what is four-dimensional is the *comparison*, and that is
+what the slot states are for.
 
 ## Phase 10. EDA
 

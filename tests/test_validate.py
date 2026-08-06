@@ -39,6 +39,7 @@ FIXTURES = [
     "var_om1deg",
     "fourd_om1deg",
     "letkf_om1deg",
+    "envar_om1deg",
     "hybrid_om1deg",
 ]
 

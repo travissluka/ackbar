@@ -1,10 +1,10 @@
 # The tier 2 workhorse: 20 members, 3 cycles, one core and a few seconds each.
 #
 # LETKF rather than a free run because it is the shape with the most edges. The
-# analysis is one job consuming every member, recentre and writeback are arrays
-# joined to it elementwise, and the forecast array feeds the next cycle. If
-# `aftercorr` is wrong anywhere, this experiment pends forever instead of
-# finishing.
+# analysis is one job consuming every member, writeback fans out of it as an
+# array, and the forecast array is joined to writeback elementwise and then
+# feeds the next cycle. If `aftercorr` is wrong anywhere, this experiment pends
+# forever instead of finishing.
 #
 # No observation layers are inherited. `da/letkf` still names the two observers
 # it localizes, which is enough to enable `stage.obs` and `post.obs` without

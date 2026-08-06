@@ -10,9 +10,10 @@ merge, schema validation, substitution, blame), the task graph (generation, the 
 set, `ackbar validate`) and the workflow engine (job emission, submission, the ledger,
 daemon-free cycling) are in, and cycle end to end against a real Slurm with a stub model. On
 the real model, a free run cycles MOM6-SIS2, hofx evaluates observations against its
-background, and both solvers cycle: 3DVar against a background error calibrated offline, and
-LETKF over a member array carrying a real model, each analysis written back into a restart set
-and integrated forward. Hybrid covariance and 4D windows arrive with their phases. See
+background, and every covariance cycles: 3DVar against a background error calibrated offline,
+LETKF over a member array carrying a real model, and a hybrid running both in one cycle with
+the ensemble recentred onto the deterministic analysis, each analysis written back into a
+restart set and integrated forward. 4D windows arrive with their phase. See
 [`docs/build-order.md`](docs/build-order.md).
 
 ## What it is for
@@ -87,7 +88,7 @@ tests/goldens/     task graphs, pinned per configuration shape
 tests/test_tier2.py  tier 2: the workflow end to end on a real Slurm
 tools/slurm/       local single-node Slurm configuration and its two profiles
 tools/soca-gridspec.sh     build a domain's SOCA geometry, the static stage
-tools/soca-diffusion.sh    calibrate a domain's background error correlation
+tools/soca-diffusion.sh    calibrate a domain's background error correlation and its ensemble localization
 tools/soca-dirac.sh        check that calibration with a dirac through B
 tools/coldstart-ic.sh      cold start a domain into the initial condition stage
 tools/ensemble-ic.sh       perturb an initial condition into one restart set per ensemble member

@@ -4,19 +4,18 @@ inherit:
   - domain/om_1deg
   - model/mom6sis2
   - da/variational
+  - da/hybrid
   - obs/adt_3a
   - obs/sst_noaa19
 experiment:
   name: hybrid_om1deg
-solver:
-  covariance: hybrid
 cycle:
   start: '2018-04-15T00:00:00Z'
   length: PT24H
   count: 4
 ensemble:
   size: 4
-  source: offline
+  source: letkf
   on_missing_member: run_degraded
 forecast:
   extended:

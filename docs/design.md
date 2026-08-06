@@ -714,7 +714,7 @@ different covariance or window settings. The real axes:
 | solver | `none`, `variational`, `letkf` |
 | covariance (variational only) | `static`, `ensemble`, `hybrid` |
 | window | `3d`, `fgat`, `4d` |
-| ensemble source | `letkf`, `eda`, `perturbation`, `external` |
+| ensemble source | `letkf`, `none`, and the unimplemented `eda`, `offline`, `perturbation` |
 
 So v2's modes map as: `3dvar` = variational+static+3d, `3denvar` = variational+ensemble+3d,
 `3dhyb` = variational+hybrid+3d, `3dfgat` = variational+static+fgat, `4denvar` and `4dhyb` are
@@ -724,12 +724,14 @@ ensemble source.
 Two solvers, and the variational one is parameterized. The configuration layers carry the
 parameterization, so there is no mode dispatch in the code.
 
-That parameterization is four keys under `solver`, and they are exactly the parts of the analysis
-document ACKBAR cannot derive from something the experiment already states. `background error` is
-the B matrix as a SABER block; `variational` is the minimizer and its loop structure. Both are
+That parameterization is a handful of keys under `solver`, and they are exactly the parts of the
+analysis document ACKBAR cannot derive from something the experiment already states.
+`background error` is the static B as a SABER block; `variational` is the minimizer and its loop
+structure; `ensemble error` is what localizes the ensemble component, and `hybrid weights` is how
+much of each a hybrid takes. All of them except the weights are
 verbatim SABER and OOPS config, named by the schema and unvalidated inside, on the same rule as
 the body of an observer: ACKBAR's schema describes ACKBAR's config and is not a model of either.
-The other two are variable lists, and they are two rather than one because `background variables`
+Two more are variable lists, and they are two rather than one because `background variables`
 is a superset of `analysis variables`: the background error blocks read cell thickness, mixed
 layer thickness and depth to build their standard deviations and never write them. Conflating the
 two is what soca-science did, through a single `__DA_VARIABLES__` anchor, and then patched around.
@@ -738,9 +740,15 @@ Everything else the analysis reads, ACKBAR builds: the geometry from the model l
 background from the previous cycle's restart set, the time window from the cycle, the observers
 from `observations`, and the departure diagnostics, which are not configurable because an analysis
 writing no `ombg`/`oman` leaves post-processing with nothing to read and looks healthy the whole
-way through. A `variational` solver that states none of the four is refused by the schema rather
+way through. A `variational` solver that states none of these is refused by the schema rather
 than run on whatever OOPS defaults to, since that is a different experiment and not an
-under-specified one.
+under-specified one. The schema asks for each of them under the covariance that reads it: a
+pure ensemble covariance needs no static B, and only a hybrid needs weights.
+
+The distribution used to be on this list and is not. It is a property of the *application*
+reading an observation file rather than of the experiment, which only became visible when a
+hybrid cycle put two applications over one observer list: see `GLOBAL_DISTRIBUTION` in
+`ackbar/soca.py`.
 
 **`noda` is not a mode either.** Two independent properties: does the run produce an analysis,
 and does it evaluate observations. A free run does neither, hofx evaluates only. So a free run
@@ -898,7 +906,8 @@ construction rather than by two configurations agreeing. Nothing detects a stale
 rebuilt after a bundle bump that touches MOM6 or SOCA's geometry.
 
 The stage's other product is `static/<domain>/diffusion/`, the calibrated correlation of the
-static background error, written by `tools/soca-diffusion.sh`. It belongs here on the same
+static background error and the localization an ensemble covariance applies, both written by
+`tools/soca-diffusion.sh`. It belongs here on the same
 argument and one more: its normalization is a Monte Carlo estimate, so two runs of it do not
 agree bit for bit, and an experiment that calibrated its own would differ from its neighbour
 in a way no comparison would attribute correctly. A free run names none of it.
@@ -956,6 +965,20 @@ Per cycle, roughly:
   cleanup       ->  artifact-existence gated, not dependency gated
 ```
 
+With a covariance drawn from an ensemble, two nodes join that line and `writeback` moves behind
+them:
+
+```
+  obs staging  ->  da.ens  ->  da  ->  recenter  ->  writeback  ->  ...
+                   da.ens  ->  recenter
+```
+
+`da` is the analysis producing the control's answer, whichever solver that is; `da.ens` is the
+ensemble filter that maintains the ensemble the covariance is drawn from, present only when
+`ensemble.source` says something in this cycle has to. The edge between the two is an ordering
+rather than a data dependency, since the covariance reads the members' *backgrounds*: what it
+serializes is the divergence policy, which exactly one job may apply.
+
 Cross-cycle: `forecast(n) -> da(n+1)`, and the submitter, and nothing else.
 
 **Cycle 1 is not special.** Experiment setup materializes the offline initial condition into
@@ -973,8 +996,9 @@ experiment gates it. `cleanup` is gated on artifact existence rather than on job
 reasons in Task completion. Any other task without an incoming edge is a job that runs before
 its input exists, so the generator refuses to produce one.
 
-Ensemble shape: per-member forecasts are a job array over the canonical index set; LETKF is a
-single MPI job consuming all members; recentering and per-member writeback are arrays. Every
+Ensemble shape: per-member forecasts are a job array over the canonical index set; an ensemble
+filter is a single MPI job consuming all members, and so is a recentring, because the mean it
+subtracts belongs to every member at once; per-member writeback is an array. Every
 one of these is a serial `for` loop in v2. The control is `mem000` within the same indexing,
 not a separate concept.
 
@@ -1036,23 +1060,31 @@ regional last.
   this from the critical path for testing the workflow, but a small real configuration running
   four concurrent members at 2 PEs is still worth having as a correctness check.
 - **Divergence policy** for a missing or bad member, per experiment. See Task graph.
-- **Whether there is a control member, per DA method.** LETKF does not use one. Hybrid EnVar
-  has a deterministic member, which is a different thing wearing the same index. The graph
-  carries this as `ensemble.control`, defaulting to true, so both shapes already generate; what
-  is undecided is which methods set it, and that is settled when each method is implemented
-  rather than guessed now.
+- **Whether there is a control member, per DA method.** Settled for two of them. An LETKF does
+  not use one, and `stub_letkf` runs with `control: false`. A hybrid does: `mem000` is the
+  deterministic analysis, it is not assimilated by the filter, and it is the centre every other
+  member is recentred onto. The graph carries this as `ensemble.control`, defaulting to true.
+  What is still open is EDA, where every member is a deterministic analysis of perturbed
+  observations and the control is one more of them or none of them.
 - **Where the analysis time sits in the window.** Centred is the current assumption, and it is
   what soca-science did, but it is not the only valid position: 4DVar requires the window to
   begin at the analysis time, and 4DEnVar allows either. So window placement becomes a
-  configured property of the solver when the 4D window work lands, not a constant.
-- **`da` is not necessarily one node.** Hybrid EnVar needs both the EnVar analysis and whatever
-  maintains the ensemble its covariance is drawn from (a LETKF, or another perturbation model),
-  and those are two distinct applications with distinct configs, resources, and member
-  cardinality inside the same cycle. The task table today gives `da` one name and one
-  executable chosen by solver. When hybrid is implemented this becomes either two tasks
-  (`da.var` and `da.ens`) or one task parameterized by instance, and the graph edges, the
-  resource table, and the per-task config paths all key off whichever is chosen. Decided in the
-  hybrid phase.
+  configured property of the solver when the 4D window work lands, not a constant. It is
+  `window_begin` in `config/jobtime.py`, computed as the cycle time minus half the cycle length,
+  and the reason it is called out here rather than left to the phase is that getting it wrong
+  produces a working experiment assimilating the wrong half day of observations. See phase 9 in
+  `docs/build-order.md`, which also lists the second implicit equality in the same place: the
+  window length is the cycle length, and a 4D window that overlaps its neighbours breaks it.
+- ~~**`da` is not necessarily one node.**~~ **Settled in phase 8: two tasks, and the first kept
+  its name.** `da` is the analysis that produces the *control's* answer, whichever solver that
+  is; `da.ens` is what maintains the ensemble a hybrid's covariance is drawn from, and exists
+  only where `ensemble.source` says something in this cycle has to. Two nodes rather than one
+  parameterized by instance, because they are different applications with different configs,
+  different resources and different member cardinality, and because `soca_letkf.x` running
+  under a name that says `var` is the first thing to confuse anyone reading a queue. Keeping
+  `da` for the first of them meant no existing shape's graph, paths or sentinels moved. The
+  edge between them is an ordering rather than a data dependency: exactly one job may apply the
+  divergence policy, since `replace_from_mean` rebuilds a member's restart set.
 - **Which application calibrates vertical B per cycle**, if a separate one does at all. The
   task exists in the graph with no executable named. `soca_sqrtvertloc.x` is not it: that is
   vertical *localization* for an ensemble covariance, a different quantity from the vertical

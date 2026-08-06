@@ -1,0 +1,52 @@
+# Tier 3: hybrid covariance cycling at gom_25km. The phase 8 milestone.
+#
+# `tier3_var` and `tier3_letkf` in one cycle: the same domain, dates, initial
+# condition, ensemble and observation archive, with the deterministic analysis
+# now drawing half of its background error from the ensemble the filter
+# maintains. The three experiments differ in one inherited layer each, which is
+# what makes them comparable and is the reason this repository exists.
+#
+# What is new here and nowhere else is the shape of the cycle. Two analyses run
+# in it, `da.ens` and `da`, and a recentring joins them: the filter updates the
+# members, the variational solve updates the control through the hybrid B, and
+# the members are then pulled onto that control's analysis so the ensemble
+# follows the run being reported rather than its own mean.
+#
+# Everything `tier3_letkf` says about the science of this ensemble applies here
+# unchanged, and applies harder. Six members forced by one atmosphere and
+# perturbed out of the static B give about 0.09 K of surface spread, so the
+# ensemble component of this covariance is small, noisy and rank six. What this
+# experiment demonstrates is that the cycle runs and that each piece does what
+# it says; the weights are not tuned and are not claimed to be.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_hybrid
+  description: phase 8, hybrid covariance cycling at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+ensemble:
+  size: 6
+  control: true
+  # An LETKF beside the variational analysis, which is what makes the ensemble
+  # component flow dependent and observation informed rather than a decaying
+  # sample of the perturbations it started with.
+  source: letkf
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+solver:
+  variational:
+    iterations:
+    - ninner: 3
+      gradient norm reduction: 1.0e-10

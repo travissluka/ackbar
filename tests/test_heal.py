@@ -151,7 +151,7 @@ def test_nothing_broken_means_nothing_to_do(env):
 
 def test_the_closure_is_everything_downstream_of_the_failure(env):
     ids = submitted(env, 1)
-    for node in ("1.stage.obs", "1.da", "1.recenter", "1.writeback"):
+    for node in ("1.stage.obs", "1.da", "1.writeback"):
         complete(env, node, ids)
     fail(env, "1.forecast", ids, member=1)
     strand(env, "1.submit", ids)
@@ -195,7 +195,7 @@ def test_only_live_jobs_are_cancelled(env):
     """Cancelling a COMPLETED job is not an error, it just makes the log lie."""
     ids = submitted(env, 1)
     members = next(n.members for n in env.graph.nodes if n.id == "1.forecast")
-    for node in ("1.stage.obs", "1.da", "1.post.obs", "1.recenter",
+    for node in ("1.stage.obs", "1.da", "1.post.obs",
                  "1.writeback", "1.stats", "1.verify"):
         complete(env, node, ids)
     # Everything but member 1 got through, which is what a per-member fault
@@ -291,7 +291,7 @@ def test_a_completed_parent_outside_the_closure_loses_its_edge(env):
     that pends until somebody notices.
     """
     ids = submitted(env, 1)
-    for node in ("1.stage.obs", "1.da", "1.recenter", "1.writeback"):
+    for node in ("1.stage.obs", "1.da", "1.writeback"):
         complete(env, node, ids)
     fail(env, "1.forecast", ids, member=1)
 
@@ -342,8 +342,8 @@ def test_a_stranded_node_is_not_flagged_as_unhealable(env):
 def test_describe_names_the_members_and_stops_counting_at_six(env):
     ids = submitted(env, 1)
     for member in range(1, 12):
-        fail(env, "1.recenter", ids, member=member)
+        fail(env, "1.writeback", ids, member=member)
     statuses = state.collect(env.paths, env.graph)
 
-    line, = heal.describe(statuses, ["1.recenter"])
+    line, = heal.describe(statuses, ["1.writeback"])
     assert "mem001" in line and "and 5 more" in line

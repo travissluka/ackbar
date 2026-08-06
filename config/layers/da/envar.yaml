@@ -1,0 +1,23 @@
+# Ensemble variational: the covariance is the ensemble alone.
+#
+# Inherited after `da/variational` and after `da/hybrid`, which supplies
+# everything here except the covariance itself. Written this way round rather
+# than as a copy of hybrid.yaml with two lines changed, because the two differ
+# by exactly one thing and a copy would let them drift.
+#
+#   inherit:
+#   - da/variational
+#   - da/hybrid
+#   - da/envar
+#
+# The static B is then configured and unread, which is not tidy and is the
+# honest arrangement: `solver.covariance` is what decides, one place, and a
+# layer that also deleted the unused blocks would be a second place to look when
+# an experiment turns out to have used the wrong B.
+#
+# Why run one at all, given a hybrid with the static weight set to zero is the
+# same analysis: because it is not the same experiment. This one has no static B
+# in it to mis-weight, and the pair of them is what separates "the ensemble is
+# carrying the analysis" from "the weights happen to be tuned".
+solver:
+  covariance: ensemble

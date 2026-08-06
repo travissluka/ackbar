@@ -1,0 +1,45 @@
+# Tier 3: the covariance drawn from the ensemble alone, with nothing updating
+# the ensemble. The cheap half of phase 8.
+#
+# `tier3_hybrid` with two things removed, and both removals are the point.
+# `covariance: ensemble` drops the static component, so the analysis is carried
+# entirely by six localized members. `source: none` drops the ensemble filter,
+# so the members run free through the cycle and are pulled back onto the
+# deterministic analysis at the end of it.
+#
+# That second one is a different code path rather than a smaller version of the
+# first: the recentring reads MOM6 restart sets instead of states SOCA wrote,
+# and the cycle contains one analysis instead of two. It is also a legitimate
+# experiment. An ensemble maintained this way carries no observation
+# information of its own and does carry flow dependence, which is most of what
+# a hybrid wants from it and costs one job a cycle instead of two.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - da/envar
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: tier3_envar
+  description: phase 8, ensemble covariance cycling at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+ensemble:
+  size: 6
+  control: true
+  source: none
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+vars:
+  obs_dir: $(static_root)/obs/gom-osse-smoke/2015
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+solver:
+  variational:
+    iterations:
+    - ninner: 3
+      gradient norm reduction: 1.0e-10

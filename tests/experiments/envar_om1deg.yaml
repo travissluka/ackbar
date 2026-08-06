@@ -1,0 +1,28 @@
+# Variational with the covariance drawn from the ensemble alone, and the
+# ensemble left to run free between recentrings.
+#
+# Two shapes in one fixture, and both are the point. `covariance: ensemble`
+# removes the static B, which takes `b.vt` out of the cycle; `source: none`
+# removes the ensemble filter, which takes `da.ens` out of it and leaves the
+# recentring reading the members' backgrounds instead of their analyses. The
+# hybrid fixture pins the other end of both.
+inherit:
+  - domain/om_1deg
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - da/envar
+  - obs/adt_3a
+  - obs/sst_noaa19
+experiment:
+  name: envar_om1deg
+cycle:
+  start: '2018-04-15T00:00:00Z'
+  length: PT24H
+  count: 3
+ensemble:
+  size: 4
+  source: none
+  on_missing_member: run_degraded
+vars:
+  obs_dir: /archive/obs/osse_2018

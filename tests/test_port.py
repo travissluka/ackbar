@@ -96,10 +96,21 @@ class TestValuesThatUsedToBeYamlAnchors:
     They are ordinary layered values now, which is what they always were.
     """
 
-    def test_solver_layer_owns_the_distribution(self, letkf):
+    def test_the_solver_owns_the_halo_and_the_observer_says_nothing(self, letkf):
+        """The one anchor that did *not* become a layered value.
+
+        A distribution is a property of the application reading the file rather
+        than of the platform, and a hybrid cycle reads these same observers
+        through two applications that need different answers. So ACKBAR sets it
+        and an observer never mentions it; what the experiment states is the
+        halo, which has to cover the largest localization radius in use. See
+        GLOBAL_DISTRIBUTION in ackbar/soca.py.
+        """
         _, config = letkf
-        assert config["vars"]["obs_distribution"] == {"name": "Halo",
-                                                     "halo size": 500000}
+        assert config["solver"]["ensemble distribution"] == {"name": "Halo",
+                                                             "halo size": 500000}
+        assert "distribution" not in observer(config, "adt_3a")["obs space"]
+        assert "obs_distribution" not in config["vars"]
 
     def test_land_mask_threshold_differs_by_solver(self, keys):
         def land_mask(experiment):
@@ -120,7 +131,8 @@ class TestValuesThatUsedToBeYamlAnchors:
 class TestBlame:
     def test_why_names_the_layer_that_set_a_value(self, letkf, keys):
         layers, _ = letkf
-        assert responsible_layer(layers, "vars.obs_distribution", keys) == "da/letkf"
+        assert responsible_layer(
+            layers, "solver.ensemble distribution", keys) == "da/letkf"
         assert responsible_layer(layers, "domain.name", keys) == "domain/om_1deg"
         assert responsible_layer(layers, "ensemble.size", keys) == "letkf_om1deg"
 
@@ -173,13 +185,13 @@ class TestResolvedPort:
         assert value == 0.5
         assert isinstance(value, float), "a string here is rejected by UFO"
 
-    def test_the_distribution_resolves_from_the_solver_layer(self, resolved):
-        space = observer(resolved, "sst_noaa19")["obs space"]
-        # One substituted mapping, not a name and a separate options bag: ioda
-        # reads a distribution's own parameters directly under `distribution`,
-        # and the Halo distribution refuses to construct without finding
-        # `halo size` there.
-        assert space["distribution"] == {"name": "Halo", "halo size": 500000}
+    def test_the_distribution_is_not_in_the_resolved_observer_at_all(self, resolved):
+        # One mapping, not a name and a separate options bag: ioda reads a
+        # distribution's own parameters directly under `distribution`, and the
+        # Halo distribution refuses to construct without finding `halo size`
+        # there. It reaches the application from `ackbar/soca.py`, which is what
+        # lets a hybrid give one answer to the solve and another to the filter.
+        assert "distribution" not in observer(resolved, "sst_noaa19")["obs space"]
 
     def test_input_paths_come_from_the_archive_and_output_from_the_layout(self, resolved):
         space = observer(resolved, "adt_3a")["obs space"]

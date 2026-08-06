@@ -33,8 +33,36 @@ def _solver(config):
     return config.get("solver", {}).get("name", "none")
 
 
+def _covariance(config):
+    return config.get("solver", {}).get("covariance", "static")
+
+
 def _has_ensemble(config):
     return bool(config.get("ensemble"))
+
+
+def ensemble_source(config):
+    """What maintains the ensemble from one cycle to the next.
+
+    ACKBAR's name for v2's `DA_PERTURBATION_MODEL`, and a property of the
+    ensemble rather than of the solver: an LETKF's ensemble is maintained by its
+    own analysis, and a hybrid's is maintained by something the hybrid does not
+    otherwise contain.
+    """
+    return (config.get("ensemble") or {}).get("source", "none")
+
+
+def ensemble_covariance(config):
+    """Whether this analysis draws its B from the ensemble.
+
+    The two covariances that do, `ensemble` and `hybrid`, differ only by whether
+    a static component sits beside it with a weight. That is a line in the
+    analysis document, not a difference in what the cycle has to contain, so
+    everything structural keys off this rather than off the value itself.
+    """
+    return (_solver(config) == "variational"
+            and _covariance(config) in ("ensemble", "hybrid")
+            and _has_ensemble(config))
 
 
 def _has_obs(config):
@@ -68,7 +96,11 @@ TASKS = (
     ),
     TaskDef(
         name="b.vt",
-        when=lambda config: _solver(config) == "variational",
+        # The static B's vertical correlation, so a pure ensemble covariance has
+        # nothing here to calibrate. A hybrid does: one of its two components is
+        # that same static B.
+        when=lambda config: (_solver(config) == "variational"
+                             and _covariance(config) != "ensemble"),
         # No executable named on purpose. Which application does this, or
         # whether it is a saber block inside the analysis rather than a task at
         # all, is settled in the variational phase. It is not
@@ -85,12 +117,26 @@ TASKS = (
         name="da",
         when=lambda config: _solver(config) != "none",
         exe=_da_exe,
-        # One node today because every solver implemented so far runs one
-        # application. Hybrid EnVar will not: it needs the EnVar analysis and
-        # whatever maintains its ensemble (a LETKF, or another perturbation
-        # model) in the same cycle, with different configs and resources. See
-        # Open in docs/design.md; splitting this is a hybrid-phase decision.
+        # The analysis that produces the *control's* answer, whichever solver
+        # that is. What maintains the ensemble a hybrid draws its B from is
+        # `da.ens` below, and the two are separate nodes rather than one node
+        # run twice because they are different applications with different
+        # configs, different resources and different member cardinality.
         description="the analysis. LETKF is one MPI job consuming every member",
+    ),
+    TaskDef(
+        name="da.ens",
+        # Only when something in this cycle has to maintain the ensemble. An
+        # LETKF experiment does not have one of these: its `da` already is the
+        # ensemble filter. A hybrid whose members are only recentred does not
+        # either, and that is `source: none` rather than an omission.
+        when=lambda config: (ensemble_covariance(config)
+                             and ensemble_source(config) == "letkf"),
+        exe=lambda config: f"{SOCA_BIN}/soca_letkf.x",
+        description=(
+            "the ensemble's own analysis, which is what gives a hybrid's "
+            "covariance a flow-dependent ensemble to be drawn from"
+        ),
     ),
     TaskDef(
         name="hofx",
@@ -104,10 +150,19 @@ TASKS = (
     ),
     TaskDef(
         name="recenter",
-        when=lambda config: _solver(config) == "letkf" and _has_ensemble(config),
-        member_level=True,
+        # Not for an LETKF, which is where this used to be. Recentring an
+        # ensemble onto a centre it already has is the identity, and the centre
+        # of an LETKF's analysis ensemble is its own mean. A hybrid is the case
+        # where the centre is something else: the deterministic analysis, which
+        # saw the whole observation set through a covariance the ensemble alone
+        # does not have.
+        #
+        # One job over the whole ensemble rather than an array, because that is
+        # what `soca_ensrecenter.x` is: the mean it subtracts is a property of
+        # every member at once, so no member can be recentred alone.
+        when=ensemble_covariance,
         exe=lambda config: f"{SOCA_BIN}/soca_ensrecenter.x",
-        description="recentre the analysis ensemble",
+        description="pull the ensemble onto the deterministic analysis",
     ),
     TaskDef(
         name="writeback",
@@ -172,9 +227,22 @@ BY_NAME = {task.name: task for task in TASKS}
 #: whenever both endpoints turn out to be arrays over the same index set.
 EDGES = (
     ("stage.obs", "da", "afterok"),
+    ("stage.obs", "da.ens", "afterok"),
     ("stage.obs", "hofx", "afterok"),
     ("b.vt", "da", "afterok"),
+    # The ensemble's analysis before the deterministic one, and this is an
+    # ordering rather than a data dependency: the hybrid's covariance is built
+    # from the ensemble's *backgrounds*, which the previous cycle produced, so
+    # nothing here waits on a file.
+    #
+    # What it serializes is the divergence policy. Exactly one job may apply it,
+    # because `replace_from_mean` rebuilds a member's restart set and two jobs
+    # doing that at once write the same file; and the ensemble the deterministic
+    # analysis draws its B from has to be the ensemble the filter assimilated,
+    # or the two halves of one hybrid describe two different ensembles.
+    ("da.ens", "da", "afterok"),
     ("da", "recenter", "afterok"),
+    ("da.ens", "recenter", "afterok"),
     ("recenter", "writeback", "afterok"),
     ("da", "writeback", "afterok"),
     ("writeback", "forecast", "afterok"),
@@ -184,10 +252,13 @@ EDGES = (
     # exactly what is most wanted when a member has failed, so they must not be
     # cancelled along with it.
     ("da", "post.obs", "afterany"),
+    ("da.ens", "post.obs", "afterany"),
     ("hofx", "post.obs", "afterany"),
     ("da", "verify", "afterany"),
+    ("da.ens", "verify", "afterany"),
     ("forecast", "verify", "afterany"),
     ("da", "stats", "afterany"),
+    ("da.ens", "stats", "afterany"),
     ("forecast", "stats", "afterany"),
     ("forecast", "submit", "afterok"),
 )
@@ -218,5 +289,5 @@ ROOTS = ("cleanup", "stage.obs")
 #:
 #: `forecast` appears here only when there is no analysis, because with one the
 #: path already runs through da -> writeback -> forecast.
-CROSS_CYCLE = ("da", "hofx", "b.vt")
+CROSS_CYCLE = ("da", "da.ens", "hofx", "b.vt")
 CROSS_CYCLE_NO_ANALYSIS = ("forecast",)

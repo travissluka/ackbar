@@ -1,0 +1,114 @@
+# Hybrid covariance: half the static B, half the ensemble.
+#
+# Inherited *after* `da/variational`, which it does not replace. Every layer
+# below is additive, and that is deliberate rather than convenient: a layer that
+# restructured `solver.background error` into a two-component document would
+# have to remove the keys the static one left behind, and a deep merge has no
+# way to say "and not that". So the static B stays exactly what it is, this file
+# says what sits beside it and how much of each, and `ackbar/soca.py` assembles
+# the two into the `covariance model: hybrid` document SOCA reads. The pinned
+# bundle's `test/testinput/3dhyb_diffusion.yml` is the shape being built.
+#
+# A pure EnVar is this file with `covariance: ensemble` and no weights, which is
+# `da/envar.yaml`.
+#
+# What the ensemble *is* is not here. The members are the previous cycle's
+# member forecasts, one directory per member, which is a path only ACKBAR can
+# name; and what updates them from one cycle to the next is `ensemble.source`,
+# which the experiment states because it is a statement about how much machinery
+# the experiment is willing to run rather than about the covariance.
+
+solver:
+  covariance: hybrid
+
+  # Both required, neither defaulted. 0.5/0.5 is the textbook hybrid and is
+  # therefore not the right answer for any particular ocean: with the small
+  # ensembles a regional testbed can afford, the ensemble component is noisy and
+  # its localization is doing most of the work, which usually argues for less of
+  # it. This is the first number to sweep, and an experiment that did not state
+  # it is one whose result cannot be attributed to either component.
+  hybrid weights:
+    static: 0.5
+    ensemble: 0.5
+
+  ensemble error:
+    # Localization, as a diffusion operator, exactly like the correlation in the
+    # static B and from the same offline stage: `tools/soca-diffusion.sh` writes
+    # `loc_hz.nc` beside `hz.nc`, and the scales it encodes are in
+    # `config/diffusion.yaml`. Until it has run, `ackbar validate` step 3 names
+    # the file as missing, which is the intended failure.
+    #
+    # Localization is what makes a small ensemble usable at all: without it a
+    # 20 member sample covariance has spurious correlations between every pair
+    # of points in the domain, and an observation in the Loop Current moves
+    # water on the Campeche Bank. The scales are v2's, which are about twice the
+    # Rossby radius, and they are larger than the correlation scales on purpose:
+    # localizing tighter than the true correlation length throws away the signal
+    # the ensemble is there to provide.
+    #
+    # `multivariate strategy: duplicated` is what makes one scale field apply to
+    # every analysis variable rather than needing one per variable. Nothing in
+    # saber objects to its absence; what changes is which fields get localized.
+    #
+    # There is no vertical block. `strategy: duplicated` says the same
+    # horizontal localization applies at every level and nothing localizes in
+    # the vertical, which is the bundle example's arrangement and is the honest
+    # starting point: vertical localization for an ensemble covariance is a
+    # different quantity again, computed by `soca_sqrtvertloc.x`, and adding it
+    # untested would be a second unmeasured knob under the first.
+    #
+    # `localization variables` is absent on purpose and filled in by
+    # `ackbar/soca.py`: it is the analysis variables, which are stated once.
+    localization:
+      localization method: SABER
+      saber central block:
+        saber block name: diffusion
+        read:
+          groups:
+          - multivariate strategy: duplicated
+            horizontal:
+              filepath: $(domain_static)/diffusion/loc_hz
+            vertical:
+              strategy: duplicated
+
+  # `da.ens` is an ensemble filter and needs what one needs. The values are
+  # da/letkf's, and they are restated rather than inherited from it because
+  # inheriting that layer would also set `solver.name: letkf` and turn this into
+  # a different experiment.
+  #
+  # The inflation matters more here than it does in a pure LETKF. This ensemble
+  # is recentred onto the deterministic analysis every cycle, which removes the
+  # mean but not the spread, and an ensemble that both collapses and gets pulled
+  # somewhere new each cycle is one whose covariance stops describing anything.
+  local ensemble DA:
+    solver: Deterministic LETKF
+    inflation:
+      rtps: 0.5
+      rtpp: 0.6
+      mult: 1.1
+  ensemble distribution: {name: Halo, halo size: 500000}
+
+ensemble:
+  # What updates the members. `letkf` runs a filter beside the deterministic
+  # analysis, which is what makes the covariance flow dependent *and*
+  # observation informed; `none` lets them run free and only recentres them,
+  # which is cheaper and is a different experiment rather than a degraded one.
+  source: letkf
+
+# Localization, per observer, for `da.ens`. The same values `da/letkf` uses:
+# this is the observation-space localization the filter applies, and it is a
+# different mechanism from the model-space localization of the covariance above,
+# which is why both exist and neither implies the other.
+observations:
+- obs space:
+    name: adt_3a
+  obs localizations:
+  - localization method: Rossby
+    rossby mult: 1.0
+    min grid mult: 1.0
+- obs space:
+    name: sst_noaa19
+  obs localizations:
+  - localization method: Rossby
+    rossby mult: 1.0
+    min grid mult: 1.0

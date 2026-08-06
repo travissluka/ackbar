@@ -1,11 +1,11 @@
 {
   "cycles": 50,
-  "nodes": 558,
-  "jobs": 3558,
+  "nodes": 658,
+  "jobs": 3658,
   "edges": {
-    "afterok": 307,
+    "afterok": 556,
     "aftercorr": 100,
-    "afterany": 250
+    "afterany": 400
   },
   "tasks": {
     "b.vt": {
@@ -17,6 +17,10 @@
       "jobs": 49
     },
     "da": {
+      "nodes": 50,
+      "jobs": 50
+    },
+    "da.ens": {
       "nodes": 50,
       "jobs": 50
     },
@@ -35,6 +39,10 @@
     "post.state": {
       "nodes": 50,
       "jobs": 1050
+    },
+    "recenter": {
+      "nodes": 50,
+      "jobs": 50
     },
     "stage.obs": {
       "nodes": 50,

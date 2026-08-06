@@ -16,7 +16,21 @@ from .tasks import (
     ROOTS,
     SUPPRESSED_BY,
     TASKS,
+    ensemble_covariance,
+    ensemble_source,
 )
+
+#: Ways of maintaining an ensemble across cycles that ACKBAR can actually run.
+#: `letkf` puts an ensemble filter in the cycle beside the deterministic
+#: analysis; `none` lets the members run free and only pulls them back onto that
+#: analysis, which is a cheaper and genuinely different experiment rather than a
+#: degraded version of the first.
+#:
+#: `eda` and the rest are in the schema because they are the vocabulary, and
+#: refused here because a covariance drawn from an ensemble nothing maintains is
+#: not an under-specified experiment, it is one whose spread decays to nothing
+#: over a few cycles with no error to say so.
+ENSEMBLE_SOURCES = ("letkf", "none")
 
 
 def member_set(config):
@@ -78,6 +92,7 @@ def extended_cycles(config, count):
 
 def build_graph(config):
     """The whole experiment: every cycle, every task, every edge."""
+    _check_ensemble_source(config)
     count = config["cycle"]["count"]
     canonical = member_set(config)
     graph = Graph(
@@ -122,6 +137,51 @@ def build_graph(config):
     _check_roots(graph)
     graph.order()  # fail here rather than leaving Slurm to not notice
     return graph
+
+
+def _check_ensemble_source(config):
+    """A covariance drawn from an ensemble needs that ensemble maintained.
+
+    Here rather than in the schema because it is a relation between two
+    subtrees, `solver.covariance` and `ensemble.source`, and a schema that
+    expressed it would be read by nobody. It is checked at graph build time
+    because that is what every command does first.
+    """
+    if not ensemble_covariance(config):
+        return
+    source = ensemble_source(config)
+    if source not in ENSEMBLE_SOURCES:
+        raise GraphError(
+            f"solver.covariance is "
+            f"{config['solver'].get('covariance')!r}, so the analysis draws its "
+            f"background error from the ensemble, and ensemble.source is "
+            f"{source!r}, which nothing in this cycle implements. Use one of "
+            f"{', '.join(ENSEMBLE_SOURCES)}: an ensemble that nothing updates "
+            f"loses its spread over a few cycles and reports no error while it "
+            f"does."
+        )
+    if not config["ensemble"].get("control", True):
+        raise GraphError(
+            "solver.covariance draws its background error from the ensemble, "
+            "and ensemble.control is false. The centre every member is "
+            "recentred onto is the deterministic analysis, which is the "
+            "control's; without one there is nothing for the recentring to be "
+            "about and the first ensemble member would be treated as the "
+            "answer."
+        )
+    if source != "letkf":
+        return
+    # `da.ens` is an ensemble filter, so it needs what any ensemble filter
+    # needs. The schema asks for these when the *solver* is an LETKF and cannot
+    # ask for them here, where what calls for one is a value in another subtree.
+    missing = [key for key in ("local ensemble DA", "ensemble distribution")
+               if not config["solver"].get(key)]
+    if missing:
+        raise GraphError(
+            f"ensemble.source is 'letkf', so this cycle runs an ensemble "
+            f"filter beside the variational analysis, and solver states no "
+            f"{' and no '.join(missing)}. Inherit a layer that configures one."
+        )
 
 
 def _runs_in_cycle(name, cycle, count, long_forecast):

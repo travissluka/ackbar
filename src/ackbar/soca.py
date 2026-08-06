@@ -61,6 +61,30 @@ DIAG_TABLE = "soca\n{0.year} {0.month} {0.day} {0.hour} {0.minute} {0.second}\n"
 TRACES = ("hofx.yaml", "hofx.log")
 VAR_TRACES = ("var.yaml", "var.log")
 LETKF_TRACES = ("letkf.yaml", "letkf.log")
+RECENTER_TRACES = ("recenter.yaml", "recenter.log")
+
+#: How an application is told to spread observations across ranks. ACKBAR's
+#: rather than a layer's, and this is a change from how soca-science expressed
+#: it: v2 redefined an `&obs_distribution` anchor in each solver's document, so
+#: the value lived with the DA mode and the observers substituted it in.
+#:
+#: That works exactly until a cycle contains two applications. A hybrid runs a
+#: variational analysis and an ensemble filter over the *same* observer
+#: configurations, and they need different distributions: a variational solve is
+#: global and takes the cheap round robin, while an LETKF solves each point from
+#: the observations within its localization radius and needs every rank to hold
+#: a halo that wide. One substituted value cannot be both, and v2 patched around
+#: that with `sed` markers keyed on whether the LETKF was running solo or inside
+#: a `3dhyb`.
+#:
+#: So the distribution is not a property of the platform, and it is not really a
+#: property of the experiment either: it is a property of the application
+#: reading the file. ACKBAR sets it, and an observer layer says nothing about
+#: it. The halo *size* is the one part an experiment does choose, because it has
+#: to be at least the largest localization radius any observer uses; it is
+#: `solver.ensemble distribution` and it is stated by the layer that configures
+#: the filter.
+GLOBAL_DISTRIBUTION = {"name": "RoundRobin"}
 
 
 #: How SOCA names a file it writes: `<datadir>/ocn.<exp>.<type>.<date>.nc`, from
@@ -77,6 +101,27 @@ LETKF_TRACES = ("letkf.yaml", "letkf.log")
 ANALYSIS = ("ana", "an")
 INCREMENT = ("incr", "incr")
 FILE_DATE = "%Y%m%dT%H%M%SZ"
+
+#: A member's analysis after it has been pulled onto the deterministic one.
+#:
+#: A name of its own rather than overwriting the analysis it was built from, and
+#: the reason is diagnostic rather than technical. The recentring is the step
+#: that decides how much of a hybrid's answer the ensemble is allowed to keep,
+#: and the only way to see what it did is to have both states. v2 kept a copy
+#: for the same reason and had to remember to; here the two are simply different
+#: files and `writeback` is told which one it wants.
+RECENTERED = ("rcnt", "an")
+
+#: The `type` an application must be given when it writes one state per member.
+#:
+#: `soca_genfilename` builds a name from `type`, and `ens` is the only value
+#: that puts the member index in it: everything else produces one name, which
+#: six members then write in turn, leaving one file that is the last member's.
+#: The application exits 0 either way. So the type ACKBAR *asks for* is this,
+#: and the type it *names the committed file* with is the one in the constant
+#: above, because by then the file is in that member's own directory and an
+#: index in the name is redundant.
+ENSEMBLE_TYPE = "ens"
 
 #: The ensemble's prior and posterior spread. `sprdb` and `sprda` rather than
 #: words, because `exp` becomes a dot-separated field of a filename and a dot
@@ -106,21 +151,38 @@ ENSEMBLE_DIAGNOSTICS = (INCREMENT, SPREAD_PRIOR, SPREAD_POSTERIOR)
 #: then carried forward by every cycle after it, one more each time.
 PRODUCTS = "analysis"
 
+#: Where an ensemble filter's control-level products go when it is *not* the
+#: experiment's analysis: a subdirectory of the control's own products.
+#:
+#: In a pure LETKF the posterior mean is the control's analysis, so it is
+#: written as one. In a hybrid it is not: the control's analysis came from the
+#: variational solve, which saw the same observations through a covariance the
+#: ensemble alone does not have. The filter's mean, increment and spreads are
+#: then diagnostics of the ensemble rather than answers, and two of them share a
+#: filename with the deterministic analysis and its increment.
+ENSEMBLE_PRODUCTS = "ensemble"
+
 
 def product_name(kind, when):
-    """The file SOCA writes for one of `ANALYSIS` or `INCREMENT`."""
+    """The file SOCA writes for one of `ANALYSIS`, `INCREMENT` or `RECENTERED`."""
     exp, type_ = kind
     return f"ocn.{exp}.{type_}.{when.strftime(FILE_DATE)}.nc"
 
 
-def analysis_file(config, cycle):
-    """The analysis state `da` produces and `writeback` reads.
+def product_file(config, cycle, kind):
+    """One of this cycle's state products, by name.
 
-    One function, called by both, because the name is constructed inside SOCA
-    from three configuration values and a date format, and two spellings of that
-    construction is a writeback that silently finds nothing to apply.
+    One function, called by whatever writes it and by whatever reads it, because
+    the name is constructed inside SOCA from three configuration values and a
+    date format, and two spellings of that construction is a writeback that
+    silently finds nothing to apply.
     """
-    return product_name(ANALYSIS, cycle_time(config, cycle))
+    return product_name(kind, cycle_time(config, cycle))
+
+
+def analysis_file(config, cycle):
+    """The analysis state `da` produces and `writeback` reads."""
+    return product_file(config, cycle, ANALYSIS)
 
 
 def hofx(config, site, paths, cycle, task, *, background, observers):
@@ -151,7 +213,8 @@ def hofx(config, site, paths, cycle, task, *, background, observers):
     return commit(products)
 
 
-def analysis(config, site, paths, cycle, task, *, background, observers, target):
+def analysis(config, site, paths, cycle, task, *, background, observers, target,
+             ensemble=None):
     """Solve for one cycle's analysis, into *target*.
 
     Two kinds of product, and they are committed together because a run that
@@ -175,7 +238,8 @@ def analysis(config, site, paths, cycle, task, *, background, observers, target)
     stage(config, run, cycle)
 
     products = _redirect_output(observers, run / "out")
-    document = var_config(config, cycle, observers, background=background)
+    document = var_config(config, cycle, observers, background=background,
+                          ensemble=ensemble)
     _write(run / "var.yaml", yaml.safe_dump(document, sort_keys=False))
 
     try:
@@ -190,8 +254,47 @@ def analysis(config, site, paths, cycle, task, *, background, observers, target)
     return commit(products) + commit(states, move=True)
 
 
+def recenter(config, site, paths, cycle, task, *, center, ensemble, members,
+             target):
+    """Pull every member of the analysis ensemble onto the deterministic analysis.
+
+    What a hybrid does that an LETKF does not. The ensemble filter's analysis
+    ensemble is centred on its own mean, which saw the observations through the
+    ensemble covariance alone; the deterministic analysis saw them through the
+    hybrid, which is the answer the experiment is producing. Leaving the two
+    apart means the members cycle around a centre the experiment does not
+    believe, and the ensemble drifts away from the run it is meant to describe.
+
+    Each member keeps its own perturbation about the ensemble mean and is given
+    the deterministic analysis as its centre, which is the whole of the
+    operation: `member - mean(ensemble) + centre`.
+
+    *center* is the deterministic analysis state, *ensemble* locates each
+    member's own, and *target* is a function from a member index to where its
+    recentred state belongs.
+    """
+    run = paths.scratch(cycle, task)
+    stage(config, run, cycle)
+
+    document = recenter_config(config, cycle, center=center, ensemble=ensemble,
+                               members=members)
+    _write(run / "recenter.yaml", yaml.safe_dump(document, sort_keys=False))
+
+    try:
+        launch(config, site, run, task, "soca_ensrecenter.x", "recenter.yaml",
+               "recenter.log")
+    finally:
+        keep_traces(run, paths.sub("log") / str(cycle), task, None,
+                    names=RECENTER_TRACES)
+
+    name = product_name(RECENTERED, cycle_time(config, cycle))
+    written = _positions(run / "out", members, mean=False)
+    return commit([(source, target(member) / name)
+                   for member, source in written.items()], move=True)
+
+
 def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
-          target):
+          target, departures=None):
     """Assimilate every member of one cycle's ensemble.
 
     One MPI job for the whole ensemble, which is what an LETKF is: the analysis
@@ -212,7 +315,7 @@ def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
     run = paths.scratch(cycle, task)
     stage(config, run, cycle)
 
-    products = _redirect_output(observers, run / "out")
+    products = _redirect_output(observers, run / "out", into=departures)
     document = letkf_config(config, cycle, observers,
                             backgrounds=backgrounds, members=members)
     _write(run / "letkf.yaml", yaml.safe_dump(document, sort_keys=False))
@@ -226,14 +329,14 @@ def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
     when = cycle_time(config, cycle)
     name = analysis_file(config, cycle)
     states = [(source, target(member) / name)
-              for member, source in _ensemble(run / "out", members).items()]
+              for member, source in _positions(run / "out", members).items()]
     states += [(run / "out" / product_name(kind, when),
                 target(0) / product_name(kind, when))
                for kind in ENSEMBLE_DIAGNOSTICS]
     return commit(products) + commit(states, move=True)
 
 
-def _ensemble(written, members):
+def _positions(written, members, mean=True):
     """Which file the application wrote for which member.
 
     Found by looking rather than by predicting the name, which is a deliberate
@@ -251,10 +354,12 @@ def _ensemble(written, members):
     member's directory with nothing to notice. It is checked by count and by the
     contiguity of what was written.
 
-    Member 0 is the ensemble *mean*, which `oops::LocalEnsembleDA` writes when
+    Index 0 is the ensemble *mean*, which `oops::LocalEnsembleDA` writes when
     asked to save the posterior mean. It goes to the control's directory,
     because that is the whole of what the control's analysis is in an ensemble
-    filter: ACKBAR does not separately compute one.
+    filter: ACKBAR does not separately compute one. The recentring writes no
+    mean, since its centre is a state it was handed rather than one it computed,
+    and that is what *mean* selects.
 
     Everything is then renamed to the name the variational analysis writes. The
     index is redundant once the file is in that member's own directory and the
@@ -268,17 +373,18 @@ def _ensemble(written, members):
             found[int(fields[3])] = path
 
     ordered = sorted(members)
-    expected = set(range(1, len(ordered) + 1)) | {0}
+    expected = set(range(1, len(ordered) + 1)) | ({0} if mean else set())
     if set(found) != expected:
         raise ModelError(
-            f"the analysis exited 0 having written states {sorted(found)} into "
-            f"{written}, and {len(ordered)} member(s) plus a mean were asked "
-            f"for. Which file belongs to which member is read off that "
-            f"numbering, so a gap in it is not something to work around."
+            f"the application exited 0 having written states {sorted(found)} "
+            f"into {written}, and {len(ordered)} member(s)"
+            f"{' plus a mean' if mean else ''} were asked for. Which file "
+            f"belongs to which member is read off that numbering, so a gap in "
+            f"it is not something to work around."
         )
     # Position to member, and 0 to 0: the mean is the control's.
-    return {member: found[index + 1] for index, member in enumerate(ordered)} \
-        | {0: found[0]}
+    states = {member: found[index + 1] for index, member in enumerate(ordered)}
+    return states | {0: found[0]} if mean else states
 
 
 # --- the run directory -------------------------------------------------------
@@ -368,11 +474,27 @@ def hofx_config(config, cycle, observers, *, background):
             "begin": table["window_begin"].strftime("%Y-%m-%dT%H:%M:%SZ"),
             "length": table["window_length"],
         },
-        "observations": {"observers": [record["config"] for record in observers]},
+        "observations": {"observers": _observers(observers, GLOBAL_DISTRIBUTION)},
     }
 
 
-def var_config(config, cycle, observers, *, background):
+def _observers(observers, distribution):
+    """The observer bodies, with the distribution this application needs.
+
+    Set here rather than substituted into the observer layers. See
+    `GLOBAL_DISTRIBUTION` for why: a hybrid cycle reads the same observers
+    through two applications that need different answers, so it cannot be one
+    value in the merged configuration.
+    """
+    bodies = []
+    for record in observers:
+        body = dict(record["config"])
+        body["obs space"] = dict(body["obs space"], distribution=dict(distribution))
+        bodies.append(body)
+    return bodies
+
+
+def var_config(config, cycle, observers, *, background, ensemble=None):
     """The whole `soca_var.x` YAML, as a data structure.
 
     Built the same way `hofx_config` is, and from the same places: the geometry
@@ -410,6 +532,9 @@ def var_config(config, cycle, observers, *, background):
     **`final.increment`.** Analysis minus background, which is the one field
     that answers "did this cycle do anything" without a comparison against
     another experiment.
+
+    *ensemble* is the member backgrounds a hybrid or ensemble covariance draws
+    from, and is absent for a static B. See `background_error`.
     """
     table = symbols(config, cycle)
     model = config["model"]
@@ -446,9 +571,10 @@ def var_config(config, cycle, observers, *, background):
                 # that constructs and then reads a field of zeros.
                 "state variables": list(_require(solver, "background variables")),
             },
-            "background error": background_error(solver, variables),
+            "background error": background_error(solver, variables,
+                                                 ensemble=ensemble),
             "observations": {
-                "observers": [record["config"] for record in observers],
+                "observers": _observers(observers, GLOBAL_DISTRIBUTION),
             },
         },
         "variational": _variational(solver, geometry),
@@ -506,16 +632,13 @@ def letkf_config(config, cycle, observers, *, backgrounds, members):
             "`ensemble.on_missing_member` policy let the cycle continue anyway."
         )
 
-    def one(member):
-        return {
-            "read_from_file": 1,
-            # The trailing separator matters here for the same reason it does
-            # in hofx: SOCA concatenates basename and filename without one.
-            "basename": f"{backgrounds / member_dir(member)}{os.sep}",
-            "ocn_filename": _require(model.get("restart") or {}, "ocn"),
-            "date": date,
-            "state variables": list(_require(solver, "background variables")),
-        }
+    restart = _require(model.get("restart") or {}, "ocn")
+    states = member_states(
+        lambda member: backgrounds / member_dir(member) / restart,
+        members,
+        date=date,
+        variables=_require(solver, "background variables"),
+    )
 
     return {
         "geometry": {
@@ -527,9 +650,10 @@ def letkf_config(config, cycle, observers, *, backgrounds, members):
             "begin": table["window_begin"].strftime("%Y-%m-%dT%H:%M:%SZ"),
             "length": table["window_length"],
         },
-        "background": {"members": [one(member) for member in sorted(members)]},
+        "background": {"members": states},
         "observations": {
-            "observers": [record["config"] for record in observers],
+            "observers": _observers(observers,
+                                    _require(solver, "ensemble distribution")),
         },
         "local ensemble DA": _require(solver, "local ensemble DA"),
         "driver": {
@@ -544,20 +668,73 @@ def letkf_config(config, cycle, observers, *, backgrounds, members):
         },
         # `date` is the reference the ensemble filenames are formed against.
         # It is the analysis time, so the offset in them is zero.
-        "output": dict(_written(("ana", "ens")), date=date),
+        "output": dict(_written(ANALYSIS), type=ENSEMBLE_TYPE, date=date),
         "output increment": dict(_written(INCREMENT), date=date),
         "output variance prior": dict(_written(SPREAD_PRIOR), date=date),
         "output variance posterior": dict(_written(SPREAD_POSTERIOR), date=date),
     }
 
 
-def background_error(solver, variables):
-    """The B description, with the balance operator's variable lists filled in.
+def recenter_config(config, cycle, *, center, ensemble, members):
+    """The whole `soca_ensrecenter.x` YAML, as a data structure.
 
-    Set rather than checked, and set even when the layer already says something,
-    for the same reason the geometry is: the answer is the analysis variables,
-    the analysis variables are stated once, and a second statement of them is
-    only ever a chance to disagree.
+    Small, and every part of it is a path or a variable list, which is why it is
+    the one analysis document with nothing passed through from a layer: there is
+    no science in a recentring, only an arithmetic identity about where an
+    ensemble sits.
+
+    The variables are the *analysis* variables rather than the background's, and
+    the reason is what the application does with them:
+    `x = x_center; x += pert` replaces every field of the member with the
+    centre's before adding the perturbation back. Naming a field here that the
+    analysis never solved for would recentre it too, so a member would come back
+    carrying the control's layer thicknesses, which is a different vertical grid
+    for the same water.
+    """
+    variables = list(_require(config["solver"], "analysis variables"))
+    date = symbols(config, cycle)["current_cycle"].strftime("%Y-%m-%dT%H:%M:%SZ")
+    model = config["model"]
+    center = Path(center)
+
+    return {
+        "geometry": {
+            "geom_grid_file": f"{GRIDSPEC}",
+            "mom6_input_nml": _require(model, "namelist"),
+            "fields metadata": _require(model, "fields metadata"),
+        },
+        "recenter variables": variables,
+        "center": {
+            "read_from_file": 1,
+            "basename": f"{center.parent}{os.sep}",
+            "ocn_filename": center.name,
+            "date": date,
+            "state variables": variables,
+        },
+        "ensemble": {
+            "members": member_states(ensemble, members, date=date,
+                                     variables=variables),
+        },
+        "recentered output": dict(_written(RECENTERED), type=ENSEMBLE_TYPE,
+                                  date=date),
+    }
+
+
+def background_error(solver, variables, *, ensemble=None):
+    """The B description, assembled from the covariance the experiment asked for.
+
+    Three shapes, and which one is built is `solver.covariance`, which until
+    this phase was validated and never read.
+
+    `static`     the SABER block the layer states, and nothing else.
+    `ensemble`   the ensemble alone, localized.
+    `hybrid`     both, as weighted components.
+
+    *ensemble* is the member states, which only ACKBAR can supply: they are the
+    previous cycle's forecasts, one directory per member, and a layer naming
+    them would be a layer that has to know the on-disk layout and the cycle
+    number. Required by the two covariances that read one, and refused by the
+    one that does not, rather than ignored: a static B handed an ensemble is an
+    experiment whose author believes it is doing something it is not.
 
     Public because the analysis is not the only thing that reads this B. The
     ensemble initial condition stage draws its perturbations from the same
@@ -566,12 +743,121 @@ def background_error(solver, variables):
     at all, so every member came back exactly equal to the state it was
     perturbed from and nothing said so.
     """
+    covariance = solver.get("covariance", "static")
+    if covariance not in ("static", "ensemble", "hybrid"):
+        raise ModelError(
+            f"solver.covariance is {covariance!r}, which is not a covariance "
+            f"this builds"
+        )
+    if (covariance == "static") is bool(ensemble):
+        raise ModelError(
+            f"solver.covariance is {covariance!r} and "
+            f"{len(ensemble or ())} ensemble member(s) were supplied; a static "
+            f"covariance reads none and the others read every one"
+        )
+
+    if covariance == "static":
+        return _static_error(solver, variables)
+    if covariance == "ensemble":
+        return _ensemble_error(solver, variables, ensemble)
+
+    weights = _require(solver, "hybrid weights")
+    return {
+        "covariance model": "hybrid",
+        "components": [
+            {"covariance": _static_error(solver, variables),
+             "weight": {"value": _weight(weights, "static")}},
+            {"covariance": _ensemble_error(solver, variables, ensemble),
+             "weight": {"value": _weight(weights, "ensemble")}},
+        ],
+    }
+
+
+def _weight(weights, name):
+    """One component's weight, which has to be stated rather than defaulted.
+
+    Halving the static B and adding half an ensemble is the textbook hybrid and
+    is not therefore the right answer for any particular ocean, so there is no
+    default here. An experiment that does not say what it weighted them at is an
+    experiment whose result cannot be attributed to either.
+    """
+    value = weights.get(name)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ModelError(
+            f"solver.hybrid weights.{name} is {value!r}; a hybrid covariance "
+            f"needs a number for each of its two components"
+        )
+    return float(value)
+
+
+def _static_error(solver, variables):
+    """The layer's SABER block, with the balance operator's variable lists in it.
+
+    Set rather than checked, and set even when the layer already says something,
+    for the same reason the geometry is: the answer is the analysis variables,
+    the analysis variables are stated once, and a second statement of them is
+    only ever a chance to disagree.
+    """
     section = dict(_require(solver, "background error"))
     change = section.get("linear variable change")
     if change:
         section["linear variable change"] = dict(
             change, **{"input variables": variables, "output variables": variables})
     return section
+
+
+def _ensemble_error(solver, variables, ensemble):
+    """The ensemble component: the members, and what localizes them.
+
+    The localization is the layer's, verbatim, on the same rule as the static
+    B's blocks: it is a SABER description of a length scale calibrated offline,
+    and ACKBAR has nothing to add to it except the variables it applies to.
+
+    That variable list is what makes the localization multivariate, and it is
+    the reason `multivariate strategy: duplicated` belongs in the layer: one
+    scale field is read and applied to every analysis variable, rather than one
+    per variable. Getting it wrong is quiet in the way this file's other
+    omissions are, because saber constructs either way.
+    """
+    section = dict(_require(solver, "ensemble error"))
+    localization = dict(_require(section, "localization"))
+    return {
+        "covariance model": "ensemble",
+        "members": list(ensemble),
+        "localization": dict(localization, **{"localization variables": variables}),
+    }
+
+
+def member_states(locate, members, *, date, variables):
+    """One state description per member, for an application that reads an ensemble.
+
+    Three of them do: the LETKF's background, a hybrid's ensemble component, and
+    the recentring. One function, because a member's state is one path and three
+    spellings of it is two chances to read a different ensemble than the one
+    that was forecast. *locate* is a member index to the file itself, which is a
+    restart for the first two and an analysis for the third.
+
+    An explicit list rather than oops's `members from template`, and the reason
+    is the one phase 7 found: `oops::DataSetBase` numbers by position in the
+    list it was handed, so a template's `%mem%` and the index a member is
+    written out as disagree exactly when a member is missing. A list of twenty
+    near-identical blocks is verbose in a file nobody hand-edits, and in
+    exchange every member's state is a path `ackbar validate` stats before
+    anything is submitted.
+    """
+    states = []
+    for member in sorted(members):
+        path = Path(locate(member))
+        states.append({
+            # The trailing separator matters: SOCA concatenates basename and
+            # filename without one.
+            "basename": f"{path.parent}{os.sep}",
+            "ocn_filename": path.name,
+            "read_from_file": 1,
+            "date": date,
+            "state variables": list(variables),
+        })
+    return states
 
 
 def _variational(solver, geometry):
@@ -598,7 +884,7 @@ def _written(kind):
     return {"datadir": "out", "exp": exp, "type": type_, "date colons": False}
 
 
-def _redirect_output(observers, staging):
+def _redirect_output(observers, staging, into=None):
     """Point every observer's output at scratch, and say where it belongs.
 
     An application that writes straight to `obs_out/` leaves a truncated file
@@ -606,6 +892,12 @@ def _redirect_output(observers, staging):
     that exists. Writing to scratch and renaming afterwards is what every other
     task here does; this is the same rule applied to a config value rather than
     to a path in code.
+
+    *into* moves the committed file into a subdirectory of where the observer
+    layer put it, and exists for exactly one case: a hybrid cycle runs two
+    applications over the same observers, and both write departures under the
+    same configured name. The control's are the experiment's product and keep
+    that name; the ensemble's are a diagnostic and go one level down.
     """
     products = []
     for record in observers:
@@ -615,9 +907,10 @@ def _redirect_output(observers, staging):
                 f"observer {record['name']} has no obsdataout file, so its "
                 f"hofx would run and be discarded"
             )
-        local = staging / Path(final).name
+        final = Path(final)
+        local = staging / final.name
         record["config"]["obs space"]["obsdataout"]["engine"]["obsfile"] = str(local)
-        products.append((local, Path(final)))
+        products.append((local, final.parent / into / final.name if into else final))
     return products
 
 

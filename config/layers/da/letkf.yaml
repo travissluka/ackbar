@@ -1,6 +1,5 @@
-# LETKF solver. The distribution and land mask differ from variational, which
-# in soca-science was expressed by redefining &obs_distribution and
-# &obs_land_mask in soca_letkf.yaml.
+# LETKF solver. The land mask differs from variational, which in soca-science
+# was expressed by redefining &obs_land_mask in soca_letkf.yaml.
 #
 # The whole `soca_letkf.x` document is built by `ackbar/soca.py`, the same way
 # the variational one is. What is here is the part nothing else implies: which
@@ -52,16 +51,23 @@ solver:
       rtps: 0.5
       rtpp: 0.6
       mult: 1.1
-vars:
+
   # The halo is what makes an LETKF parallel: each rank solves the points it
   # owns using every observation within `halo size` of them, so the number is a
   # decomposition parameter and a localization one at the same time. It has to
   # be at least the largest localization radius any observer uses or a rank
   # solves with observations it cannot see.
   #
+  # Under `solver` rather than in `vars`, and the observer layers no longer
+  # mention a distribution at all. A hybrid runs this filter beside a
+  # variational analysis over the same observers, and the two need different
+  # distributions, so one substituted value cannot serve both. See
+  # GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
+  #
   # Written as 500000 rather than soca-science's 500e3, which PyYAML reads as
   # the string '500e3' while eckit reads it as a float. See ackbar.config.lint.
-  obs_distribution: {name: Halo, halo size: 500000}
+  ensemble distribution: {name: Halo, halo size: 500000}
+vars:
   obs_land_mask_min: 0.5
 
 # Localization is added per observer. Each element names only the observer it

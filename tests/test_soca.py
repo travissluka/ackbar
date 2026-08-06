@@ -304,6 +304,7 @@ LETKF = {
                              "sea_water_cell_thickness"],
     "local ensemble DA": {"solver": "Deterministic LETKF",
                           "inflation": {"rtps": 0.5}},
+    "ensemble distribution": {"name": "Halo", "halo size": 500000},
 }
 
 
@@ -585,3 +586,264 @@ def test_the_shipped_layers_produce_a_document_soca_would_accept(tmp_path):
     reread = yaml.safe_load(yaml.safe_dump(document))
     assert reread["geometry"]["fields metadata"].startswith(str(repo))
     assert reread["state"]["date"] == "1958-01-01T12:00:00Z"
+
+
+# --- the covariance ----------------------------------------------------------
+#
+# `solver.covariance` was validated and never read until phase 8. These are the
+# three shapes it now assembles, and the failures they guard against are all of
+# the same kind: a document that constructs, runs, and describes a different
+# background error than the one the experiment asked for.
+
+ENSEMBLE_ERROR = {
+    "localization": {
+        "localization method": "SABER",
+        "saber central block": {
+            "saber block name": "diffusion",
+            "read": {"groups": [{"multivariate strategy": "duplicated",
+                                 "horizontal": {"filepath": "/static/loc_hz"},
+                                 "vertical": {"strategy": "duplicated"}}]},
+        },
+    },
+}
+
+
+def members_at(cycle, members=(1, 2, 3)):
+    return soca.member_states(
+        lambda member: Path(f"/out/e/rst/{cycle}/mem{member:03d}/MOM.res.nc"),
+        members,
+        date="2018-04-15T00:00:00Z",
+        variables=SOLVER["background variables"],
+    )
+
+
+@pytest.fixture
+def hybrid(config):
+    solver = dict(SOLVER, covariance="hybrid",
+                  **{"ensemble error": ENSEMBLE_ERROR,
+                     "hybrid weights": {"static": 0.4, "ensemble": 0.6}})
+    return dict(config, solver=solver)
+
+
+def test_a_static_covariance_is_the_layers_block_and_nothing_else(var):
+    error = soca.background_error(var["solver"], SOLVER["analysis variables"])
+    assert error["covariance model"] == "SABER"
+    assert "components" not in error
+
+
+def test_a_hybrid_is_two_weighted_components(hybrid):
+    error = soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                                  ensemble=members_at(0))
+    assert error["covariance model"] == "hybrid"
+    static, ens = error["components"]
+    assert static["covariance"]["covariance model"] == "SABER"
+    assert ens["covariance"]["covariance model"] == "ensemble"
+    # Weights as stated, and floats: eckit does not coerce a string.
+    assert static["weight"] == {"value": 0.4}
+    assert ens["weight"] == {"value": 0.6}
+
+
+def test_an_ensemble_covariance_has_no_static_component_at_all(hybrid):
+    hybrid["solver"]["covariance"] = "ensemble"
+    error = soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                                  ensemble=members_at(0))
+    assert error["covariance model"] == "ensemble"
+    assert "components" not in error
+    # The static B is still configured by the layer and deliberately unread:
+    # `solver.covariance` is the one place that decides.
+    assert "saber central block" not in error
+
+
+def test_the_ensemble_component_carries_the_members_it_was_given(hybrid):
+    error = soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                                  ensemble=members_at(1, members=(1, 3)))
+    ens = error["components"][1]["covariance"]
+    assert [entry["basename"] for entry in ens["members"]] == [
+        "/out/e/rst/1/mem001/", "/out/e/rst/1/mem003/"]
+    assert [entry["ocn_filename"] for entry in ens["members"]] == \
+        ["MOM.res.nc", "MOM.res.nc"]
+
+
+def test_the_localization_is_the_layers_with_the_variables_filled_in(hybrid):
+    """The same omission as the balance operator's, from the other side.
+
+    `localization variables` is what the localization applies to, it is the
+    analysis variables, and they are stated once.
+    """
+    error = soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                                  ensemble=members_at(0))
+    localization = error["components"][1]["covariance"]["localization"]
+    assert localization["localization variables"] == SOLVER["analysis variables"]
+    assert localization["localization method"] == "SABER"
+    assert localization["saber central block"]["saber block name"] == "diffusion"
+
+
+def test_a_hybrid_with_no_weights_is_refused(hybrid):
+    """0.5/0.5 is the textbook answer and therefore not any ocean's answer.
+
+    An experiment that did not state them is one whose result cannot be
+    attributed to either component.
+    """
+    del hybrid["solver"]["hybrid weights"]
+    with pytest.raises(ModelError, match="hybrid weights"):
+        soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                              ensemble=members_at(0))
+
+
+def test_a_weight_that_is_not_a_number_is_refused(hybrid):
+    hybrid["solver"]["hybrid weights"]["static"] = "0.5"
+    with pytest.raises(ModelError, match="needs a number"):
+        soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                              ensemble=members_at(0))
+
+
+def test_a_static_covariance_handed_an_ensemble_is_refused(var):
+    """Not ignored. An experiment configured as static and supplied with an
+    ensemble is one whose author believes it is doing something it is not."""
+    with pytest.raises(ModelError, match="static covariance reads none"):
+        soca.background_error(var["solver"], SOLVER["analysis variables"],
+                              ensemble=members_at(0))
+
+
+def test_an_ensemble_covariance_with_no_ensemble_is_refused(hybrid):
+    with pytest.raises(ModelError, match="reads none and the others"):
+        soca.background_error(hybrid["solver"], SOLVER["analysis variables"])
+
+
+def test_the_layer_is_not_mutated_by_assembling_a_hybrid(hybrid):
+    soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                          ensemble=members_at(0))
+    assert "localization variables" not in \
+        hybrid["solver"]["ensemble error"]["localization"]
+    assert "input variables" not in \
+        hybrid["solver"]["background error"]["linear variable change"]
+
+
+def test_the_analysis_document_carries_the_hybrid_it_was_handed(hybrid):
+    document = soca.var_config(hybrid, 1, [observer()], background=Path("/rst/0"),
+                               ensemble=members_at(0))
+    assert document["cost function"]["background error"]["covariance model"] == "hybrid"
+
+
+# --- the distribution --------------------------------------------------------
+
+def test_a_variational_analysis_reads_its_observations_round_robin(var):
+    document = soca.var_config(var, 1, [observer()], background=Path("/rst/0"))
+    space = document["cost function"]["observations"]["observers"][0]["obs space"]
+    assert space["distribution"] == {"name": "RoundRobin"}
+
+
+def test_a_filter_reads_the_same_observers_through_a_halo(ens):
+    """The reason a distribution is not a layered value.
+
+    A hybrid cycle runs both applications over one merged configuration, so a
+    substituted `$(obs_distribution)` could only ever be one of these two.
+    soca-science patched around that with `sed` markers keyed on whether the
+    LETKF was running solo.
+    """
+    document = letkf_document(ens)
+    space = document["observations"]["observers"][0]["obs space"]
+    assert space["distribution"] == {"name": "Halo", "halo size": 500000}
+
+
+def test_hofx_takes_the_serial_distribution_too(config):
+    document = soca.hofx_config(config, 1, [observer()], background=Path("/rst/0"))
+    space = document["observations"]["observers"][0]["obs space"]
+    assert space["distribution"] == {"name": "RoundRobin"}
+
+
+def test_setting_the_distribution_does_not_edit_the_observer_record(var):
+    record = observer()
+    soca.var_config(var, 1, [record], background=Path("/rst/0"))
+    assert "distribution" not in record["config"]["obs space"]
+
+
+# --- the recentring ----------------------------------------------------------
+
+def recenter_document(hybrid, members=(1, 2, 3)):
+    return soca.recenter_config(
+        hybrid, 1,
+        center=Path("/out/e/ana/1/mem000/analysis/ocn.ana.an.20180415T000000Z.nc"),
+        ensemble=lambda m: Path(f"/out/e/ana/1/mem{m:03d}/analysis/x.nc"),
+        members=members)
+
+
+def test_the_centre_is_the_deterministic_analysis(hybrid):
+    document = recenter_document(hybrid)
+    assert document["center"]["basename"] == "/out/e/ana/1/mem000/analysis/"
+    assert document["center"]["ocn_filename"] == "ocn.ana.an.20180415T000000Z.nc"
+
+
+def test_the_recentring_touches_only_the_analysis_variables(hybrid):
+    """`x = x_center; x += pert` replaces every field it is given.
+
+    Naming a field the analysis never solved for would hand every member the
+    control's layer thicknesses, which is a different vertical grid under the
+    same water.
+    """
+    document = recenter_document(hybrid)
+    assert document["recenter variables"] == SOLVER["analysis variables"]
+    for entry in document["ensemble"]["members"]:
+        assert entry["state variables"] == SOLVER["analysis variables"]
+    assert document["center"]["state variables"] == SOLVER["analysis variables"]
+
+
+def test_the_recentred_members_are_named_apart_from_the_analyses(hybrid):
+    """Both states are kept, because the recentring is the step that decides how
+    much of a hybrid's answer the ensemble keeps and nothing else records it."""
+    document = recenter_document(hybrid)
+    assert document["recentered output"]["exp"] == soca.RECENTERED[0]
+    assert soca.product_file(hybrid, 1, soca.RECENTERED) == \
+        "ocn.rcnt.an.20180415T000000Z.nc"
+    assert soca.product_file(hybrid, 1, soca.ANALYSIS) == \
+        "ocn.ana.an.20180415T000000Z.nc"
+
+
+def test_a_gap_in_the_ensemble_recentres_a_shorter_list(hybrid):
+    document = recenter_document(hybrid, members=(1, 3))
+    assert [entry["basename"] for entry in document["ensemble"]["members"]] == [
+        "/out/e/ana/1/mem001/analysis/", "/out/e/ana/1/mem003/analysis/"]
+
+
+def test_the_shipped_hybrid_layers_produce_a_document_soca_would_accept():
+    """The committed layers, through the whole builder, both applications.
+
+    Everything `soca_var.x` and `soca_letkf.x` read in a hybrid cycle is either
+    built here or stated by a layer, so a key neither sets is otherwise
+    discovered by an application that has already read an ensemble.
+    """
+    repo, merged = shipped("tier3_hybrid.yaml")
+    document = yaml.safe_load(yaml.safe_dump(soca.var_config(
+        merged, 1, [observer()], background=Path("/rst/0"),
+        ensemble=members_at(0))))
+
+    error = document["cost function"]["background error"]
+    assert error["covariance model"] == "hybrid"
+    static, ens = error["components"]
+    assert static["weight"]["value"] + ens["weight"]["value"] == 1.0
+    groups = ens["covariance"]["localization"]["saber central block"]["read"]["groups"]
+    # The localization scales are the domain's static stage, like the
+    # correlation, and `filepath` is a stem.
+    assert groups[0]["horizontal"]["filepath"] == \
+        "/static/static/gom_25km/diffusion/loc_hz"
+
+    filter_document = yaml.safe_load(yaml.safe_dump(soca.letkf_config(
+        merged, 1, [observer()], backgrounds=Path("/out/e/rst/0"), members=(1, 2))))
+    assert filter_document["local ensemble DA"]["solver"] == "Deterministic LETKF"
+    space = filter_document["observations"]["observers"][0]["obs space"]
+    assert space["distribution"]["halo size"] == 500000
+
+
+def test_a_per_member_writer_is_told_the_type_that_carries_an_index(hybrid, ens):
+    """`soca_genfilename` puts the member index in the name only for `ens`.
+
+    With any other type the six members write one filename in turn and the
+    application exits 0, leaving a single file that is the last member's. So the
+    type asked for and the type the committed file is named with are different,
+    and both are stated here rather than in two places that can drift.
+    """
+    document = recenter_document(hybrid)
+    assert document["recentered output"]["type"] == soca.ENSEMBLE_TYPE
+    assert letkf_document(ens)["output"]["type"] == soca.ENSEMBLE_TYPE
+    # And the diagnostics, which are one file each, are not told that.
+    assert letkf_document(ens)["output increment"]["type"] == soca.INCREMENT[1]

@@ -81,6 +81,12 @@ domain:
       ntasks: 8
       time: '00:30:00'
       mem: 16G
+    # The ensemble's own analysis, where a hybrid runs one. Same shape as
+    # `da`: one MPI job holding every member at once.
+    da.ens:
+      ntasks: 8
+      time: '00:30:00'
+      mem: 16G
     hofx:
       ntasks: 8
       time: '00:10:00'

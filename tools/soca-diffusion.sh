@@ -97,8 +97,14 @@ METADATA=$ACKBAR_ROOT/config/model/mom6sis2/fields_metadata.yaml
 # initial conditions silently is how a domain ends up with a B nobody can
 # account for.
 if [[ -z $RESTART ]]; then
+    # `ensemble*` is pruned for the same reason `tools/ensemble-ic.sh` prunes
+    # it: those directories are members drawn *from* a calibration, so offering
+    # one as the state to calibrate against is a loop, and there are as many of
+    # them as the ensemble is large.
     mapfile -t candidates < <(
-        find "$ACKBAR_STATIC_ROOT/ic/$DOMAIN" -name MOM.res.nc 2>/dev/null | sort)
+        find "$ACKBAR_STATIC_ROOT/ic/$DOMAIN" \
+            -type d -name 'ensemble*' -prune -o \
+            -name MOM.res.nc -print 2>/dev/null | sort)
     if [[ ${#candidates[@]} -eq 1 ]]; then
         RESTART=${candidates[0]}
         echo "soca-diffusion: using the only staged initial condition,"
@@ -245,10 +251,21 @@ mpiexec -n 8 "$TOOLBOX" calibrate_hz.yaml
 echo "soca-diffusion: calibrating the vertical"
 mpiexec -n 8 "$TOOLBOX" calibrate_vt.yaml
 
-# What the toolbox writes is what `variational.yaml` reads, so check for the
-# files rather than for an exit status. `filepath` in saber is a stem: the file
-# is the stem plus `.nc`.
-for name in hz hz_ssh vt; do
+# What the toolbox writes is what the da layers read, so check for the files
+# rather than for an exit status. `filepath` in saber is a stem: the file is the
+# stem plus `.nc`.
+#
+# The list comes from the config rather than being written out here, so that
+# adding a group is one edit rather than three. `loc_hz` arrived that way.
+mapfile -t NAMES < <(python3 -c '
+import sys, yaml
+config = yaml.safe_load(open(sys.argv[1]))
+print("\n".join(config.get("horizontal") or {}))
+if config.get("vertical"):
+    print("vt")
+' "$CONFIG")
+
+for name in "${NAMES[@]}"; do
     [[ -s out/$name.nc ]] || {
         echo "soca-diffusion: $TOOLBOX exited 0 and wrote no out/$name.nc" >&2
         exit 1
@@ -256,7 +273,7 @@ for name in hz hz_ssh vt; do
 done
 
 mkdir -p "$OUT"
-mv out/hz.nc out/hz_ssh.nc out/vt.nc "$OUT/"
+for name in "${NAMES[@]}"; do mv "out/$name.nc" "$OUT/"; done
 cp calibrate_hz.yaml calibrate_vt.yaml "$OUT/"
-echo "soca-diffusion: wrote $OUT/{hz,hz_ssh,vt}.nc"
+echo "soca-diffusion: wrote ${NAMES[*]/#/$OUT/} (with .nc)"
 echo "soca-diffusion: verify it with  tools/soca-dirac.sh $DOMAIN"

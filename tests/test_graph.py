@@ -35,6 +35,7 @@ GOLDENED = [
     "var_om1deg",
     "fourd_om1deg",
     "letkf_om1deg",
+    "envar_om1deg",
     "hybrid_om1deg",
 ]
 
@@ -159,9 +160,31 @@ class TestConfigurationDrivesTheTaskSet:
         assert "hofx" not in tasks
         assert {"da", "writeback", "post.obs"} <= tasks
 
-    def test_letkf_recentres_and_variational_does_not(self, keys):
-        assert "recenter" in {n.task for n in graph_for("letkf_om1deg", keys).nodes}
-        assert "recenter" not in {n.task for n in graph_for("hybrid_om1deg", keys).nodes}
+    def tasks_of(self, name, keys):
+        return {n.task for n in graph_for(name, keys).nodes}
+
+    def test_an_ensemble_covariance_recentres_and_an_letkf_does_not(self, keys):
+        """The centre an LETKF would be recentred onto is its own mean.
+
+        Which is the identity, so the job would exist to confirm it. A hybrid is
+        where the centre is something else: the deterministic analysis, which
+        saw the same observations through a covariance the ensemble does not
+        have on its own.
+        """
+        assert "recenter" not in self.tasks_of("letkf_om1deg", keys)
+        assert "recenter" in self.tasks_of("hybrid_om1deg", keys)
+        assert "recenter" in self.tasks_of("envar_om1deg", keys)
+
+    def test_only_an_ensemble_maintained_by_a_filter_has_a_second_analysis(self, keys):
+        assert "da.ens" in self.tasks_of("hybrid_om1deg", keys)
+        # `source: none`: the members run free and are only recentred.
+        assert "da.ens" not in self.tasks_of("envar_om1deg", keys)
+        # An LETKF's own analysis *is* the ensemble's.
+        assert "da.ens" not in self.tasks_of("letkf_om1deg", keys)
+
+    def test_a_pure_ensemble_covariance_has_no_static_b_to_calibrate(self, keys):
+        assert "b.vt" in self.tasks_of("hybrid_om1deg", keys)
+        assert "b.vt" not in self.tasks_of("envar_om1deg", keys)
 
     def test_the_solver_chooses_the_executable(self, keys):
         def exe(name, task):
@@ -170,6 +193,35 @@ class TestConfigurationDrivesTheTaskSet:
         assert exe("var_om1deg", "da").endswith("soca_var.x")
         assert exe("letkf_om1deg", "da").endswith("soca_letkf.x")
         assert exe("free_om1deg", "hofx").endswith("soca_hofx3d.x")
+        # A hybrid runs both, which is the whole reason `da` split in two.
+        assert exe("hybrid_om1deg", "da").endswith("soca_var.x")
+        assert exe("hybrid_om1deg", "da.ens").endswith("soca_letkf.x")
+        assert exe("hybrid_om1deg", "recenter").endswith("soca_ensrecenter.x")
+
+    def test_a_covariance_drawn_from_an_unmaintained_ensemble_is_refused(self, keys):
+        config = load("hybrid_om1deg", keys)
+        config["ensemble"]["source"] = "eda"
+        with pytest.raises(GraphError, match="nothing in this cycle implements"):
+            build_graph(config)
+
+    def test_an_ensemble_covariance_needs_a_control_to_recentre_onto(self, keys):
+        """The centre is the deterministic analysis, which is the control's.
+
+        Without one the first ensemble member would be treated as the answer,
+        and the recentring would pull the ensemble onto one of its own members.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["ensemble"]["control"] = False
+        with pytest.raises(GraphError, match="ensemble.control is false"):
+            build_graph(config)
+
+    def test_a_filter_maintained_ensemble_needs_the_filter_configured(self, keys):
+        # The schema asks for these when the *solver* is an LETKF, and cannot
+        # ask here, where what calls for one is a value in another subtree.
+        config = load("hybrid_om1deg", keys)
+        del config["solver"]["local ensemble DA"]
+        with pytest.raises(GraphError, match="local ensemble DA"):
+            build_graph(config)
 
     def test_four_d_changes_the_configuration_and_not_yet_the_graph(self, keys):
         # Pinned so that phase 9's sub-window forecast slots show up as a

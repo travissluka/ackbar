@@ -56,6 +56,26 @@ horizontal:
     min grid mult: 2.0
     max: 350.0e3
 
+  # Localization for an ensemble covariance. A different quantity from the two
+  # above, and here because it is built by the same operator out of the same
+  # grid: those are correlation lengths for a *modelled* background error, this
+  # is the radius beyond which a correlation *sampled* from twenty members is
+  # taken to be noise and tapered away.
+  #
+  # Deliberately wider than `hz`, and the reason is worth stating because
+  # getting it wrong is quiet. Localizing tighter than the true correlation
+  # length throws away exactly the long range structure the ensemble is there to
+  # provide, and the symptom is an ensemble component that appears not to be
+  # contributing rather than anything that looks like a mistake.
+  #
+  # soca-science v2's numbers unchanged: twice the Rossby radius, floored at two
+  # grid cells, ceilinged where `hz_ssh` is. Read by the `localization` block in
+  # `config/layers/da/hybrid.yaml` and by nothing else.
+  loc_hz:
+    rossby mult: 2.0
+    min grid mult: 2.0
+    max: 350.0e3
+
 # ------------------------------------------------------------------------------
 # Vertical, in *model levels* rather than metres, because that is the coordinate
 # the operator diffuses along and MOM6's layers are not evenly spaced.

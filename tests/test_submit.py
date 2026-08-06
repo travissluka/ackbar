@@ -74,7 +74,7 @@ def test_a_whole_cycle_is_submitted_in_topological_order(env):
     records = submit.submit_cycle(env.config, env.site, env.paths, 1,
                                   graph=env.graph)
     tasks = [r["task"] for r in records]
-    assert tasks.index("da") < tasks.index("recenter") < tasks.index("writeback")
+    assert tasks.index("da") < tasks.index("writeback")
     assert tasks.index("forecast") < tasks.index("submit")
 
 

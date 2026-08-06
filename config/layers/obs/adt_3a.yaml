@@ -2,19 +2,25 @@
 #
 # What changed in the port, and why:
 #
-#   *obs_distribution / *obs_distribution_opt  ->  $(obs_distribution)
+#   *obs_distribution / *obs_distribution_opt  ->  removed entirely
 #       These were YAML anchors defined in the *solver* file, so the same
 #       observer got RoundRobin under 3DVar and Halo under LETKF. That is
-#       layering by DA mode, done through anchors. It is now what it always
-#       was: a value the da/* layer sets.
+#       layering by DA mode, done through anchors, and it works right up until
+#       a cycle contains two applications: a hybrid reads these same observers
+#       through a variational solve and an ensemble filter, and they need
+#       different answers. v2 patched around that with `sed` markers keyed on
+#       whether the LETKF was running solo or inside a `3dhyb`.
 #
-#       One substituted mapping rather than a name and an options bag. ioda
-#       reads a distribution's own parameters directly under `distribution`,
-#       not under an `options` key, and soca-science's spelling was for an
-#       older ioda: the Halo distribution finds no `halo size` there and
-#       refuses to construct. A whole-token `$(...)` takes the symbol's type,
-#       so the da layer supplies the mapping and the parameters a distribution
-#       needs stay next to the distribution that needs them.
+#       So it is not a property of the platform, and it is not really one of
+#       the experiment either: it is a property of the application reading the
+#       file. `ackbar/soca.py` sets it, an observer says nothing about it, and
+#       what an experiment states is the one part it does choose, the halo
+#       size, under `solver.ensemble distribution`.
+#
+#       (ioda reads a distribution's parameters directly under `distribution`
+#       rather than under an `options` key. soca-science's spelling was for an
+#       older ioda, and the Halo distribution finds no `halo size` there and
+#       refuses to construct.)
 #
 #   *obs_land_mask  ->  an ordinary filter with $(obs_land_mask_min)
 #       Same story: the threshold was 0.9 under 3DVar and 0.5 under LETKF.
@@ -34,7 +40,6 @@
 observations:
 - obs space:
     name: adt_3a
-    distribution: $(obs_distribution)
     # The archive is keyed by date, because an archive has no cycle numbers: it
     # is built once and read by experiments that number their cycles
     # differently. The experiment's own output is keyed by cycle number, like

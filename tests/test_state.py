@@ -154,12 +154,12 @@ def test_the_queue_wins_over_accounting(env):
 # --- arrays ------------------------------------------------------------------
 
 def test_array_elements_are_tracked_separately(env):
-    record(env.paths, 1, "recenter", 600, members=range(1, 21))
+    record(env.paths, 1, "writeback", 600, members=range(1, 21))
     env.slurm.accounted["600_1"] = "FAILED"
     for member in range(2, 21):
         env.slurm.accounted[f"600_{member}"] = "COMPLETED"
 
-    status = state.collect(env.paths, env.graph)["1.recenter"]
+    status = state.collect(env.paths, env.graph)["1.writeback"]
     assert status.broken == (1,)
     assert status.counts() == {state.FAILED: 1, state.COMPLETE: 19}
     assert status.summary == state.FAILED
@@ -172,22 +172,22 @@ def test_the_unstarted_remainder_of_an_array_is_expanded(env):
     and be reported as pending-with-no-record, which reads as a heal being
     needed when nothing is wrong.
     """
-    record(env.paths, 1, "recenter", 600, members=range(1, 21))
+    record(env.paths, 1, "writeback", 600, members=range(1, 21))
     env.slurm.queued["600_[5-20]"] = ("PENDING", "Resources")
     for member in range(1, 5):
         env.slurm.queued[f"600_{member}"] = ("RUNNING", "None")
 
-    status = state.collect(env.paths, env.graph)["1.recenter"]
+    status = state.collect(env.paths, env.graph)["1.writeback"]
     assert status.counts() == {state.RUNNING: 4, state.PENDING: 16}
 
 
 def test_one_stranded_element_makes_the_node_stranded(env):
     """A summary is the worst element, because "mostly fine" is not actionable."""
-    record(env.paths, 1, "recenter", 600, members=range(1, 21))
+    record(env.paths, 1, "writeback", 600, members=range(1, 21))
     env.slurm.accounted["600_7"] = "COMPLETED"
     env.slurm.queued["600_3"] = ("PENDING", slurm.NEVER_SATISFIED)
 
-    assert state.collect(env.paths, env.graph)["1.recenter"].summary \
+    assert state.collect(env.paths, env.graph)["1.writeback"].summary \
         == state.STRANDED
 
 
