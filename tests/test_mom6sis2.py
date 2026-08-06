@@ -46,6 +46,7 @@ EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 INPUT_NML = """\
  &MOM_input_nml
          output_directory = '.',
+         input_filename = 'n'
          restart_input_dir = 'INPUT',
          restart_output_dir = 'RESTART',
          parameter_filename = 'MOM_input',
@@ -54,6 +55,7 @@ INPUT_NML = """\
 
  &SIS_input_nml
          output_directory = './',
+         input_filename = 'n'
          restart_input_dir = 'INPUT/',
          parameter_filename = 'SIS_input',
                               'SIS_override' /
@@ -282,6 +284,25 @@ def test_the_override_is_read_because_ackbar_puts_it_in_the_parameter_list(env):
     text = (run_dir / "input.nml").read_text()
     assert "parameter_filename = 'MOM_input', 'MOM_override'" in text
     assert "parameter_filename = 'SIS_input', 'SIS_override'" in text
+
+
+def test_the_model_is_told_to_resume_rather_than_start_new(env):
+    """The single most consequential value in the emitted namelist.
+
+    `MOM_restart::determine_is_new_run` reads one character. Stock
+    MOM6-examples cases ship `input_filename = 'n'`, which means a new run:
+    MOM6 then initializes temperature and salinity from
+    `INIT_LAYERS_FROM_Z_FILE` and never opens `INPUT/MOM.res.nc` at all. Every
+    cycle integrates the same cold start and every analysis is discarded, while
+    the workflow reports nothing, because the model runs and writes a restart
+    set exactly as it should.
+
+    Both components. An ice state silently reset every cycle is the same
+    failure with a smaller blast radius.
+    """
+    text = (staged(env) / "input.nml").read_text()
+    assert text.count("input_filename = 'r'") == 2
+    assert "input_filename = 'n'" not in text
 
 
 def test_patching_a_continued_assignment_does_not_orphan_its_tail(env):
@@ -573,3 +594,4 @@ def test_the_config_layer_points_at_a_case_that_is_actually_there(config):
     assert os.path.isdir(model["base"])
     assert os.path.isfile(model["base"] + "/input.nml")
     assert os.path.isfile(model["diag_table"]["forecast"])
+

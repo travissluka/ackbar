@@ -29,6 +29,7 @@ import pytest
 
 from ackbar import ledger, slurm
 from ackbar.cli import main
+from ackbar.config.jobtime import member_dir
 from ackbar.paths import Paths
 from ackbar.site import load_site
 
@@ -151,6 +152,38 @@ def test_the_restart_sets_are_not_all_the_same_state(both_runs):
     # forward and stamps it, which is exactly what a broken handoff looks like.
     digest = both_runs["healed"]
     assert digest["2/MOM.res.nc"] != digest["3/MOM.res.nc"]
+
+
+def initial_energy(paths, cycle, member=0):
+    """The kinetic energy MOM6 reports for its own step zero.
+
+    Line 3 of `ocean.stats` is the state the model started from, before it took
+    a step, and `En` is a global integral of the velocity field.
+    """
+    stem = f"forecast.{member_dir(member)}"
+    written = sorted((paths.sub("log") / str(cycle)).glob(f"{stem}*.ocean.stats"))
+    assert written, f"cycle {cycle} left no ocean.stats"
+    line = written[-1].read_text().splitlines()[2]
+    return float(line.split("En")[1].split(",")[0])
+
+
+def test_the_model_resumed_rather_than_starting_over(both_runs):
+    """The failure the two checks above cannot see, and it costs everything.
+
+    `MOM_restart::determine_is_new_run` reads one character of
+    `input_filename`, and stock MOM6-examples cases ship `'n'`, meaning a new
+    run. MOM6 then initializes from `INIT_LAYERS_FROM_Z_FILE` and never opens
+    `INPUT/MOM.res.nc`: every cycle integrates the same cold start from a
+    different date, so consecutive restart sets still *differ* and the handoff
+    still looks correct in `coupler.res`. Everything upstream of the model is
+    discarded, including an analysis.
+
+    A cold start has `VELOCITY_CONFIG = zero`, so the energy MOM6 reports for
+    its own step zero is exactly that: zero. A resumed run's is not.
+    """
+    paths = both_runs["paths"]
+    for cycle in (2, 3):
+        assert initial_energy(paths, cycle) > 1e-12
 
 
 def test_cleanup_keeps_only_what_a_forecast_can_still_read(both_runs):

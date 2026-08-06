@@ -19,6 +19,17 @@ from the namelist date instead, integrating the right state from the wrong time,
 and it does not complain. So the run directory owns its own `INPUT`, a directory
 of symlinks: the static archive, plus this cycle's incoming restart set.
 
+**A stock case tells MOM6 that every run is a new run.** `input_filename` in
+`MOM_input_nml` and `SIS_input_nml` is read one character at a time by
+`MOM_restart::determine_is_new_run`: `'n'` is a new run, `'r'` reads the
+automatically named restart files. MOM6-examples ships `'n'`, which is right for
+a case distributed as an example and catastrophic for a cycling workflow. With
+`'n'`, MOM6 initializes temperature and salinity from `INIT_LAYERS_FROM_Z_FILE`
+and never opens `INPUT/MOM.res.nc`: every cycle integrates the same cold start
+from a different date, so consecutive restart sets still differ, `coupler.res`
+still carries the right clock, and every analysis is silently discarded. So
+ACKBAR sets `'r'` in both groups, alongside `parameter_filename`.
+
 **The date on a restart comes from the restart, not from the configuration.**
 Once `INPUT/coupler.res` exists it overrides `coupler_nml`'s `current_date`, and
 what the namelist still controls is only the *length* of the integration. Since
@@ -297,6 +308,28 @@ _PARAMETER_FILES = {
     "SIS_input_nml": ("SIS_input", "SIS_override"),
 }
 
+#: Whether the component resumes from its restart files, and it is the single
+#: most consequential value in this file.
+#:
+#: `MOM_restart::determine_is_new_run` reads exactly one character: `'n'` means
+#: a new run, `'r'` means read the automatically named restart files, `'F'`
+#: means restart if they happen to be there. Stock MOM6-examples cases ship
+#: `'n'`, because a case distributed as an example is meant to be started from
+#: its own initial condition file.
+#:
+#: With `'n'`, MOM6 initializes temperature and salinity from
+#: `INIT_LAYERS_FROM_Z_FILE` and never opens `INPUT/MOM.res.nc` at all. Every
+#: cycle then integrates the same cold-start state, every analysis is silently
+#: discarded, and nothing anywhere reports it: the model runs, writes a restart
+#: set, and the workflow hands it to the next cycle. What that costs is not
+#: bounded by the analysis, it is the whole experiment.
+#:
+#: `'r'` and not `'F'`. Under `'F'` a missing restart is a cold start rather
+#: than a failure, which is exactly the way this was invisible in the first
+#: place. Every ACKBAR cycle resumes, including the first: setup materializes
+#: the initial condition into `rst/0`.
+_RESUME = "'r'"
+
 
 def _namelist(base, config, cycle):
     """`input.nml` with the run length, fallback date and parameter files set.
@@ -324,6 +357,7 @@ def _namelist(base, config, cycle):
     for group, files in _PARAMETER_FILES.items():
         updates[group] = {
             "parameter_filename": ", ".join(f"'{name}'" for name in files),
+            "input_filename": _RESUME,
         }
 
     text = (base / "input.nml").read_text()
