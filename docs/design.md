@@ -648,27 +648,31 @@ rather than an afternoon nobody can repeat, and a healed attempt reproduces the 
 meant to fix rather than passing by luck.
 
 **A MOM6-SIS2 forecast is a run directory and nothing else.** The model is configured entirely
-by the contents of the directory it starts in, so the model layer names a stock MOM6-examples
-case and the forecast task links every file in it through untouched except the handful ACKBAR
-owns: `input.nml`, `MOM_layout`, `SIS_layout`, `diag_table`. That keeps the case's physics
-coming from the model submodule instead of from a fork of it in this repository, and it makes
-"what did ACKBAR change" a four-item list rather than a diff.
+by the contents of the directory it starts in, so the model layer names a base directory of stock
+MOM6-SIS2 text (`mom6_base_dir`) and the forecast task links every file in it through untouched
+except the handful ACKBAR owns: it writes `input.nml` and `diag_table`, and it links
+`MOM_override` and `SIS_override` from its own copies instead of the base's. That keeps the
+physics coming from the model submodule, or from one reviewed directory shared by a family of
+domains, instead of from a per-experiment fork of it, and it makes "what did ACKBAR change" a
+four-item list rather than a diff.
 
-The exception is that a stock case also contains files the model *writes*. MOM6 and SIS2 dump the
-parameter set they actually ran with, and MOM6-examples commits those dumps back into the case as
+The exception is that a stock directory also contains files the model *writes*. MOM6 and SIS2 dump
+the parameter set they actually ran with, and MOM6-examples commits those dumps back in as
 documentation, so they are outputs sitting in an input directory. Linking one means the model
-opens a symlink for writing and edits the shared case in place, under every other member, cycle
-and experiment at once. They are skipped, and the model writes its own into the run directory.
-`GENERATED` in `mom6sis2.py` is the list. The general form of the rule: link an input, never a
-name the model is going to open for writing, and the case directory does not distinguish them.
+opens a symlink for writing and edits the shared directory in place, under every other member,
+cycle and experiment at once. They are skipped, and the model writes its own into the run
+directory. `GENERATED` in `mom6sis2.py` is the list. The general form of the rule: link an input,
+never a name the model is going to open for writing, and the base directory does not distinguish
+them.
 
 Three of those four are worth saying why:
 
-- **The layout comes from the domain layer**, never from the case. MOM6-examples ships
-  `LAYOUT = 12,10` for MOM and `32,18` for SIS with a comment saying not to use them, and a
-  layout whose product is not the task's `ntasks` fails inside FMS with a message about domain
-  decomposition rather than about configuration. ACKBAR checks the product against `ntasks`
-  before a job is even submitted.
+- **The overrides are ACKBAR's, never the base's**, and ACKBAR puts them in `parameter_filename`
+  itself so that a base directory which never mentions them still reads them. They hold what makes
+  a domain its own resolution and the bug-retention flags MOM6-examples keeps on to protect its
+  regression answers, which are wrong to keep in a testbed whose entire output is an error
+  statistic. There is deliberately no `LAYOUT`: MOM6 decomposes for itself, and a layout in
+  configuration would be a second home for the PE count. See `docs/domains.md`.
 - **The `diag_table` is chosen by what the forecast is for**, which is the one thing that
   genuinely differs between the two forecast tasks. A cycling forecast's product is the restart
   set the next cycle reads, and it writes no history at all; writing it every cycle of an
@@ -722,11 +726,19 @@ boundary setup. The static and initial-condition stages key off it.
 Regional costs more than a different grid file. What it actually pulls in:
 
 - **Symmetric memory.** MOM6 regional configurations use symmetric memory, and SOCA links its
-  own MOM6 as a library from NOAA-EMC. If the two are built inconsistently the restart array
-  shapes disagree. v2 papered over this with `soca_dynsym2dyn.sh`, converting restarts between
-  layouts, while its own config file carried the note "TODO investigate building soca with
-  MOM6 regional (symmetric memory)". That TODO is the real fix and it is a build-level
-  decision, not a workflow one. It has to be settled before regional works at all.
+  own MOM6 as a library from NOAA-EMC. v2 papered over the mismatch with `soca_dynsym2dyn.sh`,
+  converting restarts between layouts, while its own config file carried the note "TODO
+  investigate building soca with MOM6 regional (symmetric memory)". That TODO is still the real
+  fix and it is a build-level decision, not a workflow one.
+
+  It bites earlier than the restart shapes, though. MOM6 refuses to *configure* Flather open
+  boundaries at all in a non-symmetric build, aborting inside `soca_geom_init`, so on a regional
+  domain every SOCA application dies during geometry construction before it has read an
+  observation. ACKBAR works around that with a `MOM_override.soca` per domain, read by SOCA and
+  never by the forecast, which switches the segments off for geometry purposes only: the grid
+  with three Flather segments and the grid with none are the same grid, and the grid is all SOCA
+  wants from MOM6. See `docs/domains.md`. This is a workaround with a deletion condition, not a
+  design.
 - **Open boundary conditions.** Regional runs need boundary forcing from a parent solution, so
   they add both a per-cycle input and an offline stage that global configurations do not have.
   Note that MOM6's OBC code was substantially overhauled between the 2024 and 2026 pins (see
@@ -800,6 +812,7 @@ Each produces versioned, read-only inputs. Experiments are pure consumers.
 
 | Stage | Keyed on | Contents |
 |---|---|---|
+| model input | domain | the MOM6-SIS2 configuration's data half: grid, bathymetry, open boundaries |
 | static | domain | `soca_gridspec.nc`, horizontal correlation scales, localization scales |
 | initial condition | domain, source, date | a spun-up restart set |
 | observations | period (and domain, if culled) | archive of ioda files, real or OSSE-generated |
@@ -815,7 +828,7 @@ an experiment that could point at its own gridspec could be incomparable without
 `soca_gridspec.nc` is the geometry SOCA reads instead of initializing MOM6 to discover the
 grid, and building it *is* a full MOM6 initialization: more memory than the analysis that
 follows it, spent to produce the same bytes every time. That is the argument for the whole
-stage in miniature. `tools/soca-gridspec.sh` writes it from the model's own case directory, so the
+stage in miniature. `tools/soca-gridspec.sh` writes it from the model's own configuration, so the
 grid the analysis works on and the grid the model integrates on are the same grid by
 construction rather than by two configurations agreeing. Nothing detects a stale one, so it is
 rebuilt after a bundle bump that touches MOM6 or SOCA's geometry.

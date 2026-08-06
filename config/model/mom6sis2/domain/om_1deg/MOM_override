@@ -1,0 +1,46 @@
+! ACKBAR's MOM6 overrides for the stock MOM6-examples OM_1deg case.
+!
+! MOM6-examples is a regression suite. Its cases are tuned to reproduce their
+! own historical answers, so they hold bug-retention flags on long after MOM6
+! changed the defaults. That is the right call for a regression suite and the
+! wrong one for a testbed whose entire output is an error statistic: a bug we
+! leave enabled shows up as forecast error that the DA is then scored on
+! correcting.
+!
+! `ENABLE_BUGS_BY_DEFAULT` is the master switch introduced upstream to set all
+! sixteen bug flags at once. It reaches only the flags the case does not
+! mention, because an explicit setting in MOM_input wins over it. So the
+! `#override` lines below are exactly the ones it cannot reach, and they are
+! the reason this file has a list at all while the imported regional cases,
+! which state no bug flags of their own, need only the first line.
+!
+! Rebuild the list by running the case and grepping the parameter doc:
+!
+!     grep -E '_BUG[A-Z_]* = True' MOM_parameter_doc.all
+!
+! A MOM6 bump can add flags, and a flag added to MOM_input upstream will not
+! appear here until someone looks.
+
+ENABLE_BUGS_BY_DEFAULT = False
+
+! Set explicitly in MOM_input, so out of the master switch's reach. Line
+! numbers are where MOM_input states them, as of the current submodule pin.
+#override USE_TRIPOLAR_GEOLONB_BUG = False      ! MOM_input:100
+#override GRID_ROTATION_ANGLE_BUGS = False      ! MOM_input:159
+#override USE_GM_WORK_BUG = False               ! MOM_input:435
+#override VISC_REM_BUG = False                  ! MOM_input:446
+#override KAPPA_SHEAR_ITER_BUG = False          ! MOM_input:669
+#override KAPPA_SHEAR_ALL_LAYER_TKE_BUG = False ! MOM_input:673
+
+! The same flag under its obsolete name, which is the only name that works
+! here. MOM_input:819 states `FIX_USTAR_GUSTLESS_BUG = False`, and MOM6 still
+! translates that to USTAR_GUSTLESS_BUG = True. Overriding the *modern* name
+! instead is fatal, not merely redundant: the model finds both spellings set to
+! inconsistent values and refuses to start. So the obsolete name has to be
+! overridden for as long as the case states it, and note the inverted sense,
+! True here means the bug is fixed.
+!
+! When a MOM6 bump drops the translation, this line becomes fatal in its own
+! right and MOM_input:819 becomes a dead line. That is the point at which this
+! stops being an override and becomes a reason to carry a patched case.
+#override FIX_USTAR_GUSTLESS_BUG = True

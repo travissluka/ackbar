@@ -1,0 +1,84 @@
+# The Gulf of Mexico at 1/25 degree: the expensive one.
+#
+# 541 x 346 x 36 over 98.1W-76.4W, 18N-32N. This is the only Gulf domain that
+# costs *more* than om_1deg rather than less: 4.7x more per simulated day by
+# grid size and timestep, since DT = 300 buys 288 steps a day over 6.7 million
+# cells. It is here for the science that needs 4 km, not for iterating.
+#
+# Submesoscale resolving, and the first Gulf domain where the Loop Current front
+# and its filaments are represented rather than parameterised. Also the first
+# where a cycling experiment is an overnight job rather than a coffee break, so
+# develop on gom_25km and confirm here.
+#
+# Resolution names are in kilometres because the source configurations were named
+# in fractions of a degree with ambiguous digits, and `025deg` there meant 1/25
+# degree, which is this, at about 4 km, not a quarter degree. That single
+# ambiguity is why this project renamed them.
+
+vars:
+  # The stock MOM6-SIS2 configuration, in this repository, because MOM6-examples
+  # ships no Gulf of Mexico setup and this one is therefore ours. Shared by
+  # every Gulf resolution: the four imported configurations were 77 identical
+  # MOM6 parameters apiece plus 26 that differed, and keeping four copies of the
+  # 77 is how they drifted apart in the first place. What makes this domain this
+  # resolution is in its own MOM_override, which is therefore also the readable
+  # list of how the Gulf domains disagree.
+  mom6_base_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/common
+
+  # The data half, out of the repository. Grid, bathymetry, initial condition
+  # and open boundary conditions, plus a symlink to the shared forcing stage.
+  mom6_input_dir: $(static_root)/domain/gom_4km/INPUT
+
+  # The coupler timestep this domain has always run at.
+  mom6_dt_cpld: 1800
+
+  # What ACKBAR changes about the shared configuration: the parameters that make
+  # this domain this resolution, and the bug-retention flags it turns off on
+  # every domain.
+  mom6_override_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/4km
+
+domain:
+  name: gom_4km
+
+  static: $(static_root)/static/gom_4km
+
+  resources:
+    default:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 4G
+
+    # 8 PEs is this machine's physical core count, not a property of the
+    # domain. No layout: MOM6 decomposes for itself from the PE count.
+    forecast:
+      ntasks: 8
+      time: '04:00:00'
+      mem: 32G
+    forecast.ext:
+      ntasks: 8
+      time: '12:00:00'
+      mem: 32G
+    da:
+      ntasks: 8
+      time: '00:30:00'
+      mem: 16G
+    hofx:
+      ntasks: 8
+      time: '00:10:00'
+      mem: 8G
+    b.vt:
+      ntasks: 8
+      time: '00:10:00'
+      mem: 8G
+    recenter:
+      ntasks: 8
+      time: '00:10:00'
+      mem: 8G
+    writeback:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 8G
+    post.state:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 4G

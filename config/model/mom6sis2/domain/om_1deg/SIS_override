@@ -1,0 +1,24 @@
+! ACKBAR's SIS2 overrides for the stock MOM6-examples OM_1deg case.
+!
+! Same argument as the MOM_override beside this file, with one difference that
+! matters: SIS2 has no `ENABLE_BUGS_BY_DEFAULT`, so there is no master switch
+! and every flag has to be named.
+!
+! Two of these are stated in SIS_input with a trailing comment claiming the
+! default is True. It is not, and has not been since the consortium default
+! changes; the comment is a fossil of when the file was written. Trust the
+! parameter doc the model writes, never the comment in the case:
+!
+!     grep -E '_BUG[A-Z_]* = True' SIS_parameter_doc.all
+!
+! The stock case also ships `ADD_DIURNAL_SW = False` in its own SIS_override,
+! with a note that it must only be used in ice-ocean mode and not fully
+! coupled. That is the case's setting, not ACKBAR's, and this file replaces the
+! case's rather than adding to it, so it is restated here to preserve it.
+
+ADD_DIURNAL_SW = False ! This must ONLY be used in the ice-ocean mode, NOT fully coupled mode.
+
+#override USE_TRIPOLAR_GEOLONB_BUG = False  ! SIS_input:54
+#override GRID_ROTATION_ANGLE_BUGS = False  ! SIS_input:61
+#override INCONSISTENT_COVER_BUG = False    ! SIS_input:116, comment there is stale
+#override CFL_MASS_NEGLECT_BUG = False      ! SIS_input:133, comment there is stale

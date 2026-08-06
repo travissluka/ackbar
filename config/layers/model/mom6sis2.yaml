@@ -1,13 +1,24 @@
 # The real forecast model: MOM6-SIS2, run as `coupler_main`.
 #
-# `base` is a stock MOM6-examples case directory, used as it ships. Everything in
-# it is linked into the run directory untouched except the few files ACKBAR owns
-# (`input.nml`, `MOM_layout`, `SIS_layout`, `diag_table`), so updating the model
-# submodule brings the case's physics with it instead of leaving a fork of those
-# files in this repository to drift against it.
+# A MOM6 case arrives in three parts, and the domain layer names each one,
+# because which case this is *is* the domain:
 #
-# `$(mom6_case)` comes from the domain layer, because which case directory this
-# is *is* the domain.
+#   base      the case's text: MOM_input, SIS_input, the tables, input.nml
+#   input     its data: grid, bathymetry, initial condition, boundaries
+#   override  what ACKBAR changes about it
+#
+# `base` is used as it ships. Everything in it is linked into the run directory
+# untouched except `input.nml` and `diag_table`, which ACKBAR writes, and the
+# two override files, which ACKBAR replaces. So updating the model submodule
+# brings a case's physics with it instead of leaving a fork of those files here
+# to drift against it.
+#
+# The split between `base` and `input` is MOM6-examples' own: it tracks the text
+# and keeps `INPUT/` as symlinks into a gitignored dataset mirror, so that what
+# decides the answer is under review and a 300 MB grid file is not in a clone.
+# For OM_1deg the two coincide, since upstream ships that mirror. For the
+# regional domains they are genuinely apart, the text here and the data under
+# `$(static_root)`, which is why this is a path and not `base/INPUT`.
 
 model:
   name: mom6sis2
@@ -40,7 +51,34 @@ model:
   - sea_water_cell_thickness
 
   executable: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main
-  base: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/$(mom6_case)
+  base: $(mom6_base_dir)
+  input: $(mom6_input_dir)
+
+  # The coupler timestep, which varies with resolution the way `DT` does but
+  # lives in `input.nml` rather than in `MOM_input`. It is here so that domains
+  # sharing one base directory can still differ in it, which is what lets the
+  # four Gulf resolutions read a single `input.nml`.
+  coupling_seconds: $(mom6_dt_cpld)
+
+  # ACKBAR's changes to that configuration, as files rather than as generated text,
+  # because SOCA reads `MOM_override` too and the two have to be the same
+  # bytes: a MOM6 the analysis configures differently from the forecast is a
+  # grid they agree on by luck. Named individually rather than as a directory
+  # so `ackbar validate` stats each one before anything is submitted.
+  #
+  # What is in them is mostly bug-retention flags. MOM6-examples cases hold
+  # those on to protect their own regression answers, which is right for a
+  # regression suite and wrong for a testbed whose entire output is an error
+  # statistic. Read the files; each says what it turns off and why.
+  override:
+    MOM_override: $(mom6_override_dir)/MOM_override
+    SIS_override: $(mom6_override_dir)/SIS_override
+    # Read by SOCA and not by the forecast, and the only thing the two are
+    # allowed to disagree about. It works around SOCA's MOM6 being built
+    # without symmetric memory, which makes it refuse the Flather open
+    # boundaries a regional domain runs with. Empty on a global domain. The
+    # file explains itself and is meant to be deleted.
+    MOM_override.soca: $(mom6_override_dir)/MOM_override.soca
 
   # Diagnostics chosen by what the forecast is for, which is the one thing that
   # genuinely differs between the two forecast tasks. A cycling forecast's

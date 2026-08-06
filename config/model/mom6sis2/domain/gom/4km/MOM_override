@@ -1,0 +1,58 @@
+! What makes this gom_4km and not another Gulf resolution, plus what
+! ACKBAR changes about the shared configuration. Read
+! config/model/mom6sis2/domain/gom/common/MOM_input for the rest.
+!
+! No `#override` on the first two sections: the shared base does not
+! set these at all, precisely so that each domain must state them.
+
+! --- the resolution ---------------------------------------------
+
+NIGLOBAL = 541
+NJGLOBAL = 346
+NK = 36
+DT = 300.0
+DT_THERM = 900.0
+ALE_COORDINATE_CONFIG = "HYBRID:hycom1_36.nc,sigma2,dz"
+COORD_CONFIG = "ALE"
+COORD_FILE = "layer_coord_25.nc"
+TEMP_SALT_Z_INIT_FILE = "ic.nc"
+
+! --- inherited drift --------------------------------------------
+!
+! Differences between the four Gulf resolutions with no resolution
+! reason: hand edits from 2021 that were never reconciled. They are here
+! rather than collapsed into the shared base so that this split
+! changes no answers. Each one is a decision waiting to be made,
+! and making it means deleting the line here and setting the value
+! once in gom/common/MOM_input.
+
+! BUOY_CONFIG is unset here and set in another Gulf domain
+! DAYMAX is unset here and set in another Gulf domain
+DIABATIC_FIRST = True
+ENERGYSAVEDAYS = .04166667
+FRAZIL = True
+MAXTRUNC = 100000
+OBC_SEGMENT_001_VELOCITY_NUDGING_TIMESCALES = 0.3, 360.0
+OBC_SEGMENT_002_VELOCITY_NUDGING_TIMESCALES = 0.3, 360.0
+OBC_SEGMENT_003_VELOCITY_NUDGING_TIMESCALES = 0.3, 360.0
+OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN = 3000
+OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT = 3000
+! SAVE_INITIAL_CONDS is unset here and set in another Gulf domain
+THERMO_SPANS_COUPLING = False
+VERTEX_SHEAR = True
+! WIND_CONFIG is unset here and set in another Gulf domain
+
+! --- ackbar ------------------------------------------------------
+
+ENABLE_BUGS_BY_DEFAULT = False
+
+! Deliberately not overridden, and here so nobody "fixes" it:
+!
+! MOM_input states OBC_COMPUTED_VORTICITY and OBC_FREESLIP_VORTICITY, both
+! obsolete in favour of OBC_VORTICITY_CONFIG. MOM6 still translates them and
+! warns, and the translation is correct: the run reports
+! OBC_VORTICITY_CONFIG = "computed", not the "freeslip" default, so this
+! intent survives. Overriding the modern name while the obsolete pair is still
+! stated risks the same fatal that USTAR_GUSTLESS_BUG produces on OM_1deg,
+! where MOM6 refuses to start on two spellings of one flag. Rewrite MOM_input
+! when the translation is dropped, not before.

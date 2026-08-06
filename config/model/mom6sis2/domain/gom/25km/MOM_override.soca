@@ -1,0 +1,34 @@
+! Read by SOCA applications only, after MOM_override. The forecast never sees
+! this file, and that asymmetry is the whole point of it existing separately.
+!
+! THIS IS A WORKAROUND. Delete it when SOCA's MOM6 is rebuilt with symmetric
+! memory, and delete the file rather than emptying it.
+!
+! SOCA links its own MOM6 from NOAA-EMC and that copy is built without
+! SYMMETRIC_MEMORY_. MOM6 refuses to configure Flather open boundaries in a
+! non-symmetric build:
+!
+!     FATAL: MOM_open_boundary, open_boundary_config:
+!            Symmetric memory must be used when using Flather OBCs.
+!
+! which aborts inside `soca_geom_init`, so on a regional domain with Flather
+! boundaries *every* SOCA application dies during geometry construction, before
+! it has read an observation or a background. The forecast model is built
+! symmetric and runs the same boundaries without complaint, so this is a
+! property of the two builds disagreeing and not of the configuration.
+!
+! Turning the segments off for SOCA is safe for what SOCA actually uses the
+! geometry for. It wants longitude, latitude, depth, layer thickness and the
+! land mask, and none of those depend on how the boundary is forced: the grid
+! with three Flather segments and the grid with none are the same grid. What is
+! lost is MOM6's own knowledge that those columns are boundary columns, which
+! matters for the eventual masking of the analysis at the grid edge. That has to
+! be handled explicitly regardless (see Domains in docs/design.md, grid edge
+! masking) and it is not handled by this.
+!
+! The real fix is a build-level decision, recorded as a TODO in soca-science
+! years ago and still open: build SOCA's MOM6 with symmetric memory so that both
+! halves of the system agree about array shapes. Until then this file, and the
+! restart-shape conversion its absence used to require, are the cost.
+
+#override OBC_NUMBER_OF_SEGMENTS = 0

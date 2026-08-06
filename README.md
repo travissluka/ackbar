@@ -82,6 +82,9 @@ tests/goldens/     task graphs, pinned per configuration shape
 tests/test_tier2.py  tier 2: the workflow end to end on a real Slurm
 tools/slurm/       local single-node Slurm configuration and its two profiles
 tools/soca-gridspec.sh     build a domain's SOCA geometry, the static stage
+tools/coldstart-ic.sh      cold start a domain into the initial condition stage
+tools/import-gom-domain.sh import a Gulf of Mexico resolution, text to git and data to the static root
+tools/domain-paths.sh      sourced: where a domain's model configuration lives, read from its layer
 tools/obs-archive-smoke.py build a small observation archive to develop against
 ```
 
@@ -129,21 +132,27 @@ it is eligible again. `ACKBAR_TIER2_FAST=1` skips the requeue case for iterating
 wrong thing to run before a commit, since requeue is the one fault the scheduler inflicts on
 its own without being asked.
 
-Tier 3 runs the real model, and there are two of them. `test_tier3.py` cycles `OM_1deg` for
+Tier 3 runs the real model, and there are three of them. `test_tier3.py` cycles `om_1deg` for
 three cycles, then does it again killing a forecast mid-integration, and asserts the healed
 restarts are bit-identical to the ones the undisturbed run wrote: about fifteen minutes and two
 gigabytes. `test_tier3_hofx.py` adds observers to the same free run and evaluates them against
 each cycle's background, over an archive with a deliberate hole in it, and asserts the missing
-file drops one observer rather than the cycle: about ten minutes.
+file drops one observer rather than the cycle: about ten minutes. `test_tier3_gom.py` cycles the
+regional `gom_25km` and asserts what is only true there: a case whose text and data live apart,
+ACKBAR's overrides reaching the model, and the open boundary still configured. A cycle there is
+six seconds of model rather than two minutes, so it costs about two.
 
-Both are opt-in and need the built `coupler_main`, the offline initial condition the experiment
+All are opt-in and need the built `coupler_main`, the offline initial condition the experiment
 names, and, for hofx, SOCA and the domain's static stage.
 
 ```bash
 source site/activate.sh
-tools/soca-gridspec.sh OM_1deg              # once per domain, and after a bundle bump
+tools/soca-gridspec.sh om_1deg              # once per domain, and after a bundle bump
 ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3.py tests/test_tier3_hofx.py
+ACKBAR_TIER3=1 .venv/bin/python -m pytest tests/test_tier3_gom.py
 ```
+
+`docs/domains.md` says what each domain is, what it costs, and what is wrong with it.
 
 Anything that resolves a configuration needs the site layer, because that is where the scratch
 and output roots come from:

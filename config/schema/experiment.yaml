@@ -65,14 +65,15 @@ properties:
           type: object
           additionalProperties: false
           properties:
+            # `ntasks` is the only thing a domain says about PEs. There is no
+            # `layout`: MOM6 decomposes for itself from the PE count it is
+            # given, and it picks what a person would (4x2 at 8 PEs, 3x2 at 6,
+            # 4x3 at 12, 1x5 at the awkward prime). A layout in configuration
+            # would be a second place for the PE count to live and a thing to
+            # get wrong on every machine with a different core count.
             ntasks: { type: integer, minimum: 1 }
             time: { type: string, pattern: '^(\d+-)?\d{1,2}:\d{2}(:\d{2})?$' }
             mem: { type: string, pattern: '^\d+[KMGT]?$' }
-            layout:
-              type: array
-              minItems: 2
-              maxItems: 2
-              items: { type: integer, minimum: 1 }
 
   cycle:
     type: object

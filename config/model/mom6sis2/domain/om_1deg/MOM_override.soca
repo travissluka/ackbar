@@ -1,0 +1,11 @@
+! Read by SOCA applications only, after MOM_override. Empty for this domain.
+!
+! It exists because `model.override` names it and `ackbar validate` stats what
+! that names, so an absent file is a typo and an empty one is a decision.
+!
+! The regional domains use this file to turn their open boundaries off for SOCA
+! and only for SOCA, working around a MOM6 that refuses to configure Flather
+! boundaries in the non-symmetric build SOCA links. A global domain has no open
+! boundaries, so there is nothing here to work around. Read
+! config/model/mom6sis2/domain/gom/25km/MOM_override.soca for what that is and
+! when it goes away.

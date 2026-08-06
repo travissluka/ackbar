@@ -6,10 +6,32 @@
 # that depends on the size of the problem.
 
 vars:
-  # Which MOM6-examples case directory this domain is. A var rather than a key
-  # under `domain` because the model layer is what consumes it, and a model that
-  # is not MOM6 has no use for the concept.
-  mom6_case: OM_1deg
+  # A domain's MOM6 configuration comes in three parts, which is two more than a
+  # MOM6 configuration usually has. Vars rather than keys under `domain` because
+  # the model layer is what consumes them, and a model that is not MOM6 has no
+  # use for the concept.
+  #
+  # `mom6_base_dir` is the stock text: MOM_input, SIS_input and the tables.
+  # Here it is upstream's, inside the MOM6-examples submodule, which is why this
+  # is the one place their spelling `OM_1deg` appears. Everything ACKBAR keys on
+  # domain uses the domain's own name, `om_1deg`, and two names differing only
+  # in capitalization are exactly the kind of near-duplicate worth confining to
+  # one line.
+  mom6_base_dir: $(ackbar_root)/pkg/mom6sis2/ice_ocean_SIS2/OM_1deg
+
+  # The data half. For this domain it sits inside the stock directory, since
+  # MOM6-examples ships an `INPUT` of symlinks into its own dataset mirror. The
+  # regional domains split the two, so the model layer reads a path rather than
+  # assuming `base/INPUT`.
+  mom6_input_dir: $(mom6_base_dir)/INPUT
+
+  # The coupler timestep this domain has always run at.
+  mom6_dt_cpld: 7200
+
+  # What ACKBAR changes about the stock configuration. Separate from it because
+  # that one is upstream's and not ours to edit, and keyed on the domain rather
+  # than on the upstream name.
+  mom6_override_dir: $(ackbar_root)/config/model/mom6sis2/domain/om_1deg
 
 domain:
   name: om_1deg
@@ -36,13 +58,11 @@ domain:
       ntasks: 8
       time: '00:30:00'
       mem: 16G
-      layout: [4, 2]
     forecast.ext:
       # The same model, a longer integration.
       ntasks: 8
       time: '04:00:00'
       mem: 16G
-      layout: [4, 2]
     da:
       ntasks: 8
       time: '01:00:00'

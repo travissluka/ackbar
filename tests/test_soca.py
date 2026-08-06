@@ -46,17 +46,41 @@ def observer(name="adt_3a", output="/out/e/obs_out/1/e.adt.nc4"):
 
 @pytest.fixture
 def config(tmp_path):
-    """The config with a real base case and a real static stage under it."""
+    """The config with a real case, a real static stage, and real overrides.
+
+    The case's three parts are three directories here, as they are for a
+    regional domain, because that is the shape that catches a path assumed
+    rather than read.
+    """
     base = tmp_path / "case"
-    (base / "INPUT").mkdir(parents=True)
-    for name in ("MOM_input", "MOM_override"):
-        (base / name).write_text(f"! {name}\n")
+    base.mkdir(parents=True)
+    (base / "MOM_input").write_text("! MOM_input\n")
+    # The case's own override, which SOCA must not read: it has to see the same
+    # file the forecast sees, or the two build different geometries.
+    (base / "MOM_override").write_text("! the case's own\n")
+
+    data = tmp_path / "data" / "INPUT"
+    data.mkdir(parents=True)
+    (data / "ocean_hgrid.nc").write_bytes(b"netcdf\n")
+
+    override = tmp_path / "override"
+    override.mkdir()
+    (override / "MOM_override").write_text("! ackbar's\nENABLE_BUGS_BY_DEFAULT = False\n")
+    (override / "SIS_override").write_text("! ackbar's\n")
+    # The SOCA-only override, which the forecast never links. On a regional
+    # domain this is what keeps MOM6 from refusing the case's Flather
+    # boundaries in SOCA's non-symmetric build.
+    (override / "MOM_override.soca").write_text("#override OBC_NUMBER_OF_SEGMENTS = 0\n")
+
     static = tmp_path / "static"
     static.mkdir()
     (static / soca.GRIDSPEC).write_text("not really netcdf\n")
 
     merged = {k: dict(v) if isinstance(v, dict) else v for k, v in CONFIG.items()}
-    merged["model"] = dict(CONFIG["model"], base=str(base))
+    merged["model"] = dict(CONFIG["model"], base=str(base), input=str(data),
+                           override={n: str(override / n) for n in
+                                     ("MOM_override", "SIS_override",
+                                      "MOM_override.soca")})
     merged["domain"] = dict(CONFIG["domain"], static=str(static))
     return merged
 
@@ -126,6 +150,32 @@ def test_the_run_directory_gets_the_cases_own_grid_files(config, paths, tmp_path
         assert (run / name).is_symlink()
         assert (run / name).resolve() == (Path(config["model"]["base"]) / name)
     assert (run / soca.GRIDSPEC).is_symlink()
+
+
+def test_soca_reads_the_same_override_the_forecast_does(config, paths):
+    """The analysis and the model have to agree about MOM6's parameters.
+
+    SOCA initializes a real MOM6 geometry from `MOM_input` and `MOM_override`.
+    If it read the case's override while the forecast read ACKBAR's, the two
+    would agree about the grid only for as long as no override touched it, and
+    the day one did the disagreement would surface as an interpolation that is
+    quietly slightly wrong rather than as an error.
+    """
+    run = paths.scratch(1, "hofx")
+    soca.stage(config, run, 1)
+    expected = Path(config["model"]["override"]["MOM_override"])
+    assert (run / "MOM_override").resolve() == expected.resolve()
+    assert "ENABLE_BUGS_BY_DEFAULT = False" in (run / "MOM_override").read_text()
+    assert "the case's own" not in (run / "MOM_override").read_text()
+
+
+def test_the_data_half_of_the_case_is_a_path_and_not_base_input(config, paths):
+    # A regional case keeps its grids under the static root, not inside the
+    # text directory, so `base/INPUT` does not exist for it at all.
+    run = paths.scratch(1, "hofx")
+    soca.stage(config, run, 1)
+    assert (run / "INPUT").resolve() == Path(config["model"]["input"]).resolve()
+    assert not (Path(config["model"]["base"]) / "INPUT").exists()
 
 
 def test_a_diag_table_exists_even_though_nothing_writes_diagnostics(config, paths):

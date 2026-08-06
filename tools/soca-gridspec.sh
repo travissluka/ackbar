@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build a domain's SOCA geometry: the static stage's one product so far.
 #
-#   tools/soca-gridspec.sh <mom6-case> [<output-dir>]
-#   tools/soca-gridspec.sh OM_1deg
+#   tools/soca-gridspec.sh <domain> [<output-dir>]
+#   tools/soca-gridspec.sh gom_25km
 #
 # Writes `soca_gridspec.nc` into $ACKBAR_STATIC_ROOT/static/<domain>, which is
 # what the domain layer's `static:` names. Keyed on domain and nothing else, so
@@ -14,7 +14,7 @@
 # bytes every time. A cycling job that did it would pay that per cycle, per
 # member, to recompute a constant.
 #
-# Two things it needs that are not obvious:
+# Three things it needs that are not obvious:
 #
 #   * a `diag_table` in the working directory, even though nothing here writes a
 #     diagnostic. FMS reads one during `initialize_MOM` and its absence is fatal
@@ -25,18 +25,27 @@
 #     given to that name in the working directory and asserts the source was
 #     something else.
 #
+#   * on a regional domain, `MOM_override.soca`, which switches the open
+#     boundaries off. SOCA's MOM6 is built without symmetric memory and refuses
+#     to configure Flather boundaries at all, so without it this aborts in the
+#     geometry constructor with a message about symmetric memory. The grid is the
+#     same grid either way. See docs/domains.md.
+#
 # Rerun it after a bundle bump that touches MOM6 or the SOCA geometry, and after
-# any change to the case's grid. Nothing detects a stale gridspec: it is a file
+# any change to the domain's grid. Nothing detects a stale gridspec: it is a file
 # whose date is older than the grid it describes.
 set -euo pipefail
 
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
-CASE=${1:?usage: soca-gridspec.sh <mom6-case> [<output-dir>]}
-CASE_DIR=$ACKBAR_ROOT/pkg/mom6sis2/ice_ocean_SIS2/$CASE
-DOMAIN=$(echo "$CASE" | tr '[:upper:]' '[:lower:]')
+DOMAIN=${1:?usage: soca-gridspec.sh <domain> [<output-dir>]}
 OUT=${2:-$ACKBAR_STATIC_ROOT/static/$DOMAIN}
+
+# The three parts of a domain's configuration, read out of the domain layer so
+# that this builds the geometry from the same files the model will integrate on.
+source "$ACKBAR_ROOT/tools/domain-paths.sh"
+domain_paths "$DOMAIN"
 
 GRIDGEN=$ACKBAR_ROOT/pkg/jedi/build/bin/soca_gridgen.x
 NAMELIST=$ACKBAR_ROOT/config/model/mom6sis2/mom_input.nml
@@ -45,7 +54,8 @@ METADATA=$ACKBAR_ROOT/config/model/mom6sis2/fields_metadata.yaml
 # horizontal localization the ensemble phases configure. Not needed by hofx.
 ROSSBY=$ACKBAR_ROOT/pkg/jedi/soca/test/Data/rossrad.nc
 
-for path in "$GRIDGEN" "$NAMELIST" "$METADATA" "$CASE_DIR/MOM_input"; do
+for path in "$GRIDGEN" "$NAMELIST" "$METADATA" "$BASE/MOM_input" \
+            "$OVERRIDE/MOM_override" "$OVERRIDE/MOM_override.soca" "$DATA"; do
     [[ -e $path ]] || { echo "soca-gridspec: $path does not exist" >&2; exit 1; }
 done
 
@@ -53,8 +63,16 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/soca-gridspec.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 
-ln -s "$CASE_DIR/INPUT" INPUT
-cp "$CASE_DIR/MOM_input" "$CASE_DIR/MOM_override" .
+ln -s "$DATA" INPUT
+cp "$BASE/MOM_input" .
+# ACKBAR's override, not just the stock configuration, and for the same reason
+# the analysis reads it: the geometry this writes has to be the geometry the
+# model integrates on, and a parameter that moves the grid must move both or
+# neither.
+cp "$OVERRIDE/MOM_override" MOM_override
+# And the SOCA-only override, which on a regional domain is what stops MOM6
+# refusing to configure Flather boundaries in its non-symmetric build. Read it.
+cp "$OVERRIDE/MOM_override.soca" MOM_override.soca
 cp "$NAMELIST" mom_input.nml
 printf 'soca_gridspec\n1 1 1 0 0 0\n' > diag_table
 
@@ -66,7 +84,7 @@ printf 'soca_gridspec\n1 1 1 0 0 0\n' > diag_table
     [[ -e $ROSSBY ]] && echo "  rossby file: $ROSSBY"
 } > gridgen.yml
 
-echo "soca-gridspec: building $CASE geometry in $WORK"
+echo "soca-gridspec: building $DOMAIN geometry in $WORK"
 mpiexec -n 1 "$GRIDGEN" gridgen.yml
 
 [[ -s soca_gridspec.nc ]] || {

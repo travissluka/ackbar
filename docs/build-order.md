@@ -251,6 +251,15 @@ which announce themselves:
 run directory. Phases 6 and 7 need the same geometry and should build on that rather than on a
 second recipe.
 
+**Regional domains arrived out of order**, between phases 5 and 6, because the global 1 degree
+domain was too slow to iterate on: a simulated day costs 178 seconds there against 6 at
+`gom_25km`. That work added the Gulf of Mexico domains, split a MOM6 case into the text half
+that belongs in git and the data half that does not, gave ACKBAR its own `MOM_override`, and
+answered two of the spikes below. It did not add the regional stages the design calls for:
+grid-edge masking of the analysis and domain-scoped observation culling are still owed, and
+they are owed before a regional *analysis* rather than before a regional free run.
+`docs/domains.md` is the entry point.
+
 ## Phase 6. Variational, static B, 3D
 
 Static B and analysis-to-restart writeback.
@@ -299,8 +308,8 @@ they would break rather than by when they are convenient.
 
 | Spike | Must precede | Why |
 |---|---|---|
-| Symmetric memory: how SOCA's own MOM6 is compiled for regional | phase 4 | It is a build level decision. Discovering it late means rebuilding everything the workflow was validated against. |
-| MOM6 back-compat parameter pins (`EQN_OF_STATE = "WRIGHT"` and friends) | phase 4's offline IC | Dropping them invalidates any initial condition produced under the old physics. |
+| ~~Symmetric memory: how SOCA's own MOM6 is compiled for regional~~ | ~~phase 4~~ | **Answered: SOCA's is non-symmetric, the forecast model's is symmetric, and they are not going to be reconciled yet.** It bites earlier than the restart shapes it was expected to: MOM6 refuses to *configure* Flather OBCs in a non-symmetric build, so every SOCA application aborts inside `soca_geom_init` on a regional domain. Worked around per domain by `MOM_override.soca`, which switches the segments off for SOCA only; the grid is the same grid either way and the grid is all SOCA wants. Rebuilding SOCA's MOM6 with symmetric memory is still the real fix, and it is still a build-level decision. See `docs/domains.md`. |
+| ~~MOM6 back-compat parameter pins (`EQN_OF_STATE = "WRIGHT"` and friends)~~ | ~~phase 4's offline IC~~ | **Answered: do not pin them, and turn the bug flags off instead.** Neither case sets `EQN_OF_STATE`, so both inherit the current `WRIGHT_FULL`. What did need deciding is the other direction: MOM6-examples' `OM_1deg` *enables* seven MOM and four SIS bug-retention flags whose defaults are now off, to protect its own regression answers. ACKBAR's overrides turn them off, which does invalidate initial conditions produced before that, and the smoke ICs are cheap to rebuild. |
 | ~~A cheap parse-and-exit path in SOCA or OOPS~~ | ~~phase 1~~ | **Answered: no.** It existed once but not at the application level any more, and only some components validate their own config. `validate` therefore has six steps, not seven, and a bad JEDI config is found when the executable runs. See Configuration validation in `design.md` for what carries that weight instead. |
 | IAU versus direct restart write | phase 6 | Decides what the writeback task is. Resolve by spike, not on paper. |
 | `srun` and PMI on rancor | with phase 4 | Job steps and per-step accounting differ between `mpiexec` and `srun`. |

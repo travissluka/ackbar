@@ -1,0 +1,11 @@
+! The grid, which is all this domain's SIS_input ever said that the
+! other Gulf resolutions' did not. Everything else is in
+! config/model/mom6sis2/domain/gom/common/SIS_input.
+!
+! SIS2 has no ENABLE_BUGS_BY_DEFAULT, and on this imported configuration there
+! is nothing to turn off: every SIS2 bug flag already resolves False.
+! Re-check after a bump with:
+!     grep -E '_BUG[A-Z_]* = True' SIS_parameter_doc.all
+
+NIGLOBAL = 271
+NJGLOBAL = 173

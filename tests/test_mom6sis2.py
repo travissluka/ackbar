@@ -6,8 +6,9 @@ checkable here in milliseconds. What the model then makes of it is tier 3's
 problem, and there is nothing in between worth testing on a scheduler.
 
 The base case is a stand-in with the same shape as a MOM6-examples directory:
-the namelist groups that get patched, a placeholder layout with the same trap in
-it as the real one, and an INPUT directory.
+the namelist groups that get patched, an override the case ships that ACKBAR
+has to replace rather than inherit, and a data directory beside it rather than
+inside it, because that is the shape a regional domain has.
 """
 
 import json
@@ -29,12 +30,33 @@ EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
 #: Trimmed to the groups that matter, but with the real file's habits: a group
 #: ACKBAR patches, a group it must not touch, and `days`/`months` set to
 #: something non-zero so that failing to zero them shows up as a longer run.
+#: Copied from MOM6-examples' OM_1deg habits rather than invented, because both
+#: of them broke a patcher that looked reasonable.
+#:
+#: `parameter_filename` is written across two lines: namelist lists are routinely
+#: continued that way, and an assignment patcher that stopped at the first
+#: newline would replace the head and leave `'MOM_override'` as an orphan line,
+#: producing a namelist that no longer parses.
+#:
+#: The SIS group closes with `/` trailing on its last value rather than alone on
+#: a line, and `restart_input_dir = 'INPUT/'` puts a separator inside a quoted
+#: value on the way past. A group pattern that required a bare `/` matched
+#: neither, so it skipped the group in silence and left the case's own
+#: `parameter_filename` in place.
 INPUT_NML = """\
  &MOM_input_nml
          output_directory = '.',
          restart_input_dir = 'INPUT',
          restart_output_dir = 'RESTART',
+         parameter_filename = 'MOM_input',
+                              'MOM_override'
 /
+
+ &SIS_input_nml
+         output_directory = './',
+         restart_input_dir = 'INPUT/',
+         parameter_filename = 'SIS_input',
+                              'SIS_override' /
 
  &coupler_nml
             months = 1,
@@ -60,22 +82,42 @@ a title nobody reads
 
 @pytest.fixture
 def base(tmp_path):
-    """A stand-in for pkg/mom6sis2/ice_ocean_SIS2/<case>."""
+    """A stand-in for a case's text half."""
     case = tmp_path / "case"
-    (case / "INPUT").mkdir(parents=True)
+    case.mkdir(parents=True)
     (case / "input.nml").write_text(INPUT_NML)
-    (case / "MOM_input").write_text("DT = 1800.0\n")
+    (case / "MOM_input").write_text("DT = 1800.0\nUSE_GM_WORK_BUG = True\n")
     (case / "SIS_input").write_text("DT_ICE_DYNAMICS = 3600.0\n")
     (case / "field_table").write_text("# tracers\n")
-    # The placeholder layouts that ship with the real cases, PE counts and all.
-    (case / "MOM_layout").write_text("LAYOUT = 12,10\n")
-    (case / "SIS_layout").write_text("LAYOUT = 32,18\n")
+    # The overrides the case itself ships. ACKBAR replaces rather than inherits
+    # these, so their contents are what a passing test must *not* find.
+    (case / "MOM_override").write_text("! the case's own\nVERBOSITY = 9\n")
+    (case / "SIS_override").write_text("! the case's own\nADD_DIURNAL_SW = True\n")
     # Model output that MOM6-examples commits back into the case as documentation.
     (case / "MOM_parameter_doc.layout").write_text("LAYOUT = 12, 10\n")
     (case / "SIS_parameter_doc.short").write_text("DT_ICE_DYNAMICS = 3600.0\n")
-    for name in ("grid_spec.nc", "ocean_hgrid.nc", "JRA_tas.nc"):
-        (case / "INPUT" / name).write_bytes(b"netcdf\n")
     return case
+
+
+@pytest.fixture
+def data(tmp_path):
+    """A stand-in for a case's data half, which is a separate directory."""
+    target = tmp_path / "data" / "INPUT"
+    target.mkdir(parents=True)
+    for name in ("grid_spec.nc", "ocean_hgrid.nc", "JRA_tas.nc"):
+        (target / name).write_bytes(b"netcdf\n")
+    return target
+
+
+@pytest.fixture
+def override(tmp_path):
+    """A stand-in for config/model/mom6sis2/domain/<domain>/."""
+    target = tmp_path / "override"
+    target.mkdir(parents=True)
+    (target / "MOM_override").write_text(
+        "! ackbar's\nENABLE_BUGS_BY_DEFAULT = False\n#override USE_GM_WORK_BUG = False\n")
+    (target / "SIS_override").write_text("! ackbar's\nADD_DIURNAL_SW = False\n")
+    return target
 
 
 @pytest.fixture
@@ -86,7 +128,7 @@ def diag_tables(tmp_path):
 
 
 @pytest.fixture
-def config(base, diag_tables):
+def config(base, data, override, diag_tables):
     layers = resolve_layers(EXPERIMENTS / "free_om1deg.yaml", LAYERS)
     keys = merge_keys(load_schema())
     merged = resolve(merge_layers(layers, keys), {
@@ -95,6 +137,11 @@ def config(base, diag_tables):
     })
     merged["model"].update({
         "base": str(base),
+        "input": str(data),
+        "override": {
+            "MOM_override": str(override / "MOM_override"),
+            "SIS_override": str(override / "SIS_override"),
+        },
         "executable": str(base / "coupler_main"),
         "diag_table": {"forecast": str(diag_tables)},
     })
@@ -134,7 +181,7 @@ def test_the_base_case_arrives_by_symlink_and_is_never_copied(env):
     # rebuilt from nothing on every attempt.
     run_dir = staged(env)
     assert (run_dir / "MOM_input").is_symlink()
-    assert (run_dir / "MOM_input").read_text() == "DT = 1800.0\n"
+    assert (run_dir / "MOM_input").read_text().startswith("DT = 1800.0\n")
     assert (run_dir / "INPUT" / "grid_spec.nc").is_symlink()
 
 
@@ -201,30 +248,82 @@ def test_a_source_without_a_coupler_res_is_not_a_restart_set(env):
         staged(env, source=source)
 
 
-# --- the layout --------------------------------------------------------------
+# --- the overrides -----------------------------------------------------------
 
-def test_the_layout_comes_from_the_domain_and_never_from_the_case(env):
-    config, _, _ = env
+def test_the_override_is_ackbars_and_never_the_cases(env, override):
+    # The whole point. A case that ships its own MOM_override, as every
+    # MOM6-examples case does, must not have it linked through: that is how
+    # bug-retention flags survive into a run nobody meant to enable them in.
     run_dir = staged(env)
-    layout = config["domain"]["resources"]["forecast"]["layout"]
-    assert f"LAYOUT = {layout[0]},{layout[1]}" in (run_dir / "MOM_layout").read_text()
-    assert "12,10" not in (run_dir / "MOM_layout").read_text()
+    for name in mom6sis2.OVERRIDE:
+        assert (run_dir / name).resolve() == (override / name).resolve()
+    assert "ENABLE_BUGS_BY_DEFAULT = False" in (run_dir / "MOM_override").read_text()
+    assert "VERBOSITY = 9" not in (run_dir / "MOM_override").read_text()
 
 
-def test_a_layout_that_does_not_match_ntasks_is_caught_before_the_model_sees_it(env):
-    # FMS reports this as a domain decomposition error from inside the model,
-    # tens of seconds and one queued job later.
-    config, _, _ = env
-    config["domain"]["resources"]["forecast"]["layout"] = [4, 4]
-    with pytest.raises(mom6sis2.ModelError, match="16 PEs but ntasks is 8"):
+def test_a_missing_override_file_is_named_before_the_model_runs(env, override):
+    (override / "MOM_override").unlink()
+    with pytest.raises(mom6sis2.ModelError, match="MOM_override"):
         staged(env)
 
 
-def test_a_missing_layout_names_the_key_rather_than_using_the_placeholder(env):
+def test_an_unconfigured_override_says_what_it_would_have_changed(env):
     config, _, _ = env
-    del config["domain"]["resources"]["forecast"]["layout"]
-    with pytest.raises(mom6sis2.ModelError, match="domain.resources.forecast.layout"):
+    del config["model"]["override"]["SIS_override"]
+    with pytest.raises(mom6sis2.ModelError, match="model.override.SIS_override"):
         staged(env)
+
+
+def test_the_override_is_read_because_ackbar_puts_it_in_the_parameter_list(env):
+    # An override the case does not list is an override MOM6 never opens. The
+    # imported regional cases name only `MOM_input`, so inheriting the case's
+    # list would silently drop every setting in the file above.
+    run_dir = staged(env)
+    text = (run_dir / "input.nml").read_text()
+    assert "parameter_filename = 'MOM_input', 'MOM_override'" in text
+    assert "parameter_filename = 'SIS_input', 'SIS_override'" in text
+
+
+def test_patching_a_continued_assignment_does_not_orphan_its_tail(env):
+    # `parameter_filename` arrives written across two lines. Replacing only the
+    # first would leave `'MOM_override'` behind as a line of its own, and the
+    # namelist would no longer parse.
+    run_dir = staged(env)
+    text = (run_dir / "input.nml").read_text()
+    assert "\n                              'MOM_override'" not in text
+    assert text.count("parameter_filename") == 2
+
+
+def test_the_coupling_timestep_comes_from_the_domain(env):
+    # The one resolution-dependent value that lives in `input.nml` rather than
+    # in `MOM_input`, and therefore the one a shared case directory cannot
+    # carry. Without this the four Gulf resolutions would each need their own
+    # copy of a file they otherwise agree on completely.
+    config, _, _ = env
+    config["model"]["coupling_seconds"] = 1800
+    text = (staged(env) / "input.nml").read_text()
+    assert "dt_cpld = 1800" in text
+    assert "dt_atmos = 1800" in text
+    assert "dt_cpld = 7200" not in text
+
+
+def test_a_domain_that_states_no_coupling_timestep_keeps_the_cases(env):
+    # Absent rather than zero: a model layer that does not set it leaves the
+    # case's own value alone, which is what `om_1deg` relied on before the Gulf
+    # domains needed this at all.
+    config, _, _ = env
+    config["model"].pop("coupling_seconds", None)
+    assert "dt_cpld = 7200" in (staged(env) / "input.nml").read_text()
+
+
+def test_no_layout_is_written_because_mom6_decomposes_for_itself(env):
+    # MOM6 picks 4x2 at 8 PEs, 3x2 at 6, 1x5 at 5. A layout in configuration
+    # would be a second home for the PE count and a thing to get wrong on every
+    # machine with a different core count.
+    run_dir = staged(env)
+    assert not (run_dir / "MOM_layout").exists()
+    assert not (run_dir / "SIS_layout").exists()
+    assert "MOM_layout" not in (run_dir / "input.nml").read_text()
 
 
 # --- the namelist ------------------------------------------------------------

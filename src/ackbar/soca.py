@@ -35,7 +35,8 @@ import yaml
 
 from .config.jobtime import cycle_time, symbols
 from .graph.tasks import SOCA_BIN
-from .mom6sis2 import ModelError, keep_traces
+from .mom6sis2 import (OVERRIDE, SOCA_OVERRIDE, ModelError, keep_traces,
+                       link_override)
 
 #: What the static stage produces and every application here reads.
 GRIDSPEC = "soca_gridspec.nc"
@@ -43,7 +44,12 @@ GRIDSPEC = "soca_gridspec.nc"
 #: Files linked from the model's stock case, and the whole of what MOM6 needs in
 #: order to describe its own domain. Not the case wholesale, unlike a forecast:
 #: everything else in it configures an integration that is not happening.
-CASE_FILES = ("MOM_input", "MOM_override", "INPUT")
+#:
+#: `MOM_override` is absent here and staged separately, because it is ACKBAR's
+#: file rather than the case's and must be the same bytes the forecast reads.
+#: `INPUT` is absent for a different reason: the data half of a case is a path
+#: the domain layer names, not a subdirectory of the text half.
+CASE_FILES = ("MOM_input",)
 
 #: FMS reads a `diag_table` while the geometry is being built and treats its
 #: absence as fatal, so one is written even though nothing here asks for a
@@ -98,6 +104,18 @@ def stage(config, run, cycle):
                 f"needs it to describe the same domain the model integrates"
             )
         _link(run / name, source)
+
+    # The same override files the forecast links, from the same configured
+    # paths. MOM6 reads its parameters here exactly as it does in a forecast, so
+    # a parameter that changed the grid and was applied to only one of them
+    # would give the analysis and the model two different domains.
+    #
+    # Plus `SOCA_OVERRIDE`, which is the one thing the two are allowed to
+    # disagree about, because SOCA's MOM6 is built without symmetric memory and
+    # cannot configure the open boundaries the forecast runs with. Read the file
+    # for how long that is meant to last.
+    link_override(config, run, OVERRIDE + (SOCA_OVERRIDE,))
+    _link(run / "INPUT", Path(_require(config["model"], "input")))
 
     grid = static / GRIDSPEC
     if not grid.exists():

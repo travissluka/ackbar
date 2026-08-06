@@ -1,0 +1,26 @@
+# Tier 3: free run cycling on the real model at gom_25km.
+#
+# The same shape as tier3_free, on the regional domain, and it exists to prove
+# the things that are only true here: a case whose text and data live apart, an
+# open boundary read every timestep, and ACKBAR's own MOM_override actually
+# reaching the model.
+#
+# Twelve hour cycles from 2015-01-05 01:00, which is where the cold start in
+# ic/gom_25km/hycom-smoke leaves off. The case's own ic.nc and obc.nc are a
+# single SODA 3.3.1 five-day mean valid 2015-01-04 13:00, so the boundary is
+# frozen at that snapshot and does not move for the length of the run. That is a
+# known limit of this domain rather than a property of the workflow, and it is
+# recorded in docs/domains.md. It does not affect what this test checks.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/none
+experiment:
+  name: tier3_gom
+  description: regional free run cycling at gom_25km
+cycle:
+  start: '2015-01-05T01:00:00Z'
+  length: PT12H
+  count: 3
+model:
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01

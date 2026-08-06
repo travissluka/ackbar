@@ -38,10 +38,28 @@ from pathlib import Path
 
 from .config.jobtime import cycle_time, member_dir, symbols
 
-#: Files the run directory owns outright. Everything else in the base case
-#: directory is linked through untouched, so this list is also the answer to
-#: "what does ACKBAR change about a stock MOM6-examples case".
-OWNED = ("input.nml", "MOM_layout", "SIS_layout", "diag_table")
+#: Files the run directory owns outright and writes fresh. Everything else in
+#: the base case directory is linked through untouched.
+OWNED = ("input.nml", "diag_table")
+
+#: Files the base case ships that ACKBAR replaces with its own, linked from the
+#: paths `model.override` names rather than written here. Together with `OWNED`
+#: this is the whole answer to "what does ACKBAR change about a stock case".
+#:
+#: Overrides are a *file* rather than generated text because SOCA reads
+#: `MOM_override` too (see `soca.CASE_FILES`), and the two have to be the same
+#: bytes. A model that the analysis configures differently from the forecast is
+#: a grid they agree on by luck.
+OVERRIDE = ("MOM_override", "SIS_override")
+
+#: A third MOM6 parameter file, read by SOCA applications and never by the
+#: forecast, after `MOM_input` and `MOM_override` which both of them read.
+#: It exists for one reason: SOCA links a MOM6 built without symmetric memory,
+#: which refuses to configure Flather open boundaries at all, so a regional
+#: domain has to hand SOCA a geometry with its boundaries switched off while the
+#: model integrates with them on. The file says so at length and is meant to be
+#: deleted, not maintained. See `soca.stage`.
+SOCA_OVERRIDE = "MOM_override.soca"
 
 #: Files the base case ships that the model *writes* rather than reads. MOM6 and
 #: SIS2 dump the parameter set they actually ran with into the working directory,
@@ -69,7 +87,19 @@ class ModelError(Exception):
 #: directory, which is scratch, which is deleted on success and purged by the
 #: site on failure, so a successful forecast would otherwise leave no trace of
 #: how it went at all.
-TRACES = ("ocean.stats", "SIS.stats", "logfile.000000.out")
+#:
+#: The parameter docs are here for a different reason: they are the only record
+#: of what the model *actually* ran with, as opposed to what configuration says
+#: it should have. Every parameter, resolved, including the ones a case set, the
+#: ones ACKBAR overrode and the ones MOM6 defaulted. A comparison between two
+#: experiments is only meaningful if the code and the parameters are accounted
+#: for, and a bug-retention flag that quietly stayed on is exactly the kind of
+#: difference that is invisible everywhere else. About 150 KB against a restart
+#: set of a gigabyte, so the duplication across cycles is not worth a special
+#: case to avoid.
+TRACES = ("ocean.stats", "SIS.stats", "logfile.000000.out",
+          "MOM_parameter_doc.all", "SIS_parameter_doc.all",
+          "MOM_parameter_doc.layout")
 
 
 def forecast(config, site, paths, cycle, task, member, *, source, target):
@@ -92,7 +122,6 @@ def stage(config, run, cycle, task, *, source):
     """Build the run directory. Every input is a symlink, every config a file."""
     model = config["model"]
     base = _path(model, "base")
-    resources = config["domain"].get("resources", {}).get(task, {})
     if not (source / STAMP).exists():
         raise ModelError(
             f"{source} is not a restart set: no {STAMP}. Its producer either "
@@ -103,12 +132,15 @@ def stage(config, run, cycle, task, *, source):
 
     run.mkdir(parents=True, exist_ok=True)
     for entry in sorted(os.scandir(base), key=lambda e: e.name):
-        if entry.name in OWNED or entry.name in ("INPUT", "RESTART"):
+        if entry.name in OWNED or entry.name in OVERRIDE:
+            continue
+        if entry.name in ("INPUT", "RESTART"):
             continue
         if entry.name.startswith(GENERATED):
             continue
         _link(run / entry.name, entry.path)
     _link(run / "coupler_main", _path(model, "executable"))
+    link_override(config, run)
 
     # Emptied rather than reused. Scratch is kept on failure, so a healed
     # attempt starts with whatever the killed one had written here, and
@@ -116,22 +148,49 @@ def stage(config, run, cycle, task, *, source):
     # produced.
     _fresh(run / "RESTART")
 
-    _input_dir(run, base, source)
+    _input_dir(run, _path(model, "input"), source)
     _write(run / "input.nml", _namelist(base, config, cycle))
-    for name in ("MOM_layout", "SIS_layout"):
-        _write(run / name, _layout(resources, name, task))
     _write(run / "diag_table", _diag_table(config, model, cycle, task))
 
 
-def _input_dir(run, base, source):
-    """`INPUT/`: the static archive, then this cycle's restarts over the top.
+def link_override(config, run, names=OVERRIDE):
+    """Link ACKBAR's override files into *run*.
+
+    Shared with `soca.stage`, which needs the same `MOM_override` the forecast
+    reads: SOCA builds a MOM6 geometry from the same parameter files, and two
+    parameter sets is two grids that happen to agree. *names* differs between
+    the two callers only by `SOCA_OVERRIDE`, which is a workaround rather than
+    a difference either of them wants.
+    """
+    override = config["model"].get("override") or {}
+    for name in names:
+        path = override.get(name)
+        if not path:
+            raise ModelError(
+                f"model.override.{name} is not set. It is what ACKBAR changes "
+                f"about the stock case, and a case run without it silently "
+                f"keeps whatever bug-retention flags that case ships with."
+            )
+        source = Path(path)
+        if not source.exists():
+            raise ModelError(f"{source} does not exist, named by model.override.{name}")
+        _link(run / name, source)
+
+
+def _input_dir(run, data, source):
+    """`INPUT/`: the domain's data, then this cycle's restarts over the top.
+
+    *data* is a directory the domain layer names, not `base/INPUT`, because the
+    two halves of a case live apart: text in the repository, grids and initial
+    conditions in the static root. For `OM_1deg` they happen to coincide, since
+    MOM6-examples ships its own `INPUT` of symlinks into a dataset mirror.
 
     Rebuilt from nothing every attempt rather than updated in place. A healed
     forecast whose previous attempt left a stale `coupler.res` here would resume
     from the wrong date, and the model would run happily.
     """
     target = _fresh(run / "INPUT")
-    for entry in sorted(os.scandir(base / "INPUT"), key=lambda e: e.name):
+    for entry in sorted(os.scandir(data), key=lambda e: e.name):
         _link(target / entry.name, entry.path)
     for entry in sorted(os.scandir(source), key=lambda e: e.name):
         _link(target / entry.name, entry.path)
@@ -160,29 +219,6 @@ def _write(target, text):
 
 
 # --- the files ACKBAR owns ---------------------------------------------------
-
-def _layout(resources, name, task):
-    """The PE decomposition, from the domain layer.
-
-    Never inherited from the base case: MOM6-examples ships `12,10` for MOM and
-    `32,18` for SIS with a comment saying not to use them, and a layout whose
-    product is not the task's `ntasks` fails inside FMS with a message about
-    domain decomposition rather than about configuration.
-    """
-    layout = resources.get("layout")
-    if not layout:
-        raise ModelError(
-            f"domain.resources.{task}.layout is not set, and the layout shipped "
-            f"with the base case is a placeholder that will not match "
-            f"--ntasks={resources.get('ntasks', '?')}"
-        )
-    if layout[0] * layout[1] != resources.get("ntasks"):
-        raise ModelError(
-            f"domain.resources.{task}: layout {layout[0]}x{layout[1]} is "
-            f"{layout[0] * layout[1]} PEs but ntasks is {resources.get('ntasks')}"
-        )
-    return f"! generated by ackbar\nLAYOUT = {layout[0]},{layout[1]}\nIO_LAYOUT = 1,1\n"
-
 
 def _diag_table(config, model, cycle, task):
     """The diagnostics, chosen by what the forecast is *for*.
@@ -214,28 +250,82 @@ def _diag_table(config, model, cycle, task):
 #: rather than regenerated: the file carries a couple of dozen groups of model
 #: physics that are the case's, not ACKBAR's, and rewriting it would quietly
 #: fork them.
+#:
+#: The terminator is any `/` that ends a line, not one alone on a line.
+#: MOM6-examples' OM_1deg closes its SIS group on the last value:
+#:
+#:     parameter_filename = 'SIS_input',
+#:                          'SIS_override' /
+#:
+#: and a pattern that insisted on a bare `/` simply does not match that group,
+#: so the patch is silently skipped and `parameter_filename` keeps whatever the
+#: case said. Quoted paths ending in a separator (`'INPUT/'`, `'./'`) are not
+#: mistaken for it, because there the `/` is followed by the closing quote.
 _PATCH = re.compile(
-    r"(?P<head>&(?P<group>\w+)\b)(?P<body>.*?)(?P<tail>^\s*/\s*$)",
+    r"(?P<head>&(?P<group>\w+)\b)(?P<body>.*?)(?P<tail>/[ \t]*$)",
     re.DOTALL | re.MULTILINE,
 )
-_ASSIGN = re.compile(r"^(?P<indent>\s*)(?P<key>\w+)\s*=[^\n]*", re.MULTILINE)
+#: One assignment, including any continuation lines. A namelist list is
+#: routinely written one element per line:
+#:
+#:     parameter_filename = 'MOM_input',
+#:                          'MOM_override'
+#:
+#: so an assignment does not end at its own newline. It ends at the next line
+#: that starts a new assignment, closes the group, or is blank. Matching only
+#: the first line would replace it and leave the continuation behind as an
+#: orphan, which is a namelist that no longer parses.
+_ASSIGN = re.compile(
+    r"^(?P<indent>\s*)(?P<key>\w+)\s*=[^\n]*"
+    r"(?:\n(?!\s*(?:\w+\s*=|/|$))[^\n]*)*",
+    re.MULTILINE,
+)
+
+#: The parameter files each component reads, in the order it reads them. Later
+#: files override earlier ones, so ACKBAR's override goes last: that is what
+#: makes `#override` in it beat the case's own setting.
+#:
+#: Set here rather than inherited because a case cannot be relied on to list
+#: the override at all. MOM6-examples' OM_1deg does; the imported Gulf cases
+#: name only `MOM_input`, and a case whose overrides are silently not read is
+#: the failure this whole mechanism exists to prevent.
+#:
+#: No `MOM_layout`. MOM6 decomposes for itself, and it picks the same layout a
+#: person would.
+_PARAMETER_FILES = {
+    "MOM_input_nml": ("MOM_input", "MOM_override"),
+    "SIS_input_nml": ("SIS_input", "SIS_override"),
+}
 
 
 def _namelist(base, config, cycle):
-    """`input.nml` with the run length and the fallback date set for this cycle.
+    """`input.nml` with the run length, fallback date and parameter files set.
 
     `months`/`days` are zeroed as well as setting `hours`, because a base case
     that runs in months would otherwise add ours to its own.
     """
     table = symbols(config, cycle)
-    updates = {
-        "coupler_nml": {
-            "months": 0,
-            "days": 0,
-            "hours": table["mom6_hours"],
-            "current_date": table["mom6_current_date"],
-        },
+    coupler = {
+        "months": 0,
+        "days": 0,
+        "hours": table["mom6_hours"],
+        "current_date": table["mom6_current_date"],
     }
+    # The coupling timestep, when the domain states one. It varies with
+    # resolution exactly as `DT` does, and it lives in `input.nml` rather than
+    # in `MOM_input`, so it is the one resolution-dependent value that a shared
+    # case directory cannot carry. Patching it here is what lets four Gulf
+    # domains read one `input.nml` instead of four that drift.
+    seconds = config["model"].get("coupling_seconds")
+    if seconds:
+        coupler["dt_cpld"] = seconds
+        coupler["dt_atmos"] = seconds
+    updates = {"coupler_nml": coupler}
+    for group, files in _PARAMETER_FILES.items():
+        updates[group] = {
+            "parameter_filename": ", ".join(f"'{name}'" for name in files),
+        }
+
     text = (base / "input.nml").read_text()
     for group, values in updates.items():
         text = _patch_group(text, group, values)
