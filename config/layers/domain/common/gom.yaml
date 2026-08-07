@@ -107,7 +107,7 @@ domain:
       ntasks: 8
       time: '00:10:00'
       mem: 8G
-    b.vt:
+    b.corr_vt:
       ntasks: 8
       time: '00:10:00'
       mem: 8G

@@ -6,10 +6,10 @@ and writes *that*. So nothing here is the operator: this is its input.
 
 **In the package rather than beside the tool, because two callers need it.**
 `tools/diffusion-scales.py` is the offline half, run once per domain by
-`tools/soca-diffusion.sh`, and it builds every group. `ackbar.run`'s `b.vt`
+`tools/soca-diffusion.sh`, and it builds every group. `ackbar.run`'s `b.corr_vt`
 task is the per-cycle half, and it builds only the vertical, against the
 background the cycle is about to assimilate into. They have to agree exactly:
-the normalization in a `vt.nc` is computed for the scale field it was built
+the normalization in a `corr_vt.nc` is computed for the scale field it was built
 from, and a scale field computed two different ways is a B that is wrong by a
 factor nothing reports.
 
@@ -98,7 +98,7 @@ def read_gridspec(path):
 #: that has no diurnal layer in it: pre-dawn, when the mixed layer is deepest
 #: and best defined. A 12Z restart is about 06:00 local in the Gulf and 00Z,
 #: which is what every experiment here is stamped on, is the worst hour of the
-#: day for this. That is the first thing to try for `b.vt`, which gets to
+#: day for this. That is the first thing to try for `b.corr_vt`, which gets to
 #: choose which sub-window state it reads.
 MLD_THRESHOLD = 0.03   # [kg m-3]
 MLD_REFERENCE = 10.0   # [m]
@@ -164,7 +164,7 @@ def read_restart(path, grid, smoothing):
     degree of skin. MOM6 reported 3.1 m. Domain median was 2.6 m against 15.7 m
     by the criterion below, and with 2 m layers that put the vertical
     correlation on its 1.5 level floor over 62 per cent of the domain and most
-    of every column. The vertical background error was, in effect, switched
+    of every column. The vertical correlation was, in effect, switched
     off, and nothing reported it: the operator was correctly normalized for the
     scales it was given.
 
@@ -384,7 +384,7 @@ def write(path, grid, hz=None, vt=None):
 def read_vertical(path, grid):
     """A vertical scale field back off disk, from a file `write` produced.
 
-    The offline stage's `scales_vt.nc` and every cycle's own record are the same
+    The offline stage's `scales_corr_vt.nc` and every cycle's own record are the same
     file in the same layout, which is what lets a cycled experiment seed itself
     from the domain's calibration and then carry its own forward.
     """

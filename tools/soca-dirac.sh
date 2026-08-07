@@ -104,8 +104,8 @@ if [[ -z $RESTART ]]; then
 fi
 
 REQUIRED=("$TOOLBOX" "$LAYER" "$NAMELIST" "$METADATA" "$GRIDSPEC" "$RESTART"
-          "$STATIC/diffusion/hz.nc" "$STATIC/diffusion/hz_ssh.nc"
-          "$STATIC/diffusion/vt.nc")
+          "$STATIC/diffusion/corr_hz.nc" "$STATIC/diffusion/corr_hz_ssh.nc"
+          "$STATIC/diffusion/corr_vt.nc")
 # Only `--full` reads the standard deviations, so only `--full` needs the file
 # they are floored by. See tools/sst-bgerr.py.
 [[ ${#FULL[@]} -gt 0 ]] && REQUIRED+=("$STATIC/sst_bgerr.nc")

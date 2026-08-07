@@ -95,7 +95,7 @@ TASKS = (
         description="link this window's observations, drop absent non-required observers",
     ),
     TaskDef(
-        name="b.vt",
+        name="b.corr_vt",
         # The static B's vertical correlation, so a pure ensemble covariance has
         # nothing here to calibrate. A hybrid does: one of its two components is
         # that same static B.
@@ -269,7 +269,7 @@ EDGES = (
     ("stage.obs", "da", "afterok"),
     ("stage.obs", "da.ens", "afterok"),
     ("stage.obs", "hofx", "afterok"),
-    ("b.vt", "da", "afterok"),
+    ("b.corr_vt", "da", "afterok"),
     # The ensemble's analysis before the deterministic one, and this is an
     # ordering rather than a data dependency: the hybrid's covariance is built
     # from the ensemble's *backgrounds*, which the previous cycle produced, so
@@ -355,5 +355,5 @@ ROOTS = ("cleanup", "stage.obs")
 #:
 #: `forecast` appears here only when there is no analysis, because with one the
 #: path already runs through da -> writeback -> forecast.
-CROSS_CYCLE = ("da", "da.ens", "hofx", "b.vt")
+CROSS_CYCLE = ("da", "da.ens", "hofx", "b.corr_vt")
 CROSS_CYCLE_NO_ANALYSIS = ("forecast",)

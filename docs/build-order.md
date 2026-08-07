@@ -294,7 +294,7 @@ Static B and analysis-to-restart writeback.
 - **Build:** the background error's correlation as an offline stage, the DA task, the writeback
   task, and `model: persistence`. The per cycle vertical B calibration is a measured
   improvement on the offline one rather than a prerequisite for it, so it is not in this phase;
-  `b.vt` is in the graph and deferred, and what closes it is the vertical `filepath` naming a
+  `b.corr_vt` is in the graph and deferred, and what closes it is the vertical `filepath` naming a
   per-cycle file instead of a static one.
 - **Test:** tier 3, `tests/test_tier3_var.py`, two experiments at `gom_25km`. Tiers 0 through 2
   keep passing, plus `test_soca.py`, `test_writeback.py` and `test_persistence.py`.

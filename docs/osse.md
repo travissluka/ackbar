@@ -189,7 +189,7 @@ Three platforms, generated from the truth trajectory:
 The first two exist as observer layers and as generator platforms already. The
 profile is new in both places and is the interesting one: it is the first
 subsurface observer in the repository, so it is the first thing that exercises
-the vertical background error at all. Ported from soca-science's
+the vertical correlation at all. Ported from soca-science's
 `insitu_pfl.yaml`, operator `InsituTemperature`. Salinity profiles are a second
 `obs space` on the same file and are a follow-on, not part of the first run.
 

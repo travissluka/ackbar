@@ -281,6 +281,31 @@ properties:
         properties:
           static: { type: number, minimum: 0 }
           ensemble: { type: number, minimum: 0 }
+      # Whether the vertical correlation is the domain's offline calibration or
+      # is rebuilt every cycle. `cycled` is the only value that changes
+      # anything, and stating it is what puts `b.corr_vt` in the graph and switches
+      # the analysis onto its output: see `run.vertical_correlation_is_cycled` and
+      # `config/layers/da/corr_vt_cycled.yaml`.
+      vertical correlation:
+        type: string
+        enum: [static, cycled]
+      # The smallest vertical correlation `b.corr_vt` may produce, in model levels.
+      # Required by a cycled experiment and meaningless without one. It repeats
+      # `config/static/diffusion.yaml`'s floor because a job cannot read that
+      # file; the two have to be kept equal by hand.
+      vertical correlation floor:
+        type: number
+        exclusiveMinimum: 0
+      # The weight a cycled experiment puts on this cycle's own scales, the
+      # rest coming from what was carried forward. 0 means no rolling average.
+      vertical correlation memory:
+        type: number
+        minimum: 0
+        maximum: 1
+      # A fixed vertical scale field, read instead of the background's mixed
+      # layer. When it is set nothing is computed and nothing is averaged.
+      vertical correlation climatology:
+        type: string
       # The minimizer and the outer/inner loop structure. Verbatim.
       variational:
         type: object

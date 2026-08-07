@@ -90,7 +90,7 @@ def require_everything():
     if not os.environ.get("ACKBAR_OUTPUT_ROOT"):
         pytest.skip("run `source site/activate.sh` first")
     diffusion = STATIC / "static" / DOMAIN / "diffusion"
-    for name in ("hz.nc", "loc_hz.nc"):
+    for name in ("corr_hz.nc", "loc_hz.nc"):
         if not (diffusion / name).exists():
             pytest.skip(f"no {name} for {DOMAIN}; "
                         f"run tools/soca-diffusion.sh {DOMAIN}")

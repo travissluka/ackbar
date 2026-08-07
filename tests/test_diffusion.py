@@ -76,14 +76,15 @@ def test_every_horizontal_file_the_analysis_reads_is_one_the_calibration_writes(
 
 def test_the_vertical_file_the_analysis_reads_is_the_one_the_calibration_writes(
         calibration, groups):
-    assert stems(groups, "vertical") == ({"vt"} if calibration.get("vertical") else set())
+    assert stems(groups, "vertical") == (
+        {"corr_vt"} if calibration.get("vertical") else set())
 
 
 def test_the_analysis_applies_the_vertical_scheme_the_normalization_was_built_with(
         calibration, groups):
     """The failure this exists for is silent and large.
 
-    `vt.nc` holds a normalization estimated by running the configured operator
+    `corr_vt.nc` holds a normalization estimated by running the configured operator
     on a dirac in every level. Read it back through the explicit scheme when it
     was written with the implicit one and every vertical increment is scaled by
     the ratio of two kernels, which is a factor of order one that varies with

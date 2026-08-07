@@ -1,0 +1,64 @@
+# Recalibrate the vertical correlation every cycle, against the cycle's
+# own background, instead of reading the domain's offline calibration.
+#
+# An overlay on `da/variational`, which an experiment lists after it. It states
+# three things and nothing else; everything that has to agree with them is
+# derived.
+#
+# **What this is for.** `tools/soca-diffusion.sh` calibrates the vertical
+# correlation once, from the mixed layer of one restart, and every cycle of
+# every experiment on the domain then reads that. That is right when the mixed
+# layer barely moves over the experiment, which for two months of Gulf summer it
+# does not, and wrong across a season: the Gulf's mixed layer triples between
+# August and November, and a scale calibrated in July is wrong by that factor in
+# the autumn.
+#
+# **What it costs.** The scales become a function of the background, and the
+# background is the forecast from the analysis the scales configured. That loop
+# has no damping in it by itself: an analysis that deepens a mixed layer gets a
+# broader vertical correlation next cycle, which deepens it further.
+# `vertical correlation memory` is the damping, and it is why this layer would be a
+# bad idea without it.
+#
+# **What is derived and not stated here.** The vertical `filepath` under
+# `solver.background error`, which has to name what `b.corr_vt` just wrote rather
+# than the domain's static file. `ackbar/soca.py:cycled_vertical_correlation` sets it from
+# `run.vertical_correlation_file`, which is the function that also tells `b.corr_vt` where to write.
+# A layer cannot state it cheaply in any case: that `filepath` sits inside a
+# list, a merge replaces a list wholesale, and overriding one key in it would
+# mean restating every group's horizontal scales beside it.
+
+solver:
+  # The flag `run.vertical_correlation_is_cycled` reads. It puts `b.corr_vt` in the graph, in
+  # the data path ahead of the analysis, and switches the analysis onto its
+  # output.
+  vertical correlation: cycled
+
+  # The smallest vertical correlation `b.corr_vt` may produce, in model levels, and
+  # the same number `config/static/diffusion.yaml` gives the offline stage. It
+  # has to be restated because a job cannot read that file, and because a
+  # calibration built with a different floor than the domain's static one is not
+  # comparable with it. Keep the two equal.
+  vertical correlation floor: 1.5
+
+  # The weight on this cycle's own scales; the rest is what was carried forward.
+  # Zero, and absent, mean no rolling average at all.
+  #
+  # A fifth, so the field follows a season and not a cycle. Two arguments put it
+  # here rather than at 1.0. The loop above is one. The other is that the mixed
+  # layer this is built from is noisier than the thing it describes: MOM6's own
+  # instantaneous mixed layer swings by more than half from one 00Z restart to
+  # the next in the summer Gulf, while its time filtered one moves a few per
+  # cent over six weeks, and the density criterion `ackbar/diffusion.py` uses
+  # sits between the two.
+  #
+  # On the finished scales and not on the mixed layer, which is the point of
+  # doing it here: the noise arrives through the mixed layer estimate, through
+  # the layer thicknesses the free surface moves, and through the analysis
+  # increment the next background carries, and only the output sees all three.
+  # See `ackbar.diffusion.blend` for why it runs before the normalization.
+  vertical correlation memory: 0.2
+
+  # `vertical correlation climatology` belongs here too when there is one: a fixed
+  # scale field, read instead of the background's, with no rolling average
+  # because there is nothing to average. There is none for the Gulf.

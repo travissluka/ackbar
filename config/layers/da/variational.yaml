@@ -83,10 +83,10 @@ solver:
           - sea_water_potential_temperature
           - sea_water_salinity
           horizontal:
-            filepath: $(domain_static)/diffusion/hz
+            filepath: $(domain_static)/diffusion/corr_hz
           vertical:
             levels: $(diffusion_levels)
-            filepath: $(domain_static)/diffusion/vt
+            filepath: $(domain_static)/diffusion/corr_vt
             # Implicit in the vertical, explicit (the default) in the
             # horizontal. The explicit scheme's iteration count grows with the
             # square of the scale in grid units, and a mixed layer can span a
@@ -96,7 +96,7 @@ solver:
             # a few cells and explicit is cheaper.
             #
             # These two values must match `vertical:` in `config/static/diffusion.yaml`.
-            # The normalization in `vt.nc` was computed with the operator that
+            # The normalization in `corr_vt.nc` was computed with the operator that
             # file configures, and reading it back through a differently
             # configured operator produces a B that is wrong by a factor nothing
             # reports. `tests/test_diffusion.py` is what holds them together.
@@ -104,7 +104,7 @@ solver:
             iterations: 2
         - variables: [sea_surface_height_above_geoid]
           horizontal:
-            filepath: $(domain_static)/diffusion/hz_ssh
+            filepath: $(domain_static)/diffusion/corr_hz_ssh
 
     saber outer blocks:
     # Taper the background error with depth, so the analysis does not push the

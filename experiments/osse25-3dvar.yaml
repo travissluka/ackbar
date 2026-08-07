@@ -15,15 +15,22 @@
 # minimization converged (`ninner`), then a single-observation experiment to see
 # what the covariance actually spreads. Not blind tuning toward a number.
 #
-# The static background error is `da/variational`'s default and is not tuned
-# for this domain or this season. That is stated rather than hidden because it
-# bounds what the comparison below can claim: that assimilating these
-# observations through this covariance beats not assimilating them, not that
-# this is the best 3DVar the Gulf admits.
+# The static background error is `da/variational`'s, which is good enough
+# rather than tuned: its standard deviations were checked against the free run's
+# own error and no further. That is stated rather than hidden because it bounds
+# what the comparison below can claim: that assimilating these observations
+# through this covariance beats not assimilating them, not that this is the best
+# 3DVar the Gulf admits.
+#
+# `da/corr_vt_cycled` is the one thing here that is not also true of `osse25-noda`
+# beyond the solver: the vertical correlation is rebuilt every cycle against
+# this experiment's own background, with a rolling average over it, rather than
+# read from the domain's offline calibration. That layer says why.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
   - da/variational
+  - da/corr_vt_cycled
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2

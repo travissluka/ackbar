@@ -24,7 +24,7 @@ tools/soca-diffusion.sh <domain>          # calibrate
 tools/soca-dirac.sh <domain>              # check it
 ```
 
-`soca-diffusion.sh` writes `hz.nc`, `hz_ssh.nc`, `loc_hz.nc` and `vt.nc` into
+`soca-diffusion.sh` writes `corr_hz.nc`, `corr_hz_ssh.nc`, `loc_hz.nc` and `corr_vt.nc` into
 `$ACKBAR_STATIC_ROOT/static/<domain>/diffusion`, which is what the `filepath`
 entries in the variational and hybrid layers name. The list is the entries in
 `config/static/diffusion.yaml` rather than a list in the script, so adding a group is
@@ -76,7 +76,7 @@ have to match the write or the result is wrong without being visibly wrong.
 
 The **vertical scheme** is one. The vertical operator is implicit, a fixed count
 of tridiagonal solves down each column, rather than explicit, whose iteration
-count grows with the square of the scale in levels. `vt.nc` holds a
+count grows with the square of the scale in levels. `corr_vt.nc` holds a
 normalization computed with the implicit operator; read back through the
 explicit one, every vertical increment is scaled by the ratio of two kernels.
 `method` and `iterations` therefore appear in both `config/static/diffusion.yaml` and
@@ -132,7 +132,7 @@ overrides it downwards, and exists for one purpose: proving the stage runs, in
 seconds rather than in minutes. **A calibration built that way is not one to
 assimilate through.** Nothing downstream can tell the two apart, which is why
 the generated documents are copied next to the output: they are the only record
-of what a given `hz.nc` was normalized with.
+of what a given `corr_hz.nc` was normalized with.
 
 The dirac report is how to tell whether the count was high enough. Run it and
 read the peak column.

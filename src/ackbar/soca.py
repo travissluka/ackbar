@@ -34,6 +34,7 @@ Python also reads is never written in a template, only slotted, because two
 spellings of a filename field is a `writeback` that finds nothing.
 """
 
+import copy
 import os
 import shlex
 import shutil
@@ -203,7 +204,7 @@ ENSEMBLE_TYPE = "ens"
 #: What a per-cycle vertical calibration is called, without the `.nc` saber
 #: appends. The same word the offline stage uses, so that the `filepath` an
 #: analysis reads differs between static and cycled only in its directory.
-VT_STEM = "vt"
+CORR_VT_STEM = "corr_vt"
 
 #: The ensemble's prior and posterior spread. `sprdb` and `sprda` rather than
 #: words, because `exp` becomes a dot-separated field of a filename and a dot
@@ -378,6 +379,7 @@ def analysis(config, site, paths, cycle, task, *, background, observers, target,
     # staged so that refusal costs nothing.
     document = var_config(config, cycle, observers, background=background,
                           ensemble=ensemble, trajectory=trajectory,
+                          corr_vt=cycled_vertical_correlation(config, paths, cycle),
                           templates=paths.templates)
     run = run_application(
         cost_template(config, trajectory), config, site, paths, cycle, task,
@@ -444,7 +446,7 @@ def calibrate_vt(config, site, paths, cycle, task, *, background, scales,
         "vt", config, site, paths, cycle, task,
         vt_config(config, cycle, background=background, scales=scales,
                   templates=paths.templates))
-    written = run / "out" / f"{VT_STEM}.nc"
+    written = run / "out" / f"{CORR_VT_STEM}.nc"
     if not written.exists():
         raise ModelError(
             f"{written} was not written, so the calibration produced no "
@@ -749,8 +751,30 @@ def _observers(observers, distribution, localization=None, *, localize=False):
     return bodies
 
 
+def cycled_vertical_correlation(config, paths, cycle):
+    """The stem of this cycle's own vertical correlation file, or None.
+
+    None when the experiment reads the domain's offline calibration, which is
+    the default and what the layer's `filepath` already names.
+
+    Built here rather than stated in a layer, for the reason `_static_error`
+    gives about the balance operator's variable lists: `b.corr_vt` writes this file
+    and the analysis reads it, and a layer that spelled the path would be a
+    second answer free to disagree with `run.vertical_correlation_file`. A layer could not
+    state it cheaply in any case, because the vertical `filepath` sits inside a
+    list that a merge replaces wholesale, so overriding it means restating every
+    group's horizontal scales as well.
+    """
+    from . import run as _run
+    if not _run.vertical_correlation_is_cycled(config):
+        return None
+    written = _run.vertical_correlation_file(paths, cycle)
+    # A stem. saber appends `.nc` both when `b.corr_vt` writes and when this reads.
+    return str(written.with_suffix(""))
+
+
 def var_config(config, cycle, observers, *, background, ensemble=None,
-               trajectory=None, templates=None):
+               trajectory=None, corr_vt=None, templates=None):
     """The whole `soca_var.x` YAML. See `config/soca/var.yaml`.
 
     The values come from where the experiment already states them: the geometry
@@ -819,7 +843,8 @@ def var_config(config, cycle, observers, *, background, ensemble=None,
     return build_document(name, config, cycle, {
         "GEOMETRY": geometry,
         "ANALYSIS_VARIABLES": variables,
-        "BACKGROUND_ERROR": background_error(solver, variables, ensemble=ensemble),
+        "BACKGROUND_ERROR": background_error(solver, variables, ensemble=ensemble,
+                                            corr_vt=corr_vt),
         "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
         "VARIATIONAL": _variational(solver, geometry),
         "ANALYSIS_OUTPUT": _written(ANALYSIS),
@@ -978,11 +1003,11 @@ def vt_config(config, cycle, *, background, scales, templates=None):
         },
         "SCALES_DATE": _date(config, cycle),
         "SCALES_FILE": Path(scales).name,
-        "WRITE_STEM": f"out/{VT_STEM}",
+        "WRITE_STEM": f"out/{CORR_VT_STEM}",
     }, templates=templates)
 
 
-def vertical_scale_spec(solver):
+def vertical_correlation_spec(solver):
     """What `ackbar.diffusion.vertical_scales` needs, from the experiment.
 
     Two numbers with two different homes, joined here. `method` and
@@ -991,27 +1016,27 @@ def vertical_scale_spec(solver):
     The floor is not saber's: it is a statement about how tightly the analysis
     may correlate below the mixed layer, `config/static/diffusion.yaml` holds
     it for the offline stage, and that file is deliberately unreadable from a
-    job. So a cycling experiment states it, which is what `da/vt_cycled` does.
+    job. So a cycling experiment states it, which is what `da/corr_vt_cycled` does.
     """
     vertical = _vertical_block(solver)
-    floor = solver.get("vertical scale floor")
+    floor = solver.get("vertical correlation floor")
     if floor is None:
         raise ModelError(
-            "solver states no `vertical scale floor`, which is the smallest "
-            "vertical correlation `b.vt` may produce, in model levels. It has "
+            "solver states no `vertical correlation floor`, which is the smallest "
+            "vertical correlation `b.corr_vt` may produce, in model levels. It has "
             "no default here on purpose: the offline stage takes it from "
             "`config/static/diffusion.yaml`, a job cannot read that file, and "
             "a calibration built with a different floor than the domain's "
-            "static one is not comparable with it. `da/vt_cycled` states it.")
+            "static one is not comparable with it. `da/corr_vt_cycled` states it.")
     return {"min": float(floor),
             "method": _require(vertical, "method"),
             "iterations": _require(vertical, "iterations")}
 
 
-def vertical_scale_memory(solver):
+def vertical_correlation_memory(solver):
     """How much of the new cycle a cycled vertical B keeps. See `diffusion.blend`.
 
-    `solver.vertical scale memory`, a weight on *this* cycle's scales. Zero, and
+    `solver.vertical correlation memory`, a weight on *this* cycle's scales. Zero, and
     absent, mean no rolling average at all: the cycle's own scales are used as
     they came out. One is the same thing said the other way and is allowed for
     the same reason a weight of zero on the carried field should be sayable.
@@ -1022,24 +1047,24 @@ def vertical_scale_memory(solver):
     in it: an analysis that deepens a mixed layer gets a broader vertical
     correlation next cycle, which deepens it further.
     """
-    value = (solver or {}).get("vertical scale memory", 0.0)
+    value = (solver or {}).get("vertical correlation memory", 0.0)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ModelError(
-            f"solver.vertical scale memory is {value!r}; it is the weight on "
+            f"solver.vertical correlation memory is {value!r}; it is the weight on "
             f"this cycle's own vertical scales, between 0 and 1, and 0 means "
             f"no rolling average")
     if not 0.0 <= float(value) <= 1.0:
         raise ModelError(
-            f"solver.vertical scale memory is {value}, which is outside 0 to 1. "
+            f"solver.vertical correlation memory is {value}, which is outside 0 to 1. "
             f"It is a weight: 0.2 keeps a fifth of this cycle and four fifths "
             f"of what was carried forward.")
     return float(value)
 
 
-def vertical_scale_climatology(solver):
+def vertical_correlation_climatology(solver):
     """A fixed vertical scale field to use instead of the background's, or None.
 
-    `solver.vertical scale climatology`, a path to a file `ackbar.diffusion`
+    `solver.vertical correlation climatology`, a path to a file `ackbar.diffusion`
     wrote. When it is set the background is not consulted for the mixed layer at
     all and no rolling average runs: there is nothing to average, the field is
     the same every cycle, and blending a constant with itself is the constant.
@@ -1047,30 +1072,33 @@ def vertical_scale_climatology(solver):
     The calibration still runs every cycle, because the normalization depends on
     the geometry and the geometry is this cycle's state.
     """
-    return (solver or {}).get("vertical scale climatology") or None
+    return (solver or {}).get("vertical correlation climatology") or None
 
 
-def _vertical_block(solver):
+def _vertical_block(node):
     """The `vertical:` mapping of the group that carries the tracers.
 
     Found by looking for it rather than by index, because the groups are a list
     an experiment may reorder and only one of them has a vertical: sea surface
     height is a single level and has no vertical correlation to describe.
+
+    Takes either a solver or a background error section, because both callers
+    have one of the two and neither has the other.
     """
-    groups = (((solver.get("background error") or {})
-               .get("saber central block") or {})
+    section = node.get("background error", node)
+    groups = ((section.get("saber central block") or {})
               .get("read") or {}).get("groups") or []
     for group in groups:
         if "vertical" in group:
             return group["vertical"]
     raise ModelError(
         "no group under `solver.background error` states a `vertical:`, so "
-        "there is no vertical correlation to recalibrate. `b.vt` runs because "
-        "the experiment asked for `solver.vertical background error: cycled`; "
+        "there is no vertical correlation to recalibrate. `b.corr_vt` runs because "
+        "the experiment asked for `solver.vertical correlation: cycled`; "
         "one of the two is wrong.")
 
 
-def background_error(solver, variables, *, ensemble=None):
+def background_error(solver, variables, *, ensemble=None, corr_vt=None):
     """The B description, assembled from the covariance the experiment asked for.
 
     Three shapes, and which one is built is `solver.covariance`, which until
@@ -1108,7 +1136,7 @@ def background_error(solver, variables, *, ensemble=None):
         )
 
     if covariance == "static":
-        return _static_error(solver, variables)
+        return _static_error(solver, variables, corr_vt)
     if covariance == "ensemble":
         return _ensemble_error(solver, variables, ensemble)
 
@@ -1116,7 +1144,7 @@ def background_error(solver, variables, *, ensemble=None):
     return {
         "covariance model": "hybrid",
         "components": [
-            {"covariance": _static_error(solver, variables),
+            {"covariance": _static_error(solver, variables, corr_vt),
              "weight": {"value": _weight(weights, "static")}},
             {"covariance": _ensemble_error(solver, variables, ensemble),
              "weight": {"value": _weight(weights, "ensemble")}},
@@ -1141,19 +1169,25 @@ def _weight(weights, name):
     return float(value)
 
 
-def _static_error(solver, variables):
+def _static_error(solver, variables, corr_vt=None):
     """The layer's SABER block, with the balance operator's variable lists in it.
 
     Set rather than checked, and set even when the layer already says something,
     for the same reason the geometry is: the answer is the analysis variables,
     the analysis variables are stated once, and a second statement of them is
     only ever a chance to disagree.
+
+    *corr_vt* replaces the vertical correlation's `filepath` when the
+    experiment recalibrates it every cycle. See `cycled_vertical_correlation`.
     """
     section = dict(_require(solver, "background error"))
     change = section.get("linear variable change")
     if change:
         section["linear variable change"] = dict(
             change, **{"input variables": variables, "output variables": variables})
+    if corr_vt:
+        section = copy.deepcopy(section)
+        _vertical_block(section)["filepath"] = corr_vt
     return section
 
 

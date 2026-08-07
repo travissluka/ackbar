@@ -902,7 +902,7 @@ def test_the_shipped_layers_produce_an_analysis_soca_would_accept(tmp_path):
     assert cost["background"]["date"] == "2015-01-05T01:00:00Z"
     # The B is read from the domain's static stage, and `filepath` is a stem.
     groups = cost["background error"]["saber central block"]["read"]["groups"]
-    assert groups[0]["horizontal"]["filepath"] == "/static/static/gom_25km/diffusion/hz"
+    assert groups[0]["horizontal"]["filepath"] == "/static/static/gom_25km/diffusion/corr_hz"
     # Must equal the domain's `diffusion_levels`, which must equal MOM6's NK.
     # When they disagree saber reads a calibration carrying more levels than it
     # was told to expect and spins at full CPU on every rank, indefinitely,

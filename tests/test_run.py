@@ -71,7 +71,7 @@ def test_a_dotted_task_name_is_a_task_and_not_a_member():
     # a member index and silently match nothing.
     assert run.selector_matches("2.forecast.ext", 2, "forecast.ext", 0)
     assert not run.selector_matches("2.forecast", 2, "forecast.ext", 0)
-    assert run.selector_matches("*.b.vt.*", 3, "b.vt", 0)
+    assert run.selector_matches("*.b.corr_vt.*", 3, "b.corr_vt", 0)
 
 
 def test_a_selector_with_no_task_is_rejected_rather_than_guessed():
@@ -169,7 +169,7 @@ def test_scratch_is_removed_on_success_and_kept_on_failure(env):
 def test_a_deferred_task_says_so_rather_than_pretending(env):
     """A declared task with no body announces itself instead of exiting 0 quietly.
 
-    `DEFERRED` is down to `b.vt` and `verify`. `forecast.ext` used to be here and
+    `DEFERRED` is down to `b.corr_vt` and `verify`. `forecast.ext` used to be here and
     is not any more: it runs the real model, for `forecast.extended.length`,
     writing at `forecast.extended.slots` into `run/<init>/fcst/`.
     """

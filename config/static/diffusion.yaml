@@ -25,7 +25,7 @@
 
 # ------------------------------------------------------------------------------
 # Horizontal, in metres. One entry per output file, and the name is the file:
-# `hz` becomes `$(domain_static)/diffusion/hz.nc`.
+# `corr_hz` becomes `$(domain_static)/diffusion/corr_hz.nc`.
 #
 #   scale = clip(rossby_radius * `rossby mult`,
 #                min = max(dx, dy) * `min grid mult`,
@@ -43,7 +43,7 @@
 horizontal:
 
   # Temperature and salinity, and anything else that is not sea surface height.
-  hz:
+  corr_hz:
     rossby mult: 1.0
     min grid mult: 1.5
     max: 250.0e3
@@ -56,7 +56,7 @@ horizontal:
   # iteration count goes as the square of the scale measured in grid cells, and
   # this is the group that sets the price, so 1.5 costs a little over half what
   # 2.0 does.
-  hz_ssh:
+  corr_hz_ssh:
     rossby mult: 1.5
     min grid mult: 2.0
     max: 350.0e3
@@ -74,7 +74,7 @@ horizontal:
   # contributing rather than anything that looks like a mistake.
   #
   # Twice the Rossby radius, floored at two grid cells, ceilinged where
-  # `hz_ssh` is. Read by the `localization` block in
+  # `corr_hz_ssh` is. Read by the `localization` block in
   # `config/layers/da/hybrid.yaml` and by nothing else.
   loc_hz:
     rossby mult: 2.0
@@ -91,7 +91,7 @@ horizontal:
 # and barely at all across the pycnocline. Below that it is `min` everywhere.
 # It is not capped: see the note on `max` below.
 #
-# Written to `$(domain_static)/diffusion/vt.nc`, and read only by the group that
+# Written to `$(domain_static)/diffusion/corr_vt.nc`, and read only by the group that
 # holds the tracers. Sea surface height is a single level and has no vertical
 # correlation to describe.
 # ------------------------------------------------------------------------------
@@ -130,6 +130,6 @@ vertical:
 # overrides it downwards to prove the stage runs at all, and the tests use that;
 # a calibration built that way is not one anybody should assimilate through.
 # The generated `calibrate.yaml` is copied next to the output because it is the
-# only thing that records which of the two a given `hz.nc` is.
+# only thing that records which of the two a given `corr_hz.nc` is.
 # ------------------------------------------------------------------------------
 normalization iterations: 10000

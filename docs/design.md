@@ -1103,7 +1103,7 @@ the experiment's own cycle-0 forecast output location, so `da(1)` resolves its b
 exactly the same rule as `da(50)`. Without that one step the asymmetry the design claims to
 have removed is merely relocated, and `first_cycle_only` machinery comes back.
 
-Cross-cycle is `forecast(n) -> da(n+1)`, and also `forecast(n) -> b.vt(n+1)`, because vertical
+Cross-cycle is `forecast(n) -> da(n+1)`, and also `forecast(n) -> b.corr_vt(n+1)`, because vertical
 B calibrates from the background. With no analysis configured the restart handoff is
 `forecast(n) -> forecast(n+1)` directly.
 

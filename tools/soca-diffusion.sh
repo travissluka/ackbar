@@ -5,7 +5,7 @@
 #   tools/soca-diffusion.sh gom_25km
 #   tools/soca-diffusion.sh gom_25km --iterations 200    # smoke test only
 #
-# Writes `hz.nc`, `hz_ssh.nc` and `vt.nc` into
+# Writes `corr_hz.nc`, `corr_hz_ssh.nc` and `corr_vt.nc` into
 # $ACKBAR_STATIC_ROOT/static/<domain>/diffusion, which is what the `filepath`
 # entries under `solver.background error` in `config/layers/da/variational.yaml`
 # name. Until this has run, `ackbar validate` reports those three as missing
@@ -66,7 +66,7 @@ RESTART=
 # like noisy tuning rather than like a mistake. The config file's value is the
 # science value. Nothing downstream can tell the two apart, which is why the
 # generated documents are copied next to the output: they are the only record of
-# what a given `hz.nc` was normalized with.
+# what a given `corr_hz.nc` was normalized with.
 ITERATIONS=
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -231,9 +231,9 @@ vertical = [] if not vertical else [
     {"vertical": {"as gaussian": True,
                   "method": vertical["method"],
                   "iterations": vertical["iterations"],
-                  "model file": model_file("vt"),
+                  "model file": model_file("corr_vt"),
                   "model variable": VT_VARIABLE},
-     "write": {"filepath": "out/vt"}}
+     "write": {"filepath": "out/corr_vt"}}
 ]
 
 for path, variable, groups in ((hz_out, HZ_VARIABLE, horizontal),
@@ -271,7 +271,7 @@ import sys, yaml
 config = yaml.safe_load(open(sys.argv[1]))
 print("\n".join(config.get("horizontal") or {}))
 if config.get("vertical"):
-    print("vt")
+    print("corr_vt")
 ' "$CONFIG")
 
 for name in "${NAMES[@]}"; do
@@ -284,5 +284,10 @@ done
 mkdir -p "$OUT"
 for name in "${NAMES[@]}"; do mv "out/$name.nc" "$OUT/"; done
 cp calibrate_hz.yaml calibrate_vt.yaml "$OUT/"
+# The vertical scale *field*, beside the operator built from it. The other
+# `scales_*.nc` are intermediates and are dropped with the working directory;
+# this one is a product, because an experiment that recalibrates every cycle
+# seeds its first rolling average from it. See config/layers/da/corr_vt_cycled.yaml.
+[[ -s scales_corr_vt.nc ]] && cp scales_corr_vt.nc "$OUT/"
 echo "soca-diffusion: wrote ${NAMES[*]/#/$OUT/} (with .nc)"
 echo "soca-diffusion: verify it with  tools/soca-dirac.sh $DOMAIN"

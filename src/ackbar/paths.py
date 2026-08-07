@@ -77,8 +77,8 @@ from .duration import parse_instant
 #: `bvt` holds the vertical correlation scales a cycled B used, one file per
 #: cycle. A product and not an intermediate: the next cycle's rolling average
 #: reads the previous cycle's, and a run's series of them is the only record of
-#: what the vertical background error did over time. See `run.vertical_scales_record`.
-SUBDIRS = ("cfg", "ana", "bkg", "bvt", "fcst", "obs_out", "run")
+#: what the vertical correlation did over time. See `run.vertical_correlation_record`.
+SUBDIRS = ("cfg", "ana", "bkg", "corr_vt", "fcst", "obs_out", "run")
 
 #: What a cycle's `run/` directory holds that `cleanup` may delete, and how many
 #: cycles earlier than the shared horizon each one may go. Everything else under

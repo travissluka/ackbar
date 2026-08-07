@@ -87,7 +87,7 @@ TARGET=$IC/ensemble$MEMBERS
 
 for path in "$ENSPERT" "$LAYER" "$NAMELIST" "$METADATA" "$GRIDSPEC" \
             "$IC/MOM.res.nc" "$IC/coupler.res" \
-            "$STATIC/diffusion/hz.nc" "$STATIC/diffusion/vt.nc"; do
+            "$STATIC/diffusion/corr_hz.nc" "$STATIC/diffusion/corr_vt.nc"; do
     [[ -e $path ]] || {
         echo "ensemble-ic: $path does not exist" >&2
         echo "ensemble-ic: the domain needs its static stage and its background" >&2

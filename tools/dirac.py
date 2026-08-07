@@ -209,8 +209,8 @@ def default_cells(grid, depth, static):
     wrong is usually wrong in one regime and not the other.
     """
     scales = np.maximum(
-        read_nodes(f"{static}/diffusion/hz.nc", "hzScales", grid)[..., 0],
-        read_nodes(f"{static}/diffusion/hz_ssh.nc", "hzScales", grid)[..., 0],
+        read_nodes(f"{static}/diffusion/corr_hz.nc", "hzScales", grid)[..., 0],
+        read_nodes(f"{static}/diffusion/corr_hz_ssh.nc", "hzScales", grid)[..., 0],
     )
 
     inside = np.zeros_like(grid["mask"])
@@ -298,7 +298,7 @@ def warn_if_crowded(grid, points, static):
     overlap shows up in the report as a peak above 1. Worth saying out loud
     though, because otherwise it reads as a normalization failure.
     """
-    scales = read_nodes(f"{static}/diffusion/hz.nc", "hzScales", grid)[..., 0]
+    scales = read_nodes(f"{static}/diffusion/corr_hz.nc", "hzScales", grid)[..., 0]
     for a in points:
         for b in points:
             if a is b or a["variable"] != b["variable"]:
@@ -450,11 +450,11 @@ def report(argv, full=False):
 
     requested = {
         "sea_water_potential_temperature":
-            read_nodes(f"{static}/diffusion/hz.nc", "hzScales", grid)[..., 0],
+            read_nodes(f"{static}/diffusion/corr_hz.nc", "hzScales", grid)[..., 0],
         "sea_surface_height_above_geoid":
-            read_nodes(f"{static}/diffusion/hz_ssh.nc", "hzScales", grid)[..., 0],
+            read_nodes(f"{static}/diffusion/corr_hz_ssh.nc", "hzScales", grid)[..., 0],
     }
-    vertical = read_nodes(f"{static}/diffusion/vt.nc", "vtScales", grid)
+    vertical = read_nodes(f"{static}/diffusion/corr_vt.nc", "vtScales", grid)
 
     print()
     print("  field                       peak    east    west   north   south "

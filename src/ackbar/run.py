@@ -83,7 +83,7 @@ def stub_io(config, paths, task, cycle, member):
     def ana(c, m, name):
         return paths.member_out("ana", c, m) / name
 
-    if task == "b.vt":
+    if task == "b.corr_vt":
         return [rst(cycle - 1, members[0])], [paths.cycle_out("ana", cycle) / "vt.stub"]
     if task == "da":
         # One job consuming every member, which is what LETKF is, what a hybrid
@@ -174,23 +174,23 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: part that is hard to get right, and a phase that adds a body should not also
 #: be the phase that first discovers its dependencies were wrong.
 #:
-#: `b.vt` is here **only when the experiment did not ask for it**, which is the
+#: `b.corr_vt` is here **only when the experiment did not ask for it**, which is the
 #: state this entry used to describe unconditionally. The vertical background
 #: error scales are calibrated offline and once by `tools/soca-diffusion.sh`,
 #: and an analysis reads that product out of the domain's static directory; an
-#: experiment that inherits `da/vt_cycled` instead rebuilds them every cycle
+#: experiment that inherits `da/corr_vt_cycled` instead rebuilds them every cycle
 #: against its own background, and then this task is in the data path and the
 #: analysis reads what it wrote.
 #:
-#: Which of the two is `solver.vertical background error`, and that is also what
-#: `da/vt_cycled` points the vertical `filepath` at. The two have to move
+#: Which of the two is `solver.vertical correlation`, and that is also what
+#: `da/corr_vt_cycled` points the vertical `filepath` at. The two have to move
 #: together: a cycled filepath without this task is an analysis failing on a
 #: missing input, and this task without a cycled filepath is a file nothing
-#: reads. `vertical_b_is_cycled` is the one place either is decided.
+#: reads. `vertical_correlation_is_cycled` is the one place either is decided.
 DEFERRED = ("verify",)
 
 
-def vertical_b_is_cycled(config):
+def vertical_correlation_is_cycled(config):
     """Whether this experiment rebuilds the vertical B every cycle.
 
     Stated by the experiment rather than inferred from the `filepath`, because
@@ -198,7 +198,7 @@ def vertical_b_is_cycled(config):
     behaviour depend on how someone spelled a directory.
     """
     return (config.get("solver") or {}).get(
-        "vertical background error") == "cycled"
+        "vertical correlation") == "cycled"
 
 
 def deferred_task(config, task):
@@ -210,8 +210,8 @@ def deferred_task(config, task):
     """
     if config["model"]["name"] == "stub":
         return False
-    if task == "b.vt":
-        return not vertical_b_is_cycled(config)
+    if task == "b.corr_vt":
+        return not vertical_correlation_is_cycled(config)
     return task in DEFERRED
 
 
@@ -342,13 +342,13 @@ def analysis_background(paths, cycle, member=0):
     return paths.member_out("rst", cycle - 1, member)
 
 
-def real_vt(config, task):
+def real_corr_vt(config, task):
     """Whether this job recalibrates the vertical B rather than stubbing it."""
-    return (task == "b.vt" and config["model"]["name"] in REAL_STATE
-            and vertical_b_is_cycled(config))
+    return (task == "b.corr_vt" and config["model"]["name"] in REAL_STATE
+            and vertical_correlation_is_cycled(config))
 
 
-def vertical_b(paths, cycle):
+def vertical_correlation_file(paths, cycle):
     """This cycle's vertical correlation file, which its analysis reads.
 
     Under the cycle's own `ana/`, beside the increments it is about to produce,
@@ -359,7 +359,7 @@ def vertical_b(paths, cycle):
     `.nc` here and a stem in the configuration: saber appends the suffix both
     when it writes and when it reads.
     """
-    return paths.cycle_out("ana", cycle) / f"{soca.VT_STEM}.nc"
+    return paths.cycle_out("ana", cycle) / f"{soca.CORR_VT_STEM}.nc"
 
 
 def analysis_trajectory(config, paths, cycle, member=0):
@@ -450,9 +450,9 @@ def task_io(config, paths, task, cycle, member):
         return [source / stamp], \
                [paths.member_out("rst", cycle, member) / stamp] \
                + slot_states(config, paths, cycle, member)
-    if real_vt(config, task):
+    if real_corr_vt(config, task):
         return [analysis_background(paths, cycle) / restart_stamp(config)], \
-               [vertical_b(paths, cycle)]
+               [vertical_correlation_file(paths, cycle)]
     if real_analysis(config, task):
         return _analysis_io(config, paths, cycle, task)
     if real_recenter(config, task):
@@ -706,7 +706,7 @@ def run_task(config, site, paths, cycle, task, member=None):
         _stats(site, paths, cycle)
     elif real_model(config, task):
         _forecast(config, site, paths, cycle, task, member)
-    elif real_vt(config, task):
+    elif real_corr_vt(config, task):
         _b_vt(config, site, paths, cycle, task)
     elif real_analysis(config, task):
         _analysis(config, site, paths, cycle, task)
@@ -1003,13 +1003,13 @@ def _b_vt(config, site, paths, cycle, task):
 
     run = paths.scratch(cycle, task)
     run.mkdir(parents=True, exist_ok=True)
-    scales = run / "scales_vt.nc"
+    scales = run / "scales_corr_vt.nc"
     solver = config["solver"]
 
     try:
         grid = diffusion.read_gridspec(
             Path(config["domain"]["static"]) / soca.GRIDSPEC)
-        climatology = soca.vertical_scale_climatology(solver)
+        climatology = soca.vertical_correlation_climatology(solver)
         mld = None
         if climatology:
             field = diffusion.read_vertical(Path(climatology), grid)
@@ -1018,7 +1018,7 @@ def _b_vt(config, site, paths, cycle, task):
             smoothing = diffusion.smoothing_scale(grid)
             thickness, mld = diffusion.read_restart(background, grid, smoothing)
             field = diffusion.vertical_scales(
-                thickness, mld, soca.vertical_scale_spec(solver))
+                thickness, mld, soca.vertical_correlation_spec(solver))
             source = "this cycle's background"
             field, source = _carry_vertical(
                 config, paths, cycle, grid, field, source)
@@ -1027,7 +1027,7 @@ def _b_vt(config, site, paths, cycle, task):
         # the run directory: it is what the *next* cycle blends against, and it
         # is the only way to see afterwards what the vertical B was doing over a
         # run. `cleanup` does not reap it; it is one field per cycle.
-        record = vertical_scales_record(paths, cycle)
+        record = vertical_correlation_record(paths, cycle)
         record.parent.mkdir(parents=True, exist_ok=True)
         diffusion.write(record, grid, vt=field)
         diffusion.write(scales, grid, vt=field)
@@ -1036,7 +1036,7 @@ def _b_vt(config, site, paths, cycle, task):
         written = soca.calibrate_vt(
             config, site, paths, cycle, task,
             background=background, scales=scales,
-            target=vertical_b(paths, cycle))
+            target=vertical_correlation_file(paths, cycle))
     except (mom6sis2.ModelError, OSError) as error:
         raise TaskError(f"{cycle}.{task}: {error}") from error
 
@@ -1048,7 +1048,7 @@ def _b_vt(config, site, paths, cycle, task):
           f"{field[0][grid['mask']].mean():.2f} levels mean -> {written}")
 
 
-def vertical_scales_record(paths, cycle):
+def vertical_correlation_record(paths, cycle):
     """Where a cycled vertical B leaves the scales it used.
 
     Its own product directory rather than beside the calibrated operator under
@@ -1057,7 +1057,7 @@ def vertical_scales_record(paths, cycle):
     it would silently restart from the domain's static calibration partway
     through a run.
     """
-    return paths.sub("bvt") / paths.date(cycle) / "scales_vt.nc"
+    return paths.sub("corr_vt") / paths.date(cycle) / "scales.nc"
 
 
 def _carry_vertical(config, paths, cycle, grid, field, source):
@@ -1069,19 +1069,19 @@ def _carry_vertical(config, paths, cycle, grid, field, source):
     from this cycle's own field instead would make cycle one the only one with
     no smoothing in it, which is the cycle furthest from a settled state.
     """
-    memory = soca.vertical_scale_memory(config["solver"])
+    memory = soca.vertical_correlation_memory(config["solver"])
     if not memory or memory >= 1.0:
         return field, source
 
-    previous = vertical_scales_record(paths, cycle - 1)
+    previous = vertical_correlation_record(paths, cycle - 1)
     if not previous.exists():
-        previous = Path(config["domain"]["static"]) / "diffusion" / "scales_vt.nc"
+        previous = Path(config["domain"]["static"]) / "diffusion" / "scales_corr_vt.nc"
         origin = "the domain's offline calibration"
     else:
         origin = "the previous cycle"
     if not previous.exists():
         raise TaskError(
-            f"{cycle}.b.vt: solver.vertical scale memory is {memory}, so this "
+            f"{cycle}.b.corr_vt: solver.vertical correlation memory is {memory}, so this "
             f"cycle blends against what came before it, and neither the "
             f"previous cycle's record nor {previous} exists. Run "
             f"`tools/soca-diffusion.sh` for this domain, which is what seeds "

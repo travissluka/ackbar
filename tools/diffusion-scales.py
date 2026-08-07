@@ -5,10 +5,10 @@
 
 Called by `tools/soca-diffusion.sh` and not otherwise useful on its own. It
 writes one file per entry under `horizontal:` in the config, named
-`scales_<entry>.nc`, plus `scales_vt.nc` if `vertical:` is present.
+`scales_<entry>.nc`, plus `scales_corr_vt.nc` if `vertical:` is present.
 
 **The science is in `ackbar.diffusion`, not here.** This is the offline half of
-two callers: `ackbar.run`'s `b.vt` task builds the same vertical scale field
+two callers: `ackbar.run`'s `b.corr_vt` task builds the same vertical scale field
 per cycle, against the background that cycle is about to assimilate into, and
 the two have to agree exactly. A normalization is computed for the scale field
 it was built from, so two ways of computing that field is a background error
@@ -53,7 +53,7 @@ def main(argv):
     if vertical:
         h, mld = read_restart(restart_path, grid, smoothing)
         scales = vertical_scales(h, mld, vertical)
-        write(f"{outdir}/scales_vt.nc", grid, vt=scales)
+        write(f"{outdir}/scales_corr_vt.nc", grid, vt=scales)
         report("vt", scales[0], grid["mask"], "levels")
 
 

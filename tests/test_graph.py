@@ -208,8 +208,8 @@ class TestConfigurationDrivesTheTaskSet:
         assert "da.ens" not in self.tasks_of("letkf_om1deg", keys)
 
     def test_a_pure_ensemble_covariance_has_no_static_b_to_calibrate(self, keys):
-        assert "b.vt" in self.tasks_of("hybrid_om1deg", keys)
-        assert "b.vt" not in self.tasks_of("envar_om1deg", keys)
+        assert "b.corr_vt" in self.tasks_of("hybrid_om1deg", keys)
+        assert "b.corr_vt" not in self.tasks_of("envar_om1deg", keys)
 
     def test_the_two_ensemble_filters_build_the_same_graph(self, keys):
         """EAKF is a different solver, not a different cycle.
@@ -645,11 +645,12 @@ class TestCrossCycle:
             e.parent == "1.forecast" and e.child == "2.forecast" for e in graph.edges
         )
 
-    def test_vertical_b_calibrates_from_the_previous_background(self, keys):
+    def test_the_vertical_correlation_calibrates_from_the_previous_background(self, keys):
         # The one genuine exception to precomputing B offline: vertical scales
         # track the mixed layer, so they depend on the background.
         graph = graph_for("var_om1deg", keys)
-        assert any(e.parent == "1.forecast" and e.child == "2.b.vt" for e in graph.edges)
+        assert any(e.parent == "1.forecast" and e.child == "2.b.corr_vt"
+                   for e in graph.edges)
 
 
 class TestCycleDetection:
@@ -657,7 +658,7 @@ class TestCycleDetection:
         # Slurm's own detection stops at max_depend_depth (default 10) and
         # reports a longer cycle as a job that simply never runs.
         graph = graph_for("var_om1deg", keys)
-        graph.link("2.forecast", "1.b.vt", "afterok")
+        graph.link("2.forecast", "1.b.corr_vt", "afterok")
         with pytest.raises(GraphError, match="cycle"):
             graph.order()
 

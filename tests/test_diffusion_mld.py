@@ -1,4 +1,4 @@
-"""The mixed layer the vertical background error is built from.
+"""The mixed layer the vertical correlation is built from.
 
 `ackbar.diffusion.mixed_layer` replaced a read of MOM6's `MLD`, whose long name
 is "Instantaneous active mixing layer depth" and which on an afternoon restart
@@ -192,7 +192,7 @@ def test_the_restart_is_read_for_temperature_and_salinity_not_for_mld(tmp_path):
 
 
 class TestRollingAverage:
-    """`solver.vertical scale memory`, and what it is applied to.
+    """`solver.vertical correlation memory`, and what it is applied to.
 
     The rolling average exists because the field it smooths is a function of
     the background, and the background is the forecast from the analysis this
@@ -202,7 +202,7 @@ class TestRollingAverage:
     def test_blend_is_arithmetic_and_the_off_switch_is_the_callers(self):
         """`blend` weights; it does not decide whether to.
 
-        `solver.vertical scale memory: 0` means no rolling average, which is a
+        `solver.vertical correlation memory: 0` means no rolling average, which is a
         discontinuity: arithmetically a weight of zero on the new cycle keeps
         the carried field, which is the opposite. That reading belongs where it
         is a configuration statement rather than a multiplication, so `run`
@@ -215,7 +215,7 @@ class TestRollingAverage:
     def test_a_memory_of_zero_never_reaches_blend(self):
         field = np.full((2, 1, 1), 7.0)
         blended, why = run._carry_vertical(
-            {"solver": {"vertical scale memory": 0.0}}, None, 4,
+            {"solver": {"vertical correlation memory": 0.0}}, None, 4,
             {"mask": np.ones((1, 1), dtype=bool)}, field, "this cycle")
         assert np.array_equal(blended, field) and why == "this cycle"
 
@@ -224,7 +224,7 @@ class TestRollingAverage:
         # weight of zero on the carried field should be sayable.
         field = np.full((2, 1, 1), 7.0)
         blended, why = run._carry_vertical(
-            {"solver": {"vertical scale memory": 1.0}}, None, 4,
+            {"solver": {"vertical correlation memory": 1.0}}, None, 4,
             {"mask": np.ones((1, 1), dtype=bool)}, field, "this cycle")
         assert np.array_equal(blended, field) and why == "this cycle"
 
@@ -253,17 +253,17 @@ class TestRollingAverage:
 
 class TestVerticalScaleSolverKeys:
     def test_memory_defaults_to_no_rolling_average(self):
-        assert soca.vertical_scale_memory({}) == 0.0
+        assert soca.vertical_correlation_memory({}) == 0.0
 
     def test_memory_outside_zero_to_one_is_refused(self):
         with pytest.raises(soca.ModelError, match="outside 0 to 1"):
-            soca.vertical_scale_memory({"vertical scale memory": 1.5})
+            soca.vertical_correlation_memory({"vertical correlation memory": 1.5})
 
     def test_memory_that_is_not_a_number_is_refused(self):
         with pytest.raises(soca.ModelError, match="weight on"):
-            soca.vertical_scale_memory({"vertical scale memory": "0.2"})
+            soca.vertical_correlation_memory({"vertical correlation memory": "0.2"})
 
     def test_a_climatology_is_absent_until_it_is_stated(self):
-        assert soca.vertical_scale_climatology({}) is None
-        assert soca.vertical_scale_climatology(
-            {"vertical scale climatology": "/static/mld.nc"}) == "/static/mld.nc"
+        assert soca.vertical_correlation_climatology({}) is None
+        assert soca.vertical_correlation_climatology(
+            {"vertical correlation climatology": "/static/mld.nc"}) == "/static/mld.nc"

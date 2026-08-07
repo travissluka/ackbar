@@ -8,7 +8,7 @@
     "afterany": 400
   },
   "tasks": {
-    "b.vt": {
+    "b.corr_vt": {
       "nodes": 50,
       "jobs": 50
     },

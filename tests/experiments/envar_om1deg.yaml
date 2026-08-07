@@ -2,7 +2,7 @@
 # ensemble left to run free between recentrings.
 #
 # Two shapes in one fixture, and both are the point. `covariance: ensemble`
-# removes the static B, which takes `b.vt` out of the cycle; `source: none`
+# removes the static B, which takes `b.corr_vt` out of the cycle; `source: none`
 # removes the ensemble filter, which takes `da.ens` out of it and leaves the
 # recentring reading the members' backgrounds instead of their analyses. The
 # hybrid fixture pins the other end of both.

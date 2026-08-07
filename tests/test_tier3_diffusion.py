@@ -103,7 +103,7 @@ def calibrated():
 def test_the_calibration_writes_what_the_analysis_names(calibrated):
     # `filepath` in saber is a stem and the file is the stem plus `.nc`, which
     # is the one thing about this stage that cannot be read off the config.
-    for name in ("hz.nc", "hz_ssh.nc", "vt.nc"):
+    for name in ("corr_hz.nc", "corr_hz_ssh.nc", "corr_vt.nc"):
         assert (calibrated / name).stat().st_size > 0
 
 
@@ -113,7 +113,7 @@ def test_it_records_what_it_was_normalized_with(calibrated):
     A calibration built at a low iteration count is indistinguishable from a
     real one by inspecting the parameter files, and `--iterations` exists to
     build exactly that. These copies are the only record of which one a given
-    `hz.nc` is.
+    `corr_hz.nc` is.
     """
     hz = (calibrated / "calibrate_hz.yaml").read_text()
     assert "iterations:" in hz

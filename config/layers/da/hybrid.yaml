@@ -44,7 +44,7 @@ solver:
   ensemble error:
     # Localization, as a diffusion operator, exactly like the correlation in the
     # static B and from the same offline stage: `tools/soca-diffusion.sh` writes
-    # `loc_hz.nc` beside `hz.nc`, and the scales it encodes are in
+    # `loc_hz.nc` beside `corr_hz.nc`, and the scales it encodes are in
     # `config/static/diffusion.yaml`. Until it has run, `ackbar validate` step 3 names
     # the file as missing, which is the intended failure.
     #
