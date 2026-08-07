@@ -15,3 +15,17 @@ pkg/jedi/test-data-release/
 
 # the monitor writes its site here
 site/monitor/
+
+# Personal tooling: plotting, monitoring, and whatever is being experimented on
+# this week. `tools/` proper is the shared, settled set, the things README and
+# docs/ tell someone to run when they port ackbar to a machine or stand up a
+# domain; anything under here answers to one person and changes under them.
+#
+# Nothing the workflow or a *committed* test runs may live here, and that is
+# the line that keeps this from becoming a private second half of the project.
+# `tools/obs-archive-osse.py` is the case that pins it down: it is OSSE tooling
+# and looks local, but `tests/test_tier3_var.py` builds an archive with a known
+# anomaly in it and asserts the analysis recovers that anomaly, which is the
+# only test in the suite about the *answer* rather than the plumbing. A tool a
+# shared test cannot run without is shared, whatever it is named.
+/tools/local/

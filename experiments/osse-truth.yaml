@@ -4,7 +4,7 @@
 # run the synthetic observations are sampled from. It is an ordinary free run,
 # and the only two things that make it truth are that nothing assimilates into
 # it and that its states get promoted to a read-only archive afterwards, by
-# `tools/promote-truth.sh`.
+# `tools/local/promote-truth.sh`.
 #
 # **Cycled at exactly the DA cycle length**, so that every restart set it writes
 # is a truth state valid at some experiment's analysis time. That is the whole

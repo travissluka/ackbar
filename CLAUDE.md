@@ -91,6 +91,15 @@ applies a change (never edit `/etc/slurm` directly), partitions are `debug` (30 
 `compute` (8 h, default), and job outcome comes from `sacct`, never from a job's absence
 from `squeue`.
 
+**`src/ackbar` is an editable install, so a running experiment imports the working tree,
+not a snapshot of it.** `cfg/` freezes an experiment's YAML at `create` time; the Python
+is not frozen with it. Every task that starts after an edit picks the edit up, including
+the moment between a new call site and the function it calls, which is a `NameError` in
+a job rather than in a terminal. Finish an edit to `src/ackbar` before starting a run, or
+accept that a mid-run edit can fail a cycle. `ackbar heal <experiment>` resubmits the
+failed node once the cause is fixed; the failure is confined to that task, because the
+graph stops at it rather than carrying a bad summary forward.
+
 ## MOM6-SIS2 (the model)
 
 `./build-model.sh` builds it. **`docs/model-build.md`** is the reference: repo/org

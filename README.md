@@ -105,7 +105,25 @@ Layers live under `config/layers/<kind>/<name>.yaml` and are deep-merged in the 
 so a later layer overrides an earlier one and the experiment file overrides all of them. Lists
 merge by an identifying key where the schema declares one (`observations` merges on
 `obs space.name`, so a `da/letkf` layer can change one observer's localization without
-restating the others) and otherwise replace wholesale. `$remove` deletes an inherited key.
+restating the others) and otherwise replace wholesale.
+
+A `$` prefix marks a key ACKBAR reads and JEDI never sees, which matters because most of an
+observer is verbatim UFO configuration. There are three: `$remove` deletes an inherited key or
+list element, `$inherit` names a shared observer body, and `$required: true` on an observer
+makes a missing input file fail the cycle rather than drop the observer.
+
+A layer may inherit too, and it means something narrower than an experiment's list: not "build
+a stack" but "I am a kind of that". `obs/adt_j2` inherits `obs/common/adt` because Jason-2 is an
+altimeter, `domain/gom_4km` inherits `domain/common/gom`, and `da/hybrid` inherits
+`da/variational` because a hybrid is a variational solve with an ensemble term. An experiment
+still lists what it flies and how it solves; it does not list the bases. A `<kind>/common/`
+directory holds layers that are only ever inherited, never listed, and none of them is a
+complete anything on its own.
+
+Observers get one extra step, because the keyed merge reaches an observer only by naming it, so
+a layer holding the common half of a platform family has nothing to merge into. Such a layer
+declares it under `observation bodies:` and a platform writes `$inherit: <body>` inside its
+observer. The body merges *under* the observer, so the platform wins.
 
 Configuration resolves in a fixed order: **merge, then substitute, then validate.** Merging last
 would stop a layer overriding a value another layer interpolated; validating before substitution
@@ -277,6 +295,7 @@ branchable: `model.initial_condition` can name another experiment's `run/<date>/
 build-model.sh     build MOM6-SIS2
 build-jedi.sh      build the JEDI bundle
 config/layers/     configuration layers experiments inherit from
+config/layers/*/common/   layers only ever inherited by other layers, never listed
 config/model/      files a model needs that are ackbar's rather than the case's
 config/obs/        files the observers need, shared across observer layers
 config/schema/     ackbar's own schema, which also declares how lists merge
@@ -290,6 +309,7 @@ site/              one file per machine, the only place machine paths may appear
 src/ackbar/        the workflow itself
 tests/             the test suite and its experiment fixtures
 tools/             the offline stages, and the domain import
+tools/local/       personal plotting and monitoring; not in the repository
 ```
 
 A template under `config/soca/` holds the *shape* of a JEDI document and holds a value only

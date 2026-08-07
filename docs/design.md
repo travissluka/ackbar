@@ -269,7 +269,7 @@ place `cleanup` ever deletes from.
 
 <output_root>/<exp>/
     HALT          present while paused; every submitter checks it
-    cfg/          resolved config, the ordered layer files verbatim, provenance record
+    cfg/          the finished config and the provenance record
     cfg/soca/     the SOCA document templates, frozen from the checkout
     cfg/<date>/<task>.sh    the emitted batch script, one per node
 
@@ -565,6 +565,20 @@ Rules:
 
 - **Merge before substitution.** Otherwise a layer cannot override a value another layer has
   already interpolated.
+- **A layer may inherit too, and it means something narrower than an experiment's `inherit:`.**
+  An experiment's list assembles a stack; a layer's says *what it is a kind of*. `obs/adt_j2`
+  inherits `obs/adt` because Jason-2 is an altimeter, and the experiment goes on listing the
+  platforms it flies. The tree flattens depth first with parents before children, and the
+  flattened list is what `provenance.json` records, so the account of what contributed still
+  names every file in the order it contributed. A repeat in an experiment's own list stays
+  an error, because it is hand-written and precedence-changing; a layer reached twice through
+  the tree is deduped in silence, because four altimeters inheriting one body is the point.
+- **An observer may inherit a shared body.** The keyed merge below reaches an observer only by
+  naming it, so a layer holding the common half of a platform family has nothing to merge into.
+  Such a layer declares it under `observation bodies:` by name, and a platform writes
+  `$inherit: adt` inside its observer. The body merges *under* the observer, so the platform
+  wins, and the key is gone before UFO sees anything. Deliberately the same word at both
+  scopes: a list of layer names at the top of a file, one body name inside an observer.
 - **Lists merge by an explicitly declared key.** The trap case is `observations:`, where a
   `da/letkf` layer must be able to change one observer's localization without restating all of
   them. The merge rules declare the key per list path (`observations` keyed on
@@ -619,11 +633,15 @@ Rules:
 - **Seeds derive from experiment, cycle and member.** Anything else means a healed member
   carries a different perturbation than the original run and nothing records it. `hash()` in
   particular is salted per process and would do exactly that.
-- **Provenance by replay, not by wrapped values.** The ordered layer files are copied verbatim
-  into `cfg/` next to the resolved config, and `ackbar config why <dotted.key>` replays the
+- **Provenance by replay, not by wrapped values.** `ackbar config why <dotted.key>` replays the
   merge with the layer list truncated at each level, reporting the last truncation that changed
   the value. Same answer as threading an origin through every scalar, on plain dicts, with
   nothing in the hot path. Neither v2 nor v3 can answer "why is this parameter that" at all.
+  It replays over the layer tree in the checkout; `provenance.json` records which layers an
+  experiment used, in order, and the commit they were read at, which is what pins the replay to
+  the right text. The layer files were once copied into `cfg/` as well, and are not any more:
+  nothing read them, and a second pre-substitution account of the config beside the finished one
+  is a thing to read by mistake.
 - **Resolve once, write to the experiment directory, run only from that.** v3 got this right
   (`cfg/exp_config.yaml`). It is what makes an experiment reproducible after the repo moves
   underneath it. The frozen config is never rewritten; anything that varies per attempt, such
