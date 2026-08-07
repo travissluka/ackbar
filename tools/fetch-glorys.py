@@ -66,8 +66,19 @@ therefore `(1, 2*ni+1)` and an I-segment `(2*nj+1, 1)`, taken straight off
 
 MOM6 reads `<var>_segment_00N` and `dz_<var>_segment_00N` and nothing else
 (`MOM_open_boundary.F90`, `setup_segment_data`). The `vc_` variables in the
-file this replaces are decorative; they are written here anyway because the
-file is easier to read with them and they cost nothing.
+file this replaces are decorative, and are not written here: they are a third
+variable of the same shape as the two that are read, so they cost a third of
+the file, which is not what "free" means at a hundred days of daily boundary
+data. `dz_` is the same value at every point and every time and is written in
+full anyway, because MOM6 dies if its shape differs from the field's.
+
+Data is single precision. The source is a reanalysis of the ocean, not a
+checkpoint to restart from bit-for-bit, and seven significant figures is
+already more than GLORYS knows. Coordinates and the time axis stay double,
+where the extra bytes are negligible and a rounded longitude would move a
+segment. This matters beyond disk: the file is `NETCDF3_64BIT_OFFSET`, which
+caps a single variable at 4 GB, and double precision reaches that in half the
+days single does.
 
 Segments are always stored in increasing i or j order, whatever direction the
 `OBC_SEGMENT_00N` string declares. Segment 001 is `I=N:0`, reversed, and its
@@ -371,7 +382,7 @@ def write_obc(path, segments, depth, dates, geometry):
 
             for short, sampled in segments[name].items():
                 if short == "zeta":
-                    v = f.createVariable(f"zeta_segment_{name}", "f8",
+                    v = f.createVariable(f"zeta_segment_{name}", "f4",
                                          ("time",) + dims)
                     v.units = "meters"
                     v[:] = sampled.reshape(len(dates), ny, nx)
@@ -387,22 +398,16 @@ def write_obc(path, segments, depth, dates, geometry):
                 full = ("time", zdim) + dims
                 block = sampled.reshape(len(dates), nz, ny, nx)
 
-                v = f.createVariable(f"{short}_segment_{name}", "f8", full)
+                v = f.createVariable(f"{short}_segment_{name}", "f4", full)
                 v.units = {"temp": "degrees C", "salt": "psu"}.get(short, "m s-1")
                 v[:] = block
 
                 # MOM6 reads this one to remap the source column onto its own
                 # coordinate, and dies if its shape differs from the field's.
-                thickness = f.createVariable(f"dz_{short}_segment_{name}", "f8", full)
+                thickness = f.createVariable(f"dz_{short}_segment_{name}", "f4", full)
                 thickness.units = "meters"
                 thickness[:] = np.broadcast_to(
                     dz[None, :, None, None], block.shape)
-
-                # Not read by MOM6. Here so the file can be checked by eye.
-                centre = f.createVariable(f"vc_{short}_segment_{name}", "f8", full)
-                centre.units = "meters"
-                centre[:] = np.broadcast_to(
-                    depth[None, :, None, None], block.shape)
 
         f.source = (f"GLORYS12V1 {DATASET}, "
                     f"{dates[0]:%Y-%m-%d} to {dates[-1]:%Y-%m-%d}")
