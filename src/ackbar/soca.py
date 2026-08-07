@@ -975,6 +975,32 @@ def vt_config(config, cycle, *, background, scales, templates=None):
     }, templates=templates)
 
 
+def vertical_scale_spec(solver):
+    """What `ackbar.diffusion.vertical_scales` needs, from the experiment.
+
+    Two numbers with two different homes, joined here. `method` and
+    `iterations` describe the operator and come from the same block the
+    analysis reads the calibration back through, so the two cannot disagree.
+    The floor is not saber's: it is a statement about how tightly the analysis
+    may correlate below the mixed layer, `config/static/diffusion.yaml` holds
+    it for the offline stage, and that file is deliberately unreadable from a
+    job. So a cycling experiment states it, which is what `da/vt_cycled` does.
+    """
+    vertical = _vertical_block(solver)
+    floor = solver.get("vertical scale floor")
+    if floor is None:
+        raise ModelError(
+            "solver states no `vertical scale floor`, which is the smallest "
+            "vertical correlation `b.vt` may produce, in model levels. It has "
+            "no default here on purpose: the offline stage takes it from "
+            "`config/static/diffusion.yaml`, a job cannot read that file, and "
+            "a calibration built with a different floor than the domain's "
+            "static one is not comparable with it. `da/vt_cycled` states it.")
+    return {"min": float(floor),
+            "method": _require(vertical, "method"),
+            "iterations": _require(vertical, "iterations")}
+
+
 def _vertical_block(solver):
     """The `vertical:` mapping of the group that carries the tracers.
 

@@ -101,18 +101,26 @@ def test_a_column_that_is_mixed_all_the_way_down_gets_its_own_bottom():
     assert found == pytest.approx((levels - 0.5) * 5.0)
 
 
-def test_an_inversion_does_not_end_the_mixed_layer_early():
-    """Why this is not a `searchsorted`.
+def test_a_density_inversion_does_not_confuse_the_search():
+    """Why this is a scan and not a `searchsorted`.
 
-    Density is not monotonic in depth everywhere: a warm salty intrusion can
-    sit under fresher water and make one level heavier than the one below it. A
-    binary search assumes sortedness and would return an answer from whichever
-    side of the inversion it landed on. This scans.
+    Density is not monotonic in depth everywhere. A warm intrusion under the
+    thermocline makes one level lighter than the one above it, and a binary
+    search assumes sortedness: handed a non-monotonic column it returns an
+    index from whichever side of the inversion it happened to bisect into,
+    which is an arbitrary depth rather than a wrong one. Scanning from the
+    reference level down always returns the first crossing, which is what the
+    criterion means.
     """
-    h, t, s = stratified(surface=15.0, deep=4.0, mld=40.0)
-    s[8:10] += 0.4                       # a thin salty layer inside the mixed layer
+    h, t, s = stratified(surface=25.0, deep=6.0, mld=20.0, levels=60)
+    t[18:22] += 6.0                      # a warm, light intrusion below the base
 
-    assert diffusion.mixed_layer(h, t, s)[0, 0] > 20.0
+    found = diffusion.mixed_layer(h, t, s)[0, 0]
+    assert found == pytest.approx(20.0, abs=4.0)
+
+    # And the column really is non-monotonic, so the test is testing something.
+    sigma = diffusion.density(t, s)[:, 0, 0]
+    assert (np.diff(sigma) < 0).any()
 
 
 def test_a_shelf_column_shallower_than_the_reference_depth_still_answers():

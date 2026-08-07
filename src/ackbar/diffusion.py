@@ -42,7 +42,23 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter
 
 HZ_VARIABLE = "ave_ssh"
 VT_VARIABLE = "Temp"
-THIN_LAYER = 0.01  # [m]
+#: Below this a layer is vanished, not thin, and is no level the analysis can
+#: put anything into.
+#:
+#: **0.1 m and not 0.01, which was sitting exactly on MOM6's own squeeze
+#: value.** Z* keeps every level everywhere and presses the ones under the sea
+#: floor down to a minimum thickness, which comes out around a centimetre. At
+#: 0.01 those survived the test, so a 10 m shelf column of five real 2 m layers
+#: counted as sixteen levels deep, and `vertical_scales` clips a fully mixed
+#: column to its own level count: the scale saturated at 16 instead of 5. It
+#: showed up as isolated bright cells on the Campeche Bank and the Bahamas
+#: shelf, correlating three times as far as their neighbours in water a
+#: hundredth as deep.
+#:
+#: 0.1 m is an order of magnitude above the squeeze and an order below the
+#: thinnest layer any of these grids nominally carries, so there is nothing
+#: real between the two values to lose.
+THIN_LAYER = 0.1  # [m]
 
 
 def read_gridspec(path):
@@ -68,6 +84,22 @@ def read_gridspec(path):
 #: of the mixed layer, and measured from the surface the criterion finds the
 #: bottom of *that*. Starting at 10 m steps over it and finds the seasonal
 #: pycnocline, which is the thing a background error wants to spread inside.
+#:
+#: **The reference depth is also a floor on the answer**, and that is a real
+#: limitation rather than an oversight: nothing above it can be returned, so a
+#: genuinely shallow mixed layer comes back as 10 m. On gom_25km in July that
+#: binds on about 4 per cent of ocean cells. It is the price of the paragraph
+#: above and it was measured before being accepted: at a 5 m reference the
+#: domain median falls from 14 m to 7 and at 3 m to 4, which is the diurnal
+#: layer coming back. The floor costs less than what removing it reintroduces,
+#: and it costs it where the vertical correlation is near its own floor anyway.
+#:
+#: The way out is not a shallower reference. It is to calibrate against a state
+#: that has no diurnal layer in it: pre-dawn, when the mixed layer is deepest
+#: and best defined. A 12Z restart is about 06:00 local in the Gulf and 00Z,
+#: which is what every experiment here is stamped on, is the worst hour of the
+#: day for this. That is the first thing to try for `b.vt`, which gets to
+#: choose which sub-window state it reads.
 MLD_THRESHOLD = 0.03   # [kg m-3]
 MLD_REFERENCE = 10.0   # [m]
 
@@ -168,6 +200,12 @@ def read_restart(path, grid, smoothing):
     filled = mld[tuple(nearest)]
     mld = np.stack([gaussian_filter(filled, sigma=s, mode="nearest")[j, :]
                     for j, s in enumerate(smoothing)])
+
+    # The cap again, because the smoothing is what breaks it: it is a weighted
+    # mean over a neighbourhood, so a shelf cell next to deep water comes back
+    # with a mixed layer deeper than its own sea floor. 244 cells here. See
+    # `mixed_layer`, which explains what that does downstream.
+    mld = np.minimum(mld, np.sum(h, axis=0))
     return h, np.where(grid["mask"], mld, 0.0)
 
 
@@ -202,8 +240,36 @@ def mixed_layer(h, temperature, salinity):
     over = (sigma > threshold[None]) & below & (h > THIN_LAYER)
 
     deepest = np.maximum(np.sum(h > THIN_LAYER, axis=0) - 1, 0)
-    found = np.where(over.any(axis=0), np.argmax(over, axis=0), deepest)
-    return depth[found, y, x]
+    crossed = over.any(axis=0)
+    found = np.where(crossed, np.argmax(over, axis=0), deepest)
+
+    # Interpolate between the level that crossed and the one above it, rather
+    # than returning the crossing level's own midpoint. Near the surface the
+    # levels are a couple of metres thick, so snapping quantizes the mixed
+    # layer to that and steps the vertical scale by a whole level where the
+    # real mixed layer deepens smoothly. Worth about a metre of the domain
+    # median here and more on a coarser grid.
+    above = np.maximum(found - 1, 0)
+    lower, upper = sigma[found, y, x], sigma[above, y, x]
+    deep, shallow = depth[found, y, x], depth[above, y, x]
+    span = np.where(lower > upper, lower - upper, np.inf)
+    fraction = np.clip((threshold - upper) / span, 0.0, 1.0)
+    interpolated = shallow + fraction * (deep - shallow)
+
+    # A column that never crossed is mixed to its own sea floor, and there is
+    # nothing to interpolate towards.
+    mld = np.where(crossed & (found > above), interpolated, deep)
+
+    # **Never deeper than the water.** Not reachable above, where the deepest
+    # level is the worst case, and very reachable after the caller smooths this
+    # field: a Gaussian over a shelf break pulls a 30 m offshore mixed layer
+    # onto a 10 m bank, and `vertical_scales` then saturates that column at its
+    # own level count. On a Z* grid a 10 m column still holds a dozen levels,
+    # so the result is isolated cells correlating their whole depth beside
+    # neighbours correlating a fraction of theirs, which is exactly the sharp
+    # gradient the smoothing exists to remove. Capped here so the cap survives
+    # whatever the caller does afterwards, and again there.
+    return np.minimum(mld, np.sum(h, axis=0))
 
 
 def smoothing_scale(grid):
