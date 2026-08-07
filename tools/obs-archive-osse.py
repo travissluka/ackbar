@@ -1649,10 +1649,19 @@ def coastal(grid, kilometres):
     reached. In a basin the size of the Gulf that is not a detail: a hundred
     kilometres removes the entire shelf, and with it the river plume, which is
     where the salinity signal this instrument exists to measure is largest.
+
+    **The edge of the array is not land**, which is what `border_value=1` says.
+    The alternative is not a conservative choice, it is a second coastline drawn
+    wherever the domain happens to have been cut: the Gulf grid ends in open
+    water on its eastern and southeastern sides, at the Florida Straits and
+    across the Caribbean, and eroding inward from there removed 989 water cells
+    with no coast within a hundred kilometres of them, seven percent of the
+    basin. The northern and western edges really are land, but they are land
+    *inside* the mask, so the erosion still finds them.
     """
     from scipy.ndimage import binary_erosion
     cells = max(1, int(round(kilometres / _kilometres(grid))))
-    return binary_erosion(grid["mask"], iterations=cells, border_value=0)
+    return binary_erosion(grid["mask"], iterations=cells, border_value=1)
 
 
 def deep_enough(grid, truth, floor):
