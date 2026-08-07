@@ -148,10 +148,17 @@ it finer would file correlated values as independent ones.
 earns a place beside the infrared instruments.** It is the only satellite here
 that still sees the ocean under a hurricane. What it loses instead is the coast:
 a 40 km footprint near land picks up the shore in its sidelobes, and the
-retrieval is discarded out to about 100 km, which in this domain removes 46% of
-the water, including the whole shelf and most of the river plume, which is where
-the salinity signal is largest. That is a real property of the instrument, not a
-conservative choice in the generator.
+retrieval is discarded out to about 100 km, which in this domain removes around
+two fifths of the water, including the whole shelf and most of the river plume,
+which is where the salinity signal is largest. That is a real property of the
+instrument, not a conservative choice in the generator.
+
+The erosion runs from the land in the truth's own mask and **not** from the edge
+of the array. The Gulf grid ends in open water on its eastern and southeastern
+sides, at the Florida Straits and across the Caribbean, and treating the array
+bounds as a coastline drew a second, imaginary shore along them: it cost a
+further 989 water cells, seven percent of the basin, none of which has land
+within a hundred kilometres. `coastal()` in the generator carries the note.
 
 ## The in situ network, and the year it is not from
 
