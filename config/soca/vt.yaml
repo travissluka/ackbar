@@ -36,8 +36,9 @@
 # `config/layers/da/variational.yaml` on the same two. The normalization
 # written here is computed with the operator configured here, and reading it
 # back through a differently configured operator gives a background error that
-# is wrong by a factor nothing reports. `tests/test_diffusion.py` holds the
-# three together.
+# is wrong by a factor nothing reports. `tests/test_diffusion.py` holds those
+# two files to each other; this one states the same values literally below and
+# is not in that test, so keeping it equal is a thing to do by hand.
 
 geometry: $(GEOMETRY)
 
@@ -53,18 +54,27 @@ background error:
     saber block name: diffusion
     calibration:
       normalization:
-        # Used by the horizontal randomization, which this document does not
-        # run. Present because saber's calibration block requires it, and small
-        # because every iteration it names here is one nothing performs.
-        iterations: $(NORMALIZATION_ITERATIONS)
+        # Counts the horizontal randomization, which this document does not run:
+        # there is no horizontal group below. Present because saber's
+        # calibration block requires the key, and 1 because every iteration
+        # named here is one nothing performs. The offline stage's ten thousand
+        # is the number that matters, and it is in
+        # `config/static/diffusion.yaml`.
+        iterations: 1
       groups:
       - vertical:
           # `as gaussian: true`: the scale field is a length in levels and saber
           # is being asked to build the Gaussian of that width, rather than to
           # read a diffusion coefficient directly. Same as the offline document.
           as gaussian: true
-          method: $(VERTICAL_METHOD)
-          iterations: $(VERTICAL_ITERATIONS)
+          # Must stay the same two values as `config/layers/da/variational.yaml`
+          # and `config/static/diffusion.yaml`, for the reason under "What it must
+          # agree with" above. They used to be read from the experiment's own
+          # solver block, which made them unable to disagree; they are literal
+          # now, and the operator has been implicit with two iterations
+          # everywhere since it was written.
+          method: implicit
+          iterations: 2
           model file:
             date: '$(SCALES_DATE)'
             basename: ./

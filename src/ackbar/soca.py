@@ -939,16 +939,16 @@ def recenter_config(config, cycle, *, center, ensemble, members, templates=None)
 def vt_config(config, cycle, *, background, scales, templates=None):
     """The whole `soca_error_covariance_toolbox.x` YAML. See `config/soca/vt.yaml`.
 
-    The vertical scheme comes from the experiment's own `solver.background
-    error`, not from `config/static/diffusion.yaml`, and that is the point
-    rather than an oversight: the file written here is read back through that
-    block, and a normalization computed with one operator and applied by
-    another is a background error wrong by a factor nothing reports. Reading
-    the same place both times is what makes them unable to disagree.
+    The vertical scheme is not a slot. It is written literally in the template,
+    where it must match `config/layers/da/variational.yaml`: the file this
+    writes is read back through that block, and a normalization computed with
+    one operator and applied by another is a background error wrong by a factor
+    nothing reports. Filling both from the same solver block used to make them
+    unable to disagree. Keeping them equal is now a thing to do by hand, which
+    is the cost of the template saying what it configures.
     """
     model = config["model"]
     background = Path(background)
-    vertical = _vertical_block(config["solver"])
 
     return build_document("vt", config, cycle, {
         "GEOMETRY": _geometry(model),
@@ -962,13 +962,6 @@ def vt_config(config, cycle, *, background, scales, templates=None):
             # separate file below.
             "state variables": ["sea_water_potential_temperature"],
         },
-        # Nothing performs these: the horizontal randomization is what they
-        # count and this document has no horizontal group. Small rather than
-        # the offline stage's ten thousand, so that a reader of the trace is not
-        # left thinking this cycle paid for them.
-        "NORMALIZATION_ITERATIONS": 1,
-        "VERTICAL_METHOD": _require(vertical, "method"),
-        "VERTICAL_ITERATIONS": _require(vertical, "iterations"),
         "SCALES_DATE": _date(config, cycle),
         "SCALES_FILE": Path(scales).name,
         "WRITE_STEM": f"out/{VT_STEM}",

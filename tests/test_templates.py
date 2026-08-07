@@ -68,8 +68,11 @@ EXPECTED = {
     # The per-cycle vertical B calibration. No observers and no analysis
     # variables: it reads one field of one state to define a geometry against,
     # and everything else it needs is the scale field named by `SCALES_FILE`.
-    "vt": {"GEOMETRY", "BACKGROUND", "NORMALIZATION_ITERATIONS",
-           "VERTICAL_METHOD", "VERTICAL_ITERATIONS", "SCALES_DATE",
+    #
+    # The diffusion operator is not slotted either. `method`, `iterations` and
+    # the normalization count are written literally in the template, where they
+    # have to match `config/layers/da/variational.yaml`; see that file's header.
+    "vt": {"GEOMETRY", "BACKGROUND", "SCALES_DATE",
            "SCALES_FILE", "WRITE_STEM"},
 }
 
