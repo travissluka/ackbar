@@ -1,0 +1,25 @@
+# Salinity from the glider line.
+#
+# The same gliders as `glider_t`, from the same dive. See that layer for the
+# line.
+#
+# The whole observer is the `profile_s` body in `obs/common/profile.yaml`, which
+# this layer inherits. What is here is this platform's identity: its name, and
+# the two paths that name follows into the archive and out to `obs_out/`.
+# Anything restated here would override the body.
+
+inherit:
+  - obs/common/profile
+
+observations:
+- obs space:
+    name: glider_s
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/glider_s.{{window_begin:%Y%m%d%H}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).glider_s.{{window_begin:%Y%m%d%H}}.nc4
+  $inherit: profile_s

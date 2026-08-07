@@ -39,6 +39,13 @@ inherit:
   - obs/adt_hy2a
   - obs/sst_metopb
   - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
 
 experiment:
   name: osse25-noda
@@ -63,7 +70,7 @@ vars:
   # of a model, and two archives sampled from different nature runs must never
   # be mixed, because nothing downstream reads the provenance and the mixture
   # would score as ordinary observation error.
-  obs_dir: $(static_root)/obs/gom12-osse-2015/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
 cleanup:
   # Ordinary reaping. The trajectory is recorded online as `bkg/` records by

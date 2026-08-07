@@ -268,7 +268,140 @@ PLATFORMS = {
         "salinity fraction": 0.2,
         "every": timedelta(hours=6),
     },
+
+    # -- the L band radiometer ------------------------------------------------
+    #
+    # SMAP rather than SMOS. Both were flying in mid-2015, and SMAP is the
+    # better of the two here: it launched in January 2015 with a real aperture
+    # feed rather than SMOS's interferometric array, and it is markedly less
+    # affected by radio frequency interference, which is what limits SMOS in
+    # semi-enclosed basins with populated coasts. The Gulf is exactly that.
+    #
+    # **No `clear`.** L band sees through cloud, and that is the entire reason
+    # this platform is worth having beside the infrared ones: it is the only
+    # satellite in the network whose coverage does not collapse under a
+    # hurricane. Giving it a cloud mask would delete the one thing it adds.
+    #
+    # `coast` is the land contamination instead. A 40 km footprint sitting near
+    # a coast picks up land in its sidelobes, and the retrieval is discarded out
+    # to about a hundred kilometres. In the Gulf that removes the whole shelf,
+    # which is where the river plume is and where the salinity signal is
+    # largest, so this is a real limitation of the instrument and not a
+    # conservative choice here.
+    "sss_smap": {
+        "variable": "seaSurfaceSalinity",
+        "error": 0.25,          # [psu] against Argo, 40 km, 8 day
+        "layout": "orbit",
+        "field": "sss",
+        "inclination": 98.12,
+        "repeat": 8.0,          # [days] exact repeat
+        "revolutions": 117,
+        "ltan": 18.0,           # 06:00 descending is 18:00 ascending
+        "swath": 1000.0,
+        "along": 40.0,
+        "superob": 40.0,        # [km], the footprint rather than a grid choice
+        "coast": 100.0,         # [km] of land contamination
+    },
+
+    # -- the subsurface float array -------------------------------------------
+    #
+    # Two platforms, one array, the way the drifters are: a float reports
+    # temperature and salinity from the same cast.
+    #
+    # **This is the best observed period's network, not mid-2015's.** Asked for
+    # deliberately. The Gulf in 2015 held perhaps five to eight floats on a ten
+    # day cycle, under one profile a day in the whole basin, and an OSSE run
+    # against that answers only how little can be done. The array here is the
+    # UGOS era one: about twenty floats on a five day cycle, which is what was
+    # actually flown over the Loop Current from 2021 on. So the question this
+    # archive asks is what a well observed Gulf supports, and any skill number
+    # from it is conditional on a network that did not exist in the year the
+    # forcing came from. See `docs/observing-system.md`.
+    #
+    # `park` is where the float sits between casts and `profile` is the top of
+    # its cast. Deployment needs water deeper than `floor`, which is why the
+    # array lives in the deep basin and never on the shelf.
+    "argo_t": {
+        "variable": "waterPotentialTemperature",
+        "error by depth": ((0, 0.30), (50, 0.60), (150, 0.80),
+                           (300, 0.40), (600, 0.15), (1500, 0.05)),
+        "layout": "profile",
+        "field": "t",
+        "floats": 20,
+        "every": timedelta(days=5),
+        "park": 1000.0,         # [m]
+        "profile": 1500.0,      # [m], the deepest level of a cast
+        "floor": 1600.0,        # [m] of water needed to deploy
+    },
+    "argo_s": {
+        "variable": "salinity",
+        "error by depth": ((0, 0.10), (50, 0.12), (150, 0.10),
+                           (300, 0.05), (600, 0.02), (1500, 0.01)),
+        "layout": "profile",
+        "field": "s",
+        "floats": 20,
+        "every": timedelta(days=5),
+        "park": 1000.0,
+        "profile": 1500.0,
+        "floor": 1600.0,
+    },
+
+    # -- the glider line ------------------------------------------------------
+    #
+    # Gliders are not floats with a different duty cycle. A float goes where the
+    # water goes and gives isolated casts; a glider flies waypoints at about a
+    # quarter of a metre a second and gives a *section*, a continuous slice
+    # across whatever it is crossing. Over the Loop Current front that section
+    # is the observation the front is actually in, and no amount of scattered
+    # casts is the same measurement.
+    #
+    # The Gulf really does have this: the hurricane glider network flies the
+    # basin every summer from July, which is the season this archive covers.
+    # Five is the order of what is in the water at once.
+    #
+    # A glider dives to a thousand metres and back in about six hours, so a cast
+    # every six hours is one per dive rather than a thinning of something
+    # faster.
+    "glider_t": {
+        "variable": "waterPotentialTemperature",
+        "error by depth": ((0, 0.30), (50, 0.60), (150, 0.80),
+                           (300, 0.40), (600, 0.15), (1000, 0.10)),
+        "layout": "glider",
+        "field": "t",
+        "gliders": 5,
+        "every": timedelta(hours=6),
+        "profile": 1000.0,      # [m]
+        "floor": 1050.0,
+        "speed": 0.25,          # [m s-1] through the water
+    },
+    "glider_s": {
+        "variable": "salinity",
+        "error by depth": ((0, 0.10), (50, 0.12), (150, 0.10),
+                           (300, 0.05), (600, 0.02), (1000, 0.02)),
+        "layout": "glider",
+        "field": "s",
+        "gliders": 5,
+        "every": timedelta(hours=6),
+        "profile": 1000.0,
+        "floor": 1050.0,
+        "speed": 0.25,
+    },
 }
+
+#: The depths a cast reports, in metres. Close to the standard Argo set: fine
+#: where the structure is and coarse where it is not, rather than uniform.
+#:
+#: The top four hundred metres get most of the levels because that is where the
+#: Gulf's signal is: the mixed layer, the seasonal thermocline, and the
+#: subtropical underwater salinity maximum around 150 to 200 m, which is the
+#: feature that distinguishes Loop Current water from Gulf Common Water and is
+#: therefore the one an analysis most needs to get right.
+#:
+#: A cast is truncated at the platform's own `profile` depth and wherever the
+#: water runs out, so a glider reports the first part of this list and a float
+#: reports more of it.
+CAST = (5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150, 175, 200,
+        250, 300, 350, 400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1500)
 
 #: The phase of every orbit is measured from here: revolution zero's ascending
 #: node crossing. Fixed rather than derived from the first cycle, so that two
@@ -325,16 +458,28 @@ def main(argv=None):
     # would need a real cloud field, and identical would be worse than either.
     for platform in args.platforms:
         spec = PLATFORMS[platform]
+        if "coast" in spec:
+            spec["_water"] = coastal(grid, spec["coast"])
         if "clear" in spec:
             # `crc32` and not `hash`, which is salted per process for strings
             # and would give a different cloud field on every run.
             spec["_cloud"] = Cloud(
                 args.seed ^ zlib.crc32(platform.encode()), spec["clear"])
 
+    # Whether any platform looks below the surface, which decides how much of
+    # each truth state is read. Three fields of fifty levels against five of
+    # one, on every state in the run, so it is worth not reading.
+    profiling = [name for name in args.platforms
+                 if PLATFORMS[name]["layout"] in ("profile", "glider")]
+
     if args.truth_run:
-        truth = TruthRun(args.truth_run)
+        truth = TruthRun(args.truth_run, deep=bool(profiling))
         print(f"obs-archive-osse: {truth}")
     else:
+        if profiling:
+            sys.exit(f"obs-archive-osse: {', '.join(profiling)} observe below "
+                     f"the surface, and --state is a single state with a "
+                     f"two dimensional anomaly on it. Use --truth-run.")
         truth = FixedTruth(grid, read_state(args.state), args.seed)
         write_truth(args.out / "truth.nc", grid, truth.anomaly, args.seed)
 
@@ -350,6 +495,17 @@ def main(argv=None):
         for name in drifting:
             PLATFORMS[name]["_array"] = array
             PLATFORMS[name]["_truth"] = truth
+
+    # The same argument for the two subsurface arrays: `argo_t` and `argo_s` are
+    # one set of hulls, and a cast reports both from one rise.
+    for layout, build in (("profile", Profilers), ("glider", Gliders)):
+        members = [name for name in args.platforms
+                   if PLATFORMS[name]["layout"] == layout]
+        if members:
+            shared = build(grid, PLATFORMS[members[0]], truth, args.seed)
+            for name in members:
+                PLATFORMS[name]["_array"] = shared
+                PLATFORMS[name]["_truth"] = truth
 
     start = parse_instant(args.start)
     length = parse_duration(args.length)
@@ -372,7 +528,7 @@ def main(argv=None):
             # every archive ever built with this tool, including the committed
             # one tier 3 reads. Sampling happens after both rather than between
             # them for exactly that reason.
-            lon, lat, when = observe(grid, spec, begin, begin + length, rng)
+            lon, lat, when, depth = observe(grid, spec, begin, begin + length, rng)
             path = target / f"{platform}.{begin.strftime('%Y%m%d%H')}.nc4"
             if lon.size == 0:
                 # A satellite that did not pass over the domain this cycle. No
@@ -387,13 +543,37 @@ def main(argv=None):
                       f"domain during {begin:%Y-%m-%d %H:%M}, no file written")
                 continue
 
-            noise = rng.normal(0.0, spec["error"], size=lon.shape)
+            sigma = errors(spec, depth) * np.ones(lon.shape)
+            noise = rng.normal(0.0, sigma, size=lon.shape)
             offsets = np.array([(moment - begin).total_seconds()
                                 for moment in when])
-            values = truth.sample(grid, spec["field"], lon, lat, when)
-            write_obs(path, spec, lon, lat, values + noise, begin, offsets)
+            values = truth.sample(grid, spec["field"], lon, lat, when, depth)
+
+            # A cast runs out of water before it runs out of levels, over any
+            # column shallower than the platform's own profile depth. Those
+            # levels are dropped rather than written: `sample_column` refuses to
+            # extrapolate, and a NaN in an ObsValue is a value the analysis
+            # would try to fit. Everything else that produces a NaN here is a
+            # placement disagreeing with the land mask, which is a bug, so this
+            # only ever forgives the depth axis.
+            if depth is not None:
+                keep = np.isfinite(values)
+                if not keep.all():
+                    lon, lat, values, sigma = (lon[keep], lat[keep],
+                                               values[keep], sigma[keep])
+                    noise, offsets = noise[keep], offsets[keep]
+                    depth = depth[keep]
+                    when = [w for w, k in zip(when, keep) if k]
+            if lon.size == 0:
+                print(f"obs-archive-osse: {platform} has no level in water "
+                      f"during {begin:%Y-%m-%d %H:%M}, no file written")
+                continue
+
+            write_obs(path, spec, lon, lat, values + noise, begin, offsets,
+                      depth=depth, sigma=sigma)
+            extent = "" if depth is None else f", {depth.min():.0f}-{depth.max():.0f} m"
             print(f"obs-archive-osse: {path} ({lon.size} locations, "
-                  f"{min(when):%H:%M} to {max(when):%H:%M})")
+                  f"{min(when):%H:%M} to {max(when):%H:%M}{extent})")
     return 0
 
 
@@ -430,8 +610,9 @@ class TruthRun:
     per observation would read the same file six hundred times.
     """
 
-    def __init__(self, root):
+    def __init__(self, root, deep=False):
         self.root = Path(root)
+        self.deep = deep
         if not self.root.is_dir():
             sys.exit(f"obs-archive-osse: {root} is not a directory. It is a "
                      f"truth archive, written by tools/local/promote-truth.sh.")
@@ -464,16 +645,22 @@ class TruthRun:
     def state(self, when):
         if self._cached[0] != when:
             self._cached = (
-                when, read_state(self.root / when.strftime("%Y%m%dT%H%M.nc")))
+                when, read_state(self.root / when.strftime("%Y%m%dT%H%M.nc"),
+                                 deep=self.deep))
         return self._cached[1]
 
-    def sample(self, grid, field, lon, lat, when):
+    def sample(self, grid, field, lon, lat, when, depth=None):
         """Each observation against the truth state nearest its own time.
 
         An observation outside the archive is refused rather than clamped to
         the nearest end of it. A clamp would produce a file that looks like
         every other file and holds a state from a different day, which is
         exactly the class of error an OSSE cannot detect in its own output.
+
+        *depth* is given for the platforms that observe below the surface, and
+        is one depth per observation rather than one per profile: ioda stores a
+        profile as its levels, each an ordinary location with its own depth, and
+        that is the shape everything here already carries.
         """
         outside = [t for t in when
                    if t < self.times[0] or t > self.times[-1]]
@@ -492,8 +679,14 @@ class TruthRun:
         values = np.empty(lon.shape)
         for moment, indices in sorted(groups.items()):
             picked = np.array(indices)
-            values[picked] = sample(grid, self.state(moment)[field],
-                                    lon[picked], lat[picked])
+            state = self.state(moment)
+            if depth is None:
+                values[picked] = sample(grid, state[field],
+                                        lon[picked], lat[picked])
+            else:
+                values[picked] = sample_column(
+                    grid, state[field], state["z"],
+                    lon[picked], lat[picked], depth[picked])
         return values
 
 
@@ -557,9 +750,24 @@ LAYOUTS = {
                "v": ("northward_velocity", (0,))},
 }
 
+#: The same two layouts, for the platforms that observe below the surface. Read
+#: only when one of those is in the platform set, because it is three fields of
+#: fifty levels against five of one, and every state in the run is read.
+#:
+#: `h` is layer thickness and it is here because a MOM6 state has no depth axis
+#: to interpolate onto. The vertical coordinate is Z* and the free surface moves
+#: it, so the depth of level twenty is a property of the state rather than of
+#: the grid, and it has to be read from the same file as the temperature it
+#: places. See `depths`.
+DEEP_LAYOUTS = {
+    "restart": {"t": ("Temp", (0,)), "s": ("Salt", (0,)), "h": ("h", (0,))},
+    "record": {"t": ("temperature", ()), "s": ("salinity", ()),
+               "h": ("thickness", ())},
+}
 
-def read_state(path):
-    """Surface temperature and sea surface height, from a restart or a record."""
+
+def read_state(path, deep=False):
+    """The surface fields, and the full water column when *deep*."""
     path = Path(path)
     if path.is_dir():
         path = path / "MOM.res.nc"
@@ -569,8 +777,16 @@ def read_state(path):
             sys.exit(f"obs-archive-osse: {path} holds neither a MOM6 restart's "
                      f"'Temp' nor a state record's 'temperature', so it is not "
                      f"a truth state this can read.")
+        wanted = dict(LAYOUTS[layout])
+        if deep:
+            wanted.update(DEEP_LAYOUTS[layout])
         state = {}
-        for field, (name, index) in LAYOUTS[layout].items():
+        for field, (name, index) in wanted.items():
+            if field in DEEP_LAYOUTS[layout] and name not in data.variables:
+                sys.exit(f"obs-archive-osse: {path} has no {name!r}, so it "
+                         f"cannot be profiled. A truth state promoted before "
+                         f"the run recorded thickness carries the surface "
+                         f"fields only; re-run tools/local/promote-truth.sh.")
             # Land is a fill value in a record and an arbitrary real number in a
             # restart, so it is carried through as NaN rather than as either. An
             # observation is only ever placed on `grid["open"]`, so a NaN
@@ -580,7 +796,30 @@ def read_state(path):
             state[field] = np.ma.filled(
                 np.ma.masked_invalid(data.variables[name][index]).astype(float),
                 np.nan)
+        if deep:
+            state["z"] = depths(state["h"])
         return state
+
+
+def depths(thickness):
+    """Depth of each layer's centre, from the layer thicknesses above it.
+
+    A MOM6 state has no depth axis. Z* keeps the layers close to fixed levels in
+    the interior and stretches them all with the free surface, so the depth of
+    level twenty is a property of the state and not of the grid, and the only
+    way to get it is to add up what is above.
+
+    Depths are positive downward and measured from the instantaneous surface,
+    which is what an instrument on a float measures against: its pressure sensor
+    reads the water above it. That is a slightly different reference from the
+    resting sea surface, by the sea surface height itself, and the difference is
+    tens of centimetres against a top layer that is metres thick.
+    """
+    # NaN over land, and `nancumsum` would turn that into a plausible depth. The
+    # column is left NaN so that a profile placed on land is loud rather than
+    # deep. See the note on fill values in `read_state`.
+    edges = np.cumsum(thickness, axis=0)
+    return edges - thickness / 2.0
 
 
 def perturb(grid, state, seed):
@@ -842,12 +1081,16 @@ class Cloud:
 def observe(grid, spec, begin, end, rng):
     """Where and when one platform observes, over one window.
 
-    Returns (longitude, latitude, times). The three come back together because
-    for a real satellite they are one thing: a pass is a place *and* an instant,
-    and the times cannot be drawn afterwards.
+    Returns (longitude, latitude, times, depths). The first three come back
+    together because for a real satellite they are one thing: a pass is a place
+    *and* an instant, and the times cannot be drawn afterwards. *depths* is None
+    for everything that observes the surface, and for the profiling platforms it
+    is one depth per entry, a cast having already been flattened into its
+    levels.
     """
     if spec["layout"] == "orbit":
-        return _pass(grid, spec, begin, end, rng)
+        lon, lat, when = _pass(grid, spec, begin, end, rng)
+        return lon, lat, when, None
     if spec["layout"] == "drifter":
         lon, lat, when, salty = spec["_array"].report(
             grid, spec["_truth"], begin, end, spec["every"])
@@ -855,14 +1098,17 @@ def observe(grid, spec, begin, end, rng):
             # The hulls that carry conductivity, which is a minority of them.
             lon, lat = lon[salty], lat[salty]
             when = [moment for moment, keep in zip(when, salty) if keep]
-        return lon, lat, when
+        return lon, lat, when, None
+    if spec["layout"] in ("profile", "glider"):
+        return spec["_array"].report(grid, spec["_truth"], spec, begin, end)
     # The pinned layouts, whose times are drawn by the caller.
     if spec["layout"] == "swath":
         lon, lat = _swath(grid, spec["count"], rng)
     else:
         lon, lat = _tracks(grid, spec["count"], spec["spacing"], rng)
     seconds = rng.uniform(0.0, (end - begin).total_seconds(), size=lon.shape)
-    return lon, lat, [begin + timedelta(seconds=float(s)) for s in seconds]
+    return (lon, lat, [begin + timedelta(seconds=float(s)) for s in seconds],
+            None)
 
 
 def _pass(grid, spec, begin, end, rng):
@@ -993,7 +1239,10 @@ def _footprint(grid, spec, near, lon, lat, when, half, rng):
     stride = max(1, int(round(spec["superob"] / _kilometres(grid))))
     keep = np.zeros_like(grid["open"])
     keep[::stride, ::stride] = True
-    cells = np.argwhere(grid["open"] & keep)
+    # `_water` is the platform's own mask where it has one, which for the L band
+    # radiometer is the open ocean minus a hundred kilometres of land
+    # contamination. See `coastal` and the note on `sss_smap`.
+    cells = np.argwhere(spec.get("_water", grid["open"]) & keep)
     if not len(cells):
         return np.array([]), np.array([]), []
     j, i = cells[:, 0], cells[:, 1]
@@ -1158,6 +1407,288 @@ class Drifters:
                       np.concatenate(salty))
         self._cached = ((begin, end, every), answer)
         return answer
+
+
+class Profilers:
+    """An array of profiling floats, drifting at depth between casts.
+
+    A float is a drifter that spends nearly all of its time a kilometre down.
+    It is advected there, not at the surface, and that matters for where the
+    array ends up: the flow at a thousand metres is weaker than the surface
+    flow and pointed differently, so a float does not get wound around the Loop
+    Current the way a drifter does. It is stepped with a fraction of the
+    surface velocity here, which is a simplification and is stated rather than
+    hidden: the truth archive records the surface currents and not the whole
+    velocity field, so a real parking-depth trajectory is not available to it.
+    What the trajectory has to be is slow, divergent, and not the surface's,
+    and this is all three.
+
+    **The casts are what the platform is for, and they are staggered.** Every
+    float carries its own phase, so twenty floats on a five day cycle surface
+    about four times a day between them rather than all at once every fifth
+    day. An array in phase would give an analysis a flood of profiles in one
+    cycle and nothing in the next four, and the cycles either side of the flood
+    would differ for a reason that has nothing to do with the ocean.
+
+    Floats are deployed only where the water is deeper than `floor`, which
+    keeps the array in the deep basin, and one that drifts onto the shelf or
+    out of the domain is redeployed rather than clamped.
+    """
+
+    #: Integration step, and the same argument as `Drifters.STEP`: inside the
+    #: time it takes to cross a truth cell at the speeds involved.
+    STEP = timedelta(hours=3)
+
+    #: Parking depth flow as a fraction of the surface flow. The Gulf's deep
+    #: circulation is order a few centimetres a second against a surface Loop
+    #: Current of over a metre, and the ratio is what keeps the array from
+    #: being flushed through the Straits of Florida in a fortnight.
+    DEEP = 0.05
+
+    def __init__(self, grid, spec, truth, seed):
+        self.rng = np.random.default_rng([seed, 0xA260])
+        self.count = spec["floats"]
+        self.every = spec["every"]
+        self.deep = deep_enough(grid, truth, spec["floor"])
+        self.lon, self.lat = self._deploy(grid, self.count)
+        # Each float's own phase through the cycle, as a fraction of it. Drawn
+        # once for the life of the hull, so a float keeps its slot.
+        self.phase = self.rng.random(self.count)
+        self.when = None
+        self._cached = None
+
+    def _deploy(self, grid, count):
+        cells = np.argwhere(self.deep)
+        if not len(cells):
+            sys.exit("obs-archive-osse: no column in the domain is deep enough "
+                     "for a profiling float. Lower the platform's 'floor'.")
+        picked = cells[self.rng.choice(len(cells), count, replace=True)]
+        j, i = picked[:, 0], picked[:, 1]
+        dlat, dlon = _spacing(grid)
+        return (grid["lon"][j, i] + self.rng.uniform(-0.5, 0.5, count) * dlon,
+                grid["lat"][j, i] + self.rng.uniform(-0.5, 0.5, count) * dlat)
+
+    def advance(self, grid, truth, until):
+        if self.when is None:
+            self.when = until
+            return
+        while self.when < until:
+            step = min(self.STEP, until - self.when)
+            state = truth.state(truth.nearest(self.when))
+            east = _interpolate(grid, self.lon, self.lat, state["u"]) * self.DEEP
+            north = _interpolate(grid, self.lon, self.lat, state["v"]) * self.DEEP
+            east = np.where(np.isfinite(east), east, 0.0)
+            north = np.where(np.isfinite(north), north, 0.0)
+            seconds = step.total_seconds()
+            scale = 180.0 / (np.pi * EARTH_RADIUS * 1000.0)
+            self.lat = self.lat + north * seconds * scale
+            self.lon = self.lon + east * seconds * scale / np.maximum(
+                np.cos(np.radians(self.lat)), 0.1)
+            self.when += step
+        self._replace(grid)
+
+    def _replace(self, grid):
+        """Redeploy any float that has left the deep basin or the domain."""
+        ok = _nearest(grid, self.lon, self.lat, self.deep).astype(bool)
+        inside = ((self.lon >= grid["lon"].min()) & (self.lon <= grid["lon"].max())
+                  & (self.lat >= grid["lat"].min()) & (self.lat <= grid["lat"].max()))
+        lost = ~(ok & inside)
+        if lost.any():
+            fresh_lon, fresh_lat = self._deploy(grid, int(lost.sum()))
+            self.lon[lost], self.lat[lost] = fresh_lon, fresh_lat
+            self.phase[lost] = self.rng.random(int(lost.sum()))
+
+    def report(self, grid, truth, spec, begin, end):
+        """Every cast in the window, flattened to one entry per level.
+
+        Cached on the window for the reason `Drifters.report` is: the
+        temperature platform and the salinity platform are two views of one
+        array, and stepping it twice would file a cast's salinity from a
+        different day than its temperature.
+        """
+        if self._cached and self._cached[0] == (begin, end):
+            return self._cached[1]
+
+        period = self.every.total_seconds()
+        lon, lat, when, depth = [], [], [], []
+        # A cast is an instant here: a real float takes about six hours to rise
+        # through fifteen hundred metres, and the archive samples the truth at
+        # the nearest recorded state anyway, which is coarser than that.
+        moment = begin
+        step = timedelta(hours=1)
+        while moment < end:
+            self.advance(grid, truth, moment)
+            # Whose cycle comes due in this hour. `since` is measured from the
+            # epoch every other platform's phase is measured from, so two
+            # archives built over different periods put a float in the same
+            # part of its cycle on the same day.
+            since = (moment - EPOCH).total_seconds()
+            due = (np.floor((since / period) - self.phase)
+                   != np.floor(((since - 3600.0) / period) - self.phase))
+            for index in np.flatnonzero(due):
+                levels = [z for z in CAST if z <= spec["profile"]]
+                lon.extend([self.lon[index]] * len(levels))
+                lat.extend([self.lat[index]] * len(levels))
+                when.extend([moment] * len(levels))
+                depth.extend(levels)
+            moment += step
+
+        answer = (np.array(lon), np.array(lat), when, np.array(depth, dtype=float))
+        self._cached = ((begin, end), answer)
+        return answer
+
+
+class Gliders:
+    """Gliders flying waypoints, giving sections rather than casts.
+
+    The difference from a float is the whole point. A float goes where the
+    water goes; a glider is steered, and it holds its line against the current
+    at about a quarter of a metre a second through the water. What comes back
+    is a continuous slice across whatever the line crosses, sampled every few
+    kilometres, and over a front that slice is the measurement. A scattering of
+    independent casts at the same total count is not the same observation, and
+    it is the reason this is a separate layout rather than a fast float.
+
+    The lines are fixed for the run and drawn once, each a great circle segment
+    between two points in water deep enough to dive in. Real deployments fly
+    repeat sections for exactly this reason: a line reoccupied is a line whose
+    changes mean something. A glider that reaches the end of its line turns
+    round and flies it back.
+
+    Advected as well as steered: the along-line progress is the glider's own
+    speed and the cross-line displacement is the current's, which is what makes
+    a glider line in a strong current bow rather than stay straight.
+    """
+
+    def __init__(self, grid, spec, truth, seed):
+        self.rng = np.random.default_rng([seed, 0x91D3])
+        self.count = spec["gliders"]
+        self.every = spec["every"]
+        self.speed = spec["speed"]
+        self.deep = deep_enough(grid, truth, spec["floor"])
+        self.ends = self._lines(grid, self.count)
+        # Position along each line as a fraction, and which way it is flying.
+        self.along = self.rng.random(self.count)
+        self.forward = np.ones(self.count)
+        self.lon, self.lat = self._position()
+        self.when = None
+        self._cached = None
+
+    def _lines(self, grid, count):
+        """*count* line segments, both ends in water deep enough to dive in."""
+        cells = np.argwhere(self.deep)
+        if len(cells) < 2:
+            sys.exit("obs-archive-osse: fewer than two columns in the domain "
+                     "are deep enough to fly a glider line in.")
+        ends = []
+        for _ in range(count):
+            picked = cells[self.rng.choice(len(cells), 2, replace=False)]
+            (j0, i0), (j1, i1) = picked
+            ends.append(((grid["lon"][j0, i0], grid["lat"][j0, i0]),
+                         (grid["lon"][j1, i1], grid["lat"][j1, i1])))
+        return ends
+
+    def _position(self):
+        """Where each glider is now, linearly along its own line."""
+        lon = np.empty(self.count)
+        lat = np.empty(self.count)
+        for n, ((lon0, lat0), (lon1, lat1)) in enumerate(self.ends):
+            lon[n] = lon0 + (lon1 - lon0) * self.along[n]
+            lat[n] = lat0 + (lat1 - lat0) * self.along[n]
+        return lon, lat
+
+    def advance(self, grid, truth, until):
+        if self.when is None:
+            self.when = until
+            return
+        while self.when < until:
+            step = min(timedelta(hours=1), until - self.when)
+            seconds = step.total_seconds()
+            for n, ((lon0, lat0), (lon1, lat1)) in enumerate(self.ends):
+                span = _haversine(lon0, lat0, lon1, lat1)
+                if span <= 0:
+                    continue
+                moved = self.speed * seconds / 1000.0 / span
+                self.along[n] += moved * self.forward[n]
+                # Turn at the end of the line and fly it back.
+                if self.along[n] > 1.0:
+                    self.along[n] = 2.0 - self.along[n]
+                    self.forward[n] = -1.0
+                elif self.along[n] < 0.0:
+                    self.along[n] = -self.along[n]
+                    self.forward[n] = 1.0
+            self.lon, self.lat = self._position()
+            self.when += step
+
+    def report(self, grid, truth, spec, begin, end):
+        if self._cached and self._cached[0] == (begin, end):
+            return self._cached[1]
+
+        levels = [z for z in CAST if z <= spec["profile"]]
+        lon, lat, when, depth = [], [], [], []
+        moment = begin
+        while moment < end:
+            self.advance(grid, truth, moment)
+            for n in range(self.count):
+                lon.extend([self.lon[n]] * len(levels))
+                lat.extend([self.lat[n]] * len(levels))
+                when.extend([moment] * len(levels))
+                depth.extend(levels)
+            moment += self.every
+
+        answer = (np.array(lon), np.array(lat), when, np.array(depth, dtype=float))
+        self._cached = ((begin, end), answer)
+        return answer
+
+
+def coastal(grid, kilometres):
+    """Ocean at least *kilometres* from any land, as a mask on the truth grid.
+
+    For the L band radiometer, whose 40 km footprint picks up land in its
+    sidelobes and whose retrieval is discarded well before the coast is
+    reached. In a basin the size of the Gulf that is not a detail: a hundred
+    kilometres removes the entire shelf, and with it the river plume, which is
+    where the salinity signal this instrument exists to measure is largest.
+    """
+    from scipy.ndimage import binary_erosion
+    cells = max(1, int(round(kilometres / _kilometres(grid))))
+    return binary_erosion(grid["mask"], iterations=cells, border_value=0)
+
+
+def deep_enough(grid, truth, floor):
+    """Where the water column reaches *floor* metres, from one truth state.
+
+    Read once from a single state rather than per cycle: the free surface moves
+    the deepest layer centre by centimetres and this is a deployment mask
+    thresholded at a kilometre and a half.
+
+    Bathymetry rather than the land mask, because these platforms are the only
+    ones in the archive that a shallow column is *wrong* for rather than merely
+    unlikely. A float cannot park at a thousand metres over the Texas shelf.
+    """
+    if not hasattr(truth, "state"):
+        sys.exit("obs-archive-osse: the profiling platforms need --truth-run. "
+                 "A single --state has no trajectory for a float to drift "
+                 "along and no second cast to compare the first against.")
+    state = truth.state(truth.nearest(truth.times[0]))
+    if "z" not in state:
+        sys.exit("obs-archive-osse: the truth was opened without its water "
+                 "column, which is a bug: --platforms includes a profiling "
+                 "platform, so TruthRun should have been built with deep=True.")
+    with np.errstate(invalid="ignore"):
+        bottom = np.nanmax(np.where(np.isfinite(state["z"]), state["z"], -1.0),
+                           axis=0)
+    return grid["open"] & (bottom > floor)
+
+
+def _haversine(lon0, lat0, lon1, lat1):
+    """Great circle distance in kilometres."""
+    phi0, phi1 = np.radians(lat0), np.radians(lat1)
+    dphi = phi1 - phi0
+    dlam = np.radians(lon1 - lon0)
+    a = (np.sin(dphi / 2.0) ** 2
+         + np.cos(phi0) * np.cos(phi1) * np.sin(dlam / 2.0) ** 2)
+    return 2.0 * EARTH_RADIUS * np.arcsin(np.sqrt(a))
 
 
 def _kilometres(grid):
@@ -1341,11 +1872,76 @@ def sample(grid, field, lon, lat):
     return _interpolate(grid, lon, lat, field)
 
 
+def sample_column(grid, field, z, lon, lat, depth):
+    """The truth at each observation's own depth, for the profiling platforms.
+
+    Horizontally first, then vertically, and in that order for a reason. Doing
+    it the other way round means interpolating each of the four surrounding
+    columns onto the target depth and then blending, which is the same thing
+    only where the layers of those columns are at the same depths. Across the
+    Loop Current front they are not, and blending four columns that have been
+    resampled onto a common depth smears the front over the interpolation
+    stencil. Blending the layers first keeps the level structure the model had.
+
+    Linear in depth, and the vertical grid is fine enough that this is honest:
+    the top of the water column is metres thick and an interpolation across two
+    of those levels is not where the error in a profile comes from.
+
+    Below the deepest layer centre the profile is refused rather than
+    extrapolated. An extrapolated value at 2000 m sits in an ioda file looking
+    exactly like a measured one, and it is a value the analysis will fit.
+    """
+    levels = field.shape[0]
+    column = np.empty((levels, lon.size))
+    axis = np.empty((levels, lon.size))
+    for k in range(levels):
+        column[k] = _interpolate(grid, lon, lat, field[k])
+        axis[k] = _interpolate(grid, lon, lat, z[k])
+
+    values = np.full(lon.size, np.nan)
+    for n in range(lon.size):
+        good = np.isfinite(column[:, n]) & np.isfinite(axis[:, n])
+        if good.sum() < 2:
+            continue
+        # `np.interp` needs an increasing x and clamps outside its range rather
+        # than saying so, so the range is checked here and the clamp never runs.
+        deep, shallow = axis[good, n].max(), axis[good, n].min()
+        if shallow <= depth[n] <= deep:
+            values[n] = np.interp(depth[n], axis[good, n], column[good, n])
+    return values
+
+
 # --- the file ----------------------------------------------------------------
 
-def write_obs(path, spec, lon, lat, values, begin, offsets):
+def errors(spec, depth):
+    """The declared error of each observation.
+
+    A scalar for the platforms whose error does not depend on where in the water
+    column they are looking, which is all of the surface ones.
+
+    **`error by depth` is not a refinement, it is the difference between a
+    usable profile and an unusable one.** What an in situ error mostly measures
+    here is representativeness: what a point cast says about the mean of a 25 km
+    cell. In the seasonal thermocline the vertical temperature gradient is a
+    tenth of a degree per metre, so an eddy displacing an isotherm by ten metres
+    moves the value by a degree, and a profile declared accurate to the
+    instrument's own 0.002 K would be given a weight in the cost function
+    hundreds of times what it has earned. Below the thermocline the same
+    argument runs the other way and a uniform error would throw away the deep
+    part of the cast, which is the part that is actually well measured.
+    """
+    if "error by depth" not in spec:
+        return np.full(np.shape(depth) if depth is not None else (), spec["error"])
+    table = np.array(spec["error by depth"], dtype=float)
+    return np.interp(depth, table[:, 0], table[:, 1])
+
+
+def write_obs(path, spec, lon, lat, values, begin, offsets, depth=None,
+              sigma=None):
     """One platform's file for one window, in the ioda layout SOCA reads."""
     variable = spec["variable"]
+    if sigma is None:
+        sigma = np.full(values.shape, spec["error"])
     with netCDF4.Dataset(path, "w") as data:
         data.createDimension("Location", lon.size)
         data.createDimension("nvars", 1)
@@ -1360,9 +1956,17 @@ def write_obs(path, spec, lon, lat, values, begin, offsets):
         when[:] = offsets.astype("i8")
         meta.createVariable("longitude", "f4", ("Location",))[:] = lon
         meta.createVariable("latitude", "f4", ("Location",))[:] = lat
+        if depth is not None:
+            # Positive downward in metres, which is what SOCA's profile
+            # operator reads and the sign the model's own vertical coordinate
+            # is not in. See `depths`.
+            below = meta.createVariable("depth", "f4", ("Location",))
+            below.units = "m"
+            below.positive = "down"
+            below[:] = depth
 
         for group, payload in (("ObsValue", values),
-                               ("ObsError", np.full(values.shape, spec["error"])),
+                               ("ObsError", sigma),
                                ("PreQc", np.zeros(values.shape))):
             data.createGroup(group).createVariable(
                 variable, "f4", ("Location",))[:] = payload

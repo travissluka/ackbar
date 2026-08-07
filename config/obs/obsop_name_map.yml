@@ -13,6 +13,21 @@ variable maps:
     alias: ocean_depth
   - name: waterTemperature
     alias: sea_water_temperature
+  # Not in the bundle's copy, and the OSSE is why it is here. The archive samples
+  # its profiles straight out of the truth's `Temp`, which is MOM6's prognostic
+  # and is *potential* temperature. Assimilating those as `waterTemperature`
+  # would put SOCA's `InsituTemperature` operator in the loop, which converts the
+  # background's potential temperature to in situ, and the departure would then
+  # be between two different quantities: the conversion is 0.1 to 0.15 K by a
+  # thousand metres against a declared error of 0.05 K there, so every deep level
+  # of every cast would carry a systematic two to three sigma bias that nothing
+  # in the workflow reports as one.
+  #
+  # A real float reports in situ temperature and `InsituTemperature` is the right
+  # operator for one. It is the wrong operator for these, and if it is wanted the
+  # fix belongs in the archive, converting on the way out, rather than here.
+  - name: waterPotentialTemperature
+    alias: sea_water_potential_temperature
   - name: seaSurfaceTemperature
     alias: sea_surface_temperature
   - name: salinity

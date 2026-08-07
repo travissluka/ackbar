@@ -130,6 +130,85 @@ lost to land contamination. It is not simulated here. Adding it would change
 the character of the SST network substantially and is the first thing to add
 when this is made more realistic.
 
+## The L band radiometer
+
+SMAP, and the choice is against SMOS rather than alongside it. Both were flying
+in mid-2015 and either would be defensible. SMAP launched in January 2015 with a
+real-aperture feed where SMOS interferes across a sparse array, and it is
+markedly less affected by radio frequency interference, which is the thing that
+limits L band salinity in a semi-enclosed basin with a populated coast. The Gulf
+is exactly that basin.
+
+An 8 day exact repeat in a 685 km sun synchronous orbit, 06:00 descending, with
+a 1000 km swath. The archive superobs it onto 40 km, which is the footprint
+rather than a choice: the retrieval is an average over that scale, and gridding
+it finer would file correlated values as independent ones.
+
+**Its coverage does not collapse under cloud, and that is the entire reason it
+earns a place beside the infrared instruments.** It is the only satellite here
+that still sees the ocean under a hurricane. What it loses instead is the coast:
+a 40 km footprint near land picks up the shore in its sidelobes, and the
+retrieval is discarded out to about 100 km, which in this domain removes 46% of
+the water, including the whole shelf and most of the river plume, which is where
+the salinity signal is largest. That is a real property of the instrument, not a
+conservative choice in the generator.
+
+## The in situ network, and the year it is not from
+
+Twenty five surface drifters, twenty profiling floats, five gliders.
+
+**The float and glider arrays are the best observed period's, not mid-2015's,
+and this is the one place the archive deliberately departs from its own
+period.** The Gulf in 2015 was chronically under-observed below the surface: at
+Argo's design density the deep Gulf supports five to eight floats on a ten day
+cycle, under one profile a day in the entire basin, and the 20 to 25 float
+arrays over the Loop Current are the UGOS campaign, from 2021 on. The summer
+glider lines are likewise a later build-out. An OSSE run against the network
+that actually existed answers only how little can be done with almost no
+subsurface data, which is not the question being asked.
+
+So any skill number this archive produces is conditional on a network that did
+not exist in the year the forcing came from. That is a deliberate and stated
+inconsistency, and it belongs in the caption of every figure drawn from these
+runs.
+
+The three are different measurements, not three densities of one:
+
+- A **drifter** is a point at 15 cm depth, placed by the ocean. It is advected
+  by the truth's own currents, so the array is swept into convergences and wound
+  around the Loop Current, and the places it stops sampling are the places an
+  analysis would most like it to. Temperature on every hull, conductivity on
+  about a fifth of them, which is what the real array carries.
+- A **float** gives isolated casts from the deep basin, 5 to 1500 m, on a five
+  day cycle, each hull carrying its own phase so the array reports continuously
+  rather than all at once. It drifts at parking depth at a small fraction of the
+  surface flow, which is what keeps it from being flushed through the Straits of
+  Florida in a fortnight.
+- A **glider** gives a *section*: steered along waypoints at about 0.25 m s-1,
+  returning a continuous slice across whatever the line crosses, casting to
+  1000 m once per dive. Over a front that slice is the measurement the front is
+  actually in, and no number of scattered casts is the same observation. That is
+  why it is a separate layout in the generator and not a float with a shorter
+  cycle.
+
+Their declared errors vary with depth, and that is not a refinement. What an in
+situ error mostly measures here is representativeness: what a point cast says
+about the mean of a 25 km cell. In the seasonal thermocline the vertical
+temperature gradient is around 0.1 K per metre, so an eddy displacing an
+isotherm by ten metres moves the value by a degree, and a cast declared accurate
+to the instrument's own 0.002 K would be weighted hundreds of times more than it
+has earned. Below the thermocline the argument runs the other way: a uniform
+error would throw away the part of the cast that is genuinely well measured.
+
+**The profiles are potential temperature, not in situ temperature.** The archive
+samples the truth's `Temp`, which is MOM6's prognostic, so the observation and
+the model field are the same quantity and the operator's whole job is the
+vertical interpolation. Assimilating them through SOCA's `InsituTemperature`,
+which converts the background before comparing, would put a systematic 0.1 to
+0.15 K at a thousand metres into every deep level, against a declared error of
+0.05 K there. See the note in `config/obs/obsop_name_map.yml`. If a real float's
+in situ reading is wanted, the fix belongs in the generator.
+
 ## What is fiction
 
 Everything about where the satellites are in their orbits. The generator gives
@@ -154,3 +233,7 @@ configuration rather than to this note. They are set in the generator and in
 - [HY-2A, eoPortal](https://www.eoportal.org/satellite-missions/hy-2a)
 - [SARAL, eoPortal](https://www.eoportal.org/satellite-missions/saral)
 - [Suomi-NPP, eoPortal](https://www.eoportal.org/satellite-missions/suomi-npp)
+- [SMAP, eoPortal](https://www.eoportal.org/satellite-missions/smap)
+- [SMAP salinity, NASA PO.DAAC](https://podaac.jpl.nasa.gov/SMAP)
+- [Understanding Gulf Ocean Systems (UGOS), NASEM](https://www.nationalacademies.org/gulf/understanding-gulf-ocean-systems)
+- [Underwater glider hurricane network, AOML](https://www.aoml.noaa.gov/phod/goos/gliders/)

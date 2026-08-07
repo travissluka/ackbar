@@ -1,0 +1,93 @@
+# What a surface drifter reports. Not a platform, which is what `obs/common/`
+# means: nothing in here turns an observer on. The two drifter layers beside it
+# inherit this one.
+#
+# See `obs/common/adt.yaml` for what an observer body states and what it leaves
+# to the solver layer and to `ackbar/soca.py`.
+#
+# **Separate from `obs/common/sst.yaml` and `obs/common/sss.yaml`, which observe
+# the same two variables.** A drifter is not a small satellite. It is a point
+# measurement from a hull at fifteen centimetres depth, where a radiometer's
+# value is an average over a footprint that is already most of an analysis cell,
+# and the two are therefore representative over quite different distances. That
+# difference is the localization scale below, and folding a drifter into the
+# satellite bodies to save a file would silently give it the satellite's.
+
+vars:
+  # Multiples of the local Rossby radius. A point, so the same scale the profiles
+  # use rather than either satellite's.
+  drifter_localization_scale: 1.0
+
+observation bodies:
+
+  drifter_sst:
+
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(drifter_localization_scale)
+      min grid mult: 1.0
+
+    obs space:
+      simulated variables: [seaSurfaceTemperature]
+      io pool:
+        max pool size: 1
+      obs perturbations seed: '{{seed}}'
+
+    obs operator:
+      name: Identity
+      observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+
+    obs error:
+      covariance model: diagonal
+
+    obs filters:
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: 0.9
+    - filter: Bounds Check
+      minvalue: -2.0
+      maxvalue: 36.0
+    - filter: Background Check
+      # Effectively off, as everywhere else in this archive. See
+      # `obs/common/adt.yaml` for why a synthetic archive wants it that way.
+      threshold: 100.0
+    - filter: Domain Check
+      where:
+      - variable: {name: ObsError/seaSurfaceTemperature}
+        minvalue: 0.001
+
+  drifter_sss:
+
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(drifter_localization_scale)
+      min grid mult: 1.0
+
+    obs space:
+      simulated variables: [seaSurfaceSalinity]
+      io pool:
+        max pool size: 1
+      obs perturbations seed: '{{seed}}'
+
+    obs operator:
+      name: Identity
+      observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+
+    obs error:
+      covariance model: diagonal
+
+    obs filters:
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: 0.9
+    - filter: Bounds Check
+      minvalue: 20.0
+      maxvalue: 40.0
+    - filter: Background Check
+      threshold: 100.0
+    - filter: Domain Check
+      where:
+      - variable: {name: ObsError/seaSurfaceSalinity}
+        minvalue: 0.001

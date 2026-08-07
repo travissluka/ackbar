@@ -1,0 +1,120 @@
+# What an in situ profile has in common, temperature and salinity alike. Not a
+# platform, which is what `obs/common/` means: nothing in here turns an observer
+# on. The float and glider layers beside it inherit this one.
+#
+# See `obs/common/adt.yaml` for what an observer body states and what it leaves
+# to the solver layer and to `ackbar/soca.py`.
+#
+# **Two bodies here rather than one**, because a cast is filed as two observers:
+# one temperature, one salinity, from the same rise. That is how SOCA's own test
+# configurations do it and it is not an accident of layout. The two get different
+# operators, different errors and different bounds, and an observer carries one
+# simulated variable.
+#
+# The handful of lines the two bodies share are repeated rather than factored. A
+# body does not inherit a body: `ackbar/config/bodies.py` expands `$inherit` on
+# an *observer*, and one case of nine duplicated lines is a poor reason to grow
+# the mechanism a second meaning.
+
+vars:
+  # Multiples of the local Rossby radius. Tighter than any of the surface
+  # platforms', and deliberately: a cast is a point measurement rather than an
+  # average over a footprint, and it is the only thing in the network that sees
+  # the vertical structure at all. Spreading one profile over the same distance
+  # as a 40 km satellite superob would let a single float rewrite a basin.
+  profile_localization_scale: 1.0
+
+observation bodies:
+
+  profile_t:
+
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(profile_localization_scale)
+      min grid mult: 1.0
+
+    obs space:
+      simulated variables: [waterPotentialTemperature]
+      io pool:
+        max pool size: 1
+      obs perturbations seed: '{{seed}}'
+
+    # **`VertInterp` and not `InsituTemperature`, and the archive is why.**
+    # `tools/obs-archive-osse.py` samples the truth's `Temp`, which is MOM6's
+    # prognostic and is potential temperature, so the observation and the model
+    # field are the same quantity and the operator's whole job is to get from the
+    # model's moving layers to the cast's fixed depths.
+    #
+    # `InsituTemperature` would convert the background before comparing, and the
+    # departure would then be between two different quantities: the conversion is
+    # 0.1 to 0.15 K by a thousand metres, against the 0.05 K this declares there.
+    # See the note in `config/obs/obsop_name_map.yml`.
+    obs operator:
+      name: VertInterp
+      observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+      # The model's depth axis, built from its layer thicknesses, against the
+      # cast's own `MetaData/depth`. Both are metres positive down from the free
+      # surface, which is what makes them comparable.
+      vertical coordinate: sea_water_depth
+      observation vertical coordinate: depth
+      interpolation method: linear
+
+    obs error:
+      covariance model: diagonal
+
+    obs filters:
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: 0.9
+    - filter: Bounds Check
+      minvalue: -2.0
+      maxvalue: 36.0
+    - filter: Background Check
+      # Effectively off, as everywhere else in this archive: nothing synthetic
+      # here holds a gross error to catch, so what it removes is signal, and
+      # censoring the free run harder than the analysis run flatters the
+      # comparison. See `obs/common/adt.yaml`.
+      threshold: 100.0
+    - filter: Domain Check
+      where:
+      - variable: {name: ObsError/waterPotentialTemperature}
+        minvalue: 0.001
+
+  profile_s:
+
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(profile_localization_scale)
+      min grid mult: 1.0
+
+    obs space:
+      simulated variables: [salinity]
+      io pool:
+        max pool size: 1
+      obs perturbations seed: '{{seed}}'
+
+    obs operator:
+      name: VertInterp
+      observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+      vertical coordinate: sea_water_depth
+      observation vertical coordinate: depth
+      interpolation method: linear
+
+    obs error:
+      covariance model: diagonal
+
+    obs filters:
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: 0.9
+    - filter: Bounds Check
+      minvalue: 20.0
+      maxvalue: 40.0
+    - filter: Background Check
+      threshold: 100.0
+    - filter: Domain Check
+      where:
+      - variable: {name: ObsError/salinity}
+        minvalue: 0.001

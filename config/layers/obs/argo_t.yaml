@@ -1,0 +1,31 @@
+# Temperature from the profiling float array.
+#
+# The same hulls as `argo_s`: one rise reports both, so the two observers are
+# two views of one cast rather than two deployments. Twenty floats on a five day
+# cycle, staggered in phase, casting from 5 to 1500 m in the deep basin.
+#
+# **This is the best observed period's array, not mid-2015's.** The Gulf in 2015
+# held perhaps five to eight floats. See `tools/obs-archive-osse.py` and
+# `docs/observing-system.md`: any skill number from this archive is conditional
+# on a network that did not exist in the year the forcing came from.
+#
+# The whole observer is the `profile_t` body in `obs/common/profile.yaml`, which
+# this layer inherits. What is here is this platform's identity: its name, and
+# the two paths that name follows into the archive and out to `obs_out/`.
+# Anything restated here would override the body.
+
+inherit:
+  - obs/common/profile
+
+observations:
+- obs space:
+    name: argo_t
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/argo_t.{{window_begin:%Y%m%d%H}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).argo_t.{{window_begin:%Y%m%d%H}}.nc4
+  $inherit: profile_t

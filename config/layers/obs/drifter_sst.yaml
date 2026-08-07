@@ -1,0 +1,28 @@
+# Surface temperature at about fifteen centimetres depth, from the thermistor every SVP hull carries as standard.
+#
+# Twenty five hulls, advected by the truth's own currents rather than scattered:
+# they are swept into convergences and wound around the Loop Current, so the
+# array thins where the water diverges and the places it stops sampling are the
+# places an analysis would most like it to. Reporting every six hours, which is a
+# thinning of the hourly Iridium transmission, because consecutive reports from
+# one hull are correlated through the same water.
+#
+# The whole observer is the `drifter_sst` body in `obs/common/drifter.yaml`, which
+# this layer inherits. What is here is this platform's identity: its name, and
+# the two paths that name follows into the archive and out to `obs_out/`.
+
+inherit:
+  - obs/common/drifter
+
+observations:
+- obs space:
+    name: drifter_sst
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/drifter_sst.{{window_begin:%Y%m%d%H}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).drifter_sst.{{window_begin:%Y%m%d%H}}.nc4
+  $inherit: drifter_sst

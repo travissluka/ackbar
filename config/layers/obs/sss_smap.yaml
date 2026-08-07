@@ -1,0 +1,28 @@
+# Sea surface salinity from the L band radiometer on SMAP, swath.
+#
+# 06:00 local descending, launched January 2015, and the only satellite in this
+# network whose coverage does not collapse under cloud. What it loses instead is
+# the coast: a 40 km footprint picks up land in its sidelobes, and the archive
+# discards the retrieval out to a hundred kilometres, which in the Gulf is the
+# whole shelf and most of the river plume.
+#
+# The whole observer is the `sss` body in `obs/common/sss.yaml`, which
+# this layer inherits. What is here is this platform's identity: its name, and
+# the two paths that name follows into the archive and out to `obs_out/`.
+# Anything restated here would override the body.
+
+inherit:
+  - obs/common/sss
+
+observations:
+- obs space:
+    name: sss_smap
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/sss_smap.{{window_begin:%Y%m%d%H}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).sss_smap.{{window_begin:%Y%m%d%H}}.nc4
+  $inherit: sss

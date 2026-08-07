@@ -1,0 +1,64 @@
+# What an L band salinity radiometer has in common. Not a platform, which is
+# what `obs/common/` means: nothing in here turns an observer on. The platform
+# layers beside it inherit this one, and an experiment goes on listing the
+# platforms it flies.
+#
+# See `obs/common/adt.yaml` for what an observer body states, what it leaves to
+# the solver layer and to `ackbar/soca.py`, and why the platform layers are thin.
+
+vars:
+  # Multiples of the local Rossby radius, and its own knob for the same reason
+  # the altimeters and the radiometers have theirs: localization is a property
+  # of what was measured. A 40 km L band footprint is already an average over
+  # most of an analysis cell, so it is representative over a wider distance than
+  # a 25 km infrared superob and this is where that is said.
+  sss_localization_scale: 2.0
+
+observation bodies:
+
+  sss:
+
+    # See `obs/common/adt.yaml` for what this is and why it is not spelled
+    # `obs localizations`.
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(sss_localization_scale)
+      min grid mult: 1.0
+
+    obs space:
+      simulated variables: [seaSurfaceSalinity]
+      io pool:
+        max pool size: 1
+      obs perturbations seed: '{{seed}}'
+    obs operator:
+      name: Identity
+      observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+    obs error:
+      covariance model: diagonal
+    obs filters:
+    # The same 0.9 the other surface bodies use, so that no two platforms see a
+    # different coastline. It does very little here: the archive already drops
+    # everything within a hundred kilometres of land, because that is where an
+    # L band retrieval is contaminated by the sidelobes' view of the shore. This
+    # is the backstop for the case where the archive's mask and the model's
+    # disagree.
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: 0.9
+    # The open ocean runs 30 to 38 and the Gulf's river plumes go well below
+    # that. Wide enough to keep a plume and narrow enough to catch a retrieval
+    # that has failed into nonsense.
+    - filter: Bounds Check
+      minvalue: 20.0
+      maxvalue: 40.0
+    - filter: Background Check
+      # Effectively off, for the reason `obs/common/adt.yaml` gives: a synthetic
+      # archive holds no gross error for this to catch, so everything it removes
+      # is signal, and censoring the free run's departures harder than the
+      # analysis run's scores the comparison against a flattered baseline.
+      threshold: 100.0
+    - filter: Domain Check
+      where:
+      - variable: {name: ObsError/seaSurfaceSalinity}
+        minvalue: 0.001
