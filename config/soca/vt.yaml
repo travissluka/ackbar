@@ -1,0 +1,78 @@
+# soca_error_covariance_toolbox.x: recalibrate the vertical correlation of the
+# background error against this cycle's own background.
+#
+# See `config/soca/hofx.yaml` for the rules this file follows. Every $(SLOT) is
+# filled by `vt_config` in `ackbar/soca.py`.
+#
+# ## What this is for
+#
+# The vertical correlation length is the number of model levels the analysis is
+# allowed to spread a surface observation down through, and it is set by the
+# mixed layer: freely inside a well mixed column, barely at all across the
+# pycnocline. `tools/soca-diffusion.sh` builds it once per domain from the MLD
+# of one restart, which makes it a constant. The mixed layer is not one. It has
+# a seasonal cycle of a factor of several in the Gulf, it deepens under a storm
+# in a day, and a B calibrated on one season applied to another spreads
+# increments across a thermocline that is not where it was told.
+#
+# So this is the same calibration run against the background the cycle is about
+# to assimilate into. The offline one stays: it is what an experiment gets
+# without asking, and it is the horizontal half in any case, which does not
+# depend on the state.
+#
+# ## Why only the vertical
+#
+# The horizontal scales come from the Rossby radius and the grid, both of which
+# are properties of the domain rather than of the state, so recomputing them
+# per cycle would produce the same numbers at the cost of the randomization
+# that estimates their normalization. That randomization is the entire expense
+# of the offline stage. The vertical is a fixed count of tridiagonal solves
+# down each column under `method: implicit`, which is what makes doing it every
+# cycle affordable at all.
+#
+# ## What it must agree with
+#
+# `config/static/diffusion.yaml`, on `method` and `iterations`, and
+# `config/layers/da/variational.yaml` on the same two. The normalization
+# written here is computed with the operator configured here, and reading it
+# back through a differently configured operator gives a background error that
+# is wrong by a factor nothing reports. `tests/test_diffusion.py` holds the
+# three together.
+
+geometry: $(GEOMETRY)
+
+# The background this cycle is about to assimilate into, which is the whole
+# point: its MLD is what the scales below are built from. `ackbar/run.py`'s
+# `_b_vt` writes the scale field from the same state, through
+# `ackbar.diffusion`, which is also what the offline tool calls.
+background: $(BACKGROUND)
+
+background error:
+  covariance model: SABER
+  saber central block:
+    saber block name: diffusion
+    calibration:
+      normalization:
+        # Used by the horizontal randomization, which this document does not
+        # run. Present because saber's calibration block requires it, and small
+        # because every iteration it names here is one nothing performs.
+        iterations: $(NORMALIZATION_ITERATIONS)
+      groups:
+      - vertical:
+          # `as gaussian: true`: the scale field is a length in levels and saber
+          # is being asked to build the Gaussian of that width, rather than to
+          # read a diffusion coefficient directly. Same as the offline document.
+          as gaussian: true
+          method: $(VERTICAL_METHOD)
+          iterations: $(VERTICAL_ITERATIONS)
+          model file:
+            date: '$(SCALES_DATE)'
+            basename: ./
+            ocn_filename: $(SCALES_FILE)
+          # Which field of the scale state holds the scales. `ackbar.diffusion`
+          # writes them under a model variable name because saber reads the file
+          # as a model state; the name is a carrier and not a claim that these
+          # are temperatures.
+          model variable: sea_water_potential_temperature
+        write:
+          filepath: $(WRITE_STEM)

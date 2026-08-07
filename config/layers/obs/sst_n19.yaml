@@ -42,7 +42,13 @@ observations:
     minvalue: -2.0
     maxvalue: 36.0
   - filter: Background Check
-    threshold: 5.0
+    # In units of the observation error, so 5.0 was 2.5 K. Effectively off for
+    # the same reasons `obs/adt_j2.yaml` sets 10 m: a synthetic archive holds no
+    # gross error for this to catch, everything it removes is signal, and
+    # censoring the free run's departures harder than the analysis run's scores
+    # the comparison against a flattered baseline. 100 sigma is 50 K, which no
+    # ocean reaches and a diverged model passes.
+    threshold: 100.0
   - filter: Domain Check
     where:
     - variable: {name: ObsError/seaSurfaceTemperature}

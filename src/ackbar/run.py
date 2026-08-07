@@ -25,7 +25,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (ensemble, ledger, mom6sis2, observations, persistence, post,
+from . import (diffusion, ensemble, ledger, mom6sis2, observations, persistence,
+               post,
                soca, writeback)
 from .config.jobtime import (FOUR_D, cycle_length, cycle_time,
                              forecast_overshoot, handoff_time, slot_times,
@@ -173,17 +174,31 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: part that is hard to get right, and a phase that adds a body should not also
 #: be the phase that first discovers its dependencies were wrong.
 #:
-#: `b.vt` is here for a reason worth stating, because it is the one entry that
-#: is in the data path on paper. The vertical background error scales *are*
-#: calibrated, offline and once, by `tools/soca-diffusion.sh`, and the analysis
-#: reads that product out of the domain's static directory. Recalibrating them
-#: every cycle against the current mixed layer is a measured improvement on
-#: that, not a prerequisite for it, so until it lands this task genuinely
-#: produces nothing anything reads. What closes it is the vertical `filepath` in
-#: `config/layers/da/variational.yaml` naming a per-cycle file instead of a
-#: static one; at that moment this entry has to go, and the analysis would fail
-#: on a missing input rather than silently reading last month's mixed layer.
-DEFERRED = ("b.vt", "verify")
+#: `b.vt` is here **only when the experiment did not ask for it**, which is the
+#: state this entry used to describe unconditionally. The vertical background
+#: error scales are calibrated offline and once by `tools/soca-diffusion.sh`,
+#: and an analysis reads that product out of the domain's static directory; an
+#: experiment that inherits `da/vt_cycled` instead rebuilds them every cycle
+#: against its own background, and then this task is in the data path and the
+#: analysis reads what it wrote.
+#:
+#: Which of the two is `solver.vertical background error`, and that is also what
+#: `da/vt_cycled` points the vertical `filepath` at. The two have to move
+#: together: a cycled filepath without this task is an analysis failing on a
+#: missing input, and this task without a cycled filepath is a file nothing
+#: reads. `vertical_b_is_cycled` is the one place either is decided.
+DEFERRED = ("verify",)
+
+
+def vertical_b_is_cycled(config):
+    """Whether this experiment rebuilds the vertical B every cycle.
+
+    Stated by the experiment rather than inferred from the `filepath`, because
+    a path is a string and matching against it would make the workflow's
+    behaviour depend on how someone spelled a directory.
+    """
+    return (config.get("solver") or {}).get(
+        "vertical background error") == "cycled"
 
 
 def deferred_task(config, task):
@@ -193,7 +208,11 @@ def deferred_task(config, task):
     stub *is* the body, and taking this path there would remove the fan-out that
     tier 2 exists to exercise.
     """
-    return config["model"]["name"] != "stub" and task in DEFERRED
+    if config["model"]["name"] == "stub":
+        return False
+    if task == "b.vt":
+        return not vertical_b_is_cycled(config)
+    return task in DEFERRED
 
 
 #: Models whose restart set is a real MOM6 one: written by MOM6, on the domain's
@@ -323,6 +342,26 @@ def analysis_background(paths, cycle, member=0):
     return paths.member_out("rst", cycle - 1, member)
 
 
+def real_vt(config, task):
+    """Whether this job recalibrates the vertical B rather than stubbing it."""
+    return (task == "b.vt" and config["model"]["name"] in REAL_STATE
+            and vertical_b_is_cycled(config))
+
+
+def vertical_b(paths, cycle):
+    """This cycle's vertical correlation file, which its analysis reads.
+
+    Under the cycle's own `ana/`, beside the increments it is about to produce,
+    because it belongs to this analysis and to no other. `cleanup` reaps it on
+    `ana`'s schedule, one cycle later than the restarts, which is what leaves a
+    finished cycle's B on disk long enough to be looked at.
+
+    `.nc` here and a stem in the configuration: saber appends the suffix both
+    when it writes and when it reads.
+    """
+    return paths.cycle_out("ana", cycle) / f"{soca.VT_STEM}.nc"
+
+
 def analysis_trajectory(config, paths, cycle, member=0):
     """The states a 4D window compares its observations against, or None.
 
@@ -411,6 +450,9 @@ def task_io(config, paths, task, cycle, member):
         return [source / stamp], \
                [paths.member_out("rst", cycle, member) / stamp] \
                + slot_states(config, paths, cycle, member)
+    if real_vt(config, task):
+        return [analysis_background(paths, cycle) / restart_stamp(config)], \
+               [vertical_b(paths, cycle)]
     if real_analysis(config, task):
         return _analysis_io(config, paths, cycle, task)
     if real_recenter(config, task):
@@ -664,6 +706,8 @@ def run_task(config, site, paths, cycle, task, member=None):
         _stats(site, paths, cycle)
     elif real_model(config, task):
         _forecast(config, site, paths, cycle, task, member)
+    elif real_vt(config, task):
+        _b_vt(config, site, paths, cycle, task)
     elif real_analysis(config, task):
         _analysis(config, site, paths, cycle, task)
     elif real_recenter(config, task):
@@ -936,6 +980,53 @@ def _forecast(config, site, paths, cycle, task, member):
 
 
 # --- the analysis ------------------------------------------------------------
+
+def _b_vt(config, site, paths, cycle, task):
+    """Rebuild the vertical correlation of the static B for this cycle.
+
+    Two steps, and only the first is ACKBAR's own. `ackbar.diffusion` turns the
+    background's mixed layer into a field of correlation lengths in model
+    levels, which is the same function `tools/soca-diffusion.sh` calls offline;
+    then SOCA builds the diffusion operator that field describes and writes the
+    normalization that makes it a correlation.
+
+    The scale field goes into the application's own run directory rather than
+    anywhere durable. It is an input to a calibration and not a product: what
+    is worth keeping is the operator, and what makes the operator explicable is
+    the *background*, which is already on disk under this cycle's `rst`.
+    """
+    background = analysis_background(paths, cycle) / restart_stamp(config)
+    if not background.exists():
+        raise TaskError(
+            f"{cycle}.{task}: {background} does not exist, so there is no "
+            f"background to calibrate the vertical B against.")
+
+    run = paths.scratch(cycle, task)
+    run.mkdir(parents=True, exist_ok=True)
+    scales = run / "scales_vt.nc"
+
+    try:
+        grid = diffusion.read_gridspec(
+            Path(config["domain"]["static"]) / soca.GRIDSPEC)
+        smoothing = diffusion.smoothing_scale(grid)
+        thickness, mld = diffusion.read_restart(background, grid, smoothing)
+        field = diffusion.vertical_scales(
+            thickness, mld, soca.vertical_scale_spec(config["solver"]))
+        diffusion.write(scales, grid, vt=field)
+        diffusion.report("vt", field[0], grid["mask"], "levels")
+
+        written = soca.calibrate_vt(
+            config, site, paths, cycle, task,
+            background=background, scales=scales,
+            target=vertical_b(paths, cycle))
+    except (mom6sis2.ModelError, OSError) as error:
+        raise TaskError(f"{cycle}.{task}: {error}") from error
+
+    inside = mld[grid["mask"]]
+    print(f"ackbar: {cycle}.{task}: mixed layer {inside.mean():.1f} m mean, "
+          f"{inside.max():.1f} m max; vertical correlation "
+          f"{field[0][grid['mask']].mean():.2f} levels mean -> {written}")
+
 
 def _analysis(config, site, paths, cycle, task):
     """Solve for this cycle's analysis and its departures."""

@@ -31,7 +31,8 @@ TEMPLATES = REPO / "config" / "soca"
 #: Which template each task's builder fills. The builders are exercised against
 #: a real config elsewhere (`tests/test_soca.py`); what is pinned here is the
 #: correspondence itself.
-DOCUMENTS = ("hofx", "hofx4d", "var", "varfgat", "var4d", "letkf", "recenter")
+DOCUMENTS = ("hofx", "hofx4d", "var", "varfgat", "var4d", "letkf", "recenter",
+             "vt")
 
 #: The slots each document is built with, spelled out rather than read back from
 #: the builder. A test that derived both sides from the same call would pass for
@@ -64,6 +65,12 @@ EXPECTED = {
               "SPREAD_POSTERIOR_OUTPUT"},
     "recenter": {"GEOMETRY", "ANALYSIS_VARIABLES", "CENTER_DIR", "CENTER_FILE",
                  "MEMBER_ANALYSES", "RECENTERED_OUTPUT"},
+    # The per-cycle vertical B calibration. No observers and no analysis
+    # variables: it reads one field of one state to define a geometry against,
+    # and everything else it needs is the scale field named by `SCALES_FILE`.
+    "vt": {"GEOMETRY", "BACKGROUND", "NORMALIZATION_ITERATIONS",
+           "VERTICAL_METHOD", "VERTICAL_ITERATIONS", "SCALES_DATE",
+           "SCALES_FILE", "WRITE_STEM"},
 }
 
 

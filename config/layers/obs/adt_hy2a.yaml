@@ -43,15 +43,26 @@ observations:
     - variable: {name: GeoVaLs/sea_surface_temperature}
       minvalue: 5.0
   - filter: Background Check
-    # 0.5 m, and `obs/adt_3a.yaml` says 0.2. The threshold is there to reject
-    # observations the background cannot possibly be that far from, and how far
-    # that is depends on the background. This OSSE's is deliberately wrong by
-    # about 9 cm rms at cycle zero and grows from there, with the largest
-    # departures along the Loop Current front, which is precisely the signal.
-    # At 0.2 m it rejects 4 per cent of the network on the first day and more
-    # every cycle after, and every one of those is a real observation of a real
-    # error: there are no gross errors in a synthetic archive to catch.
-    absolute threshold: 0.5
+    # **Effectively off, and that is what an OSSE wants.** A background check
+    # rejects observations the background cannot plausibly be that far from,
+    # which is a statement about gross error: a mispositioned buoy, a failed
+    # retrieval, a decimal point. A synthetic archive has none. Every value here
+    # is the truth plus Gaussian noise of the declared size, so everything the
+    # check removes is signal, and the largest departures are along the Loop
+    # Current front, which is the signal this experiment exists to correct.
+    #
+    # It biases the comparison as well as weakening the analysis, and in the
+    # direction that is hardest to notice. `post.obs` computes O-B over the
+    # observations that passed QC, so a tighter background is censored less than
+    # a looser one: the free run's worst departures get thrown away before they
+    # reach the statistic, and the assimilating run is scored against a
+    # flattered baseline. `obs/adt_3a.yaml` keeps 0.2 m, being pinned to the
+    # tier 3 archive.
+    #
+    # 10 m rather than removing the filter, so that a diverging model is still
+    # caught. Gulf sea level moves by a metre in a hurricane and by thousands
+    # when MOM6 has blown up, and those two are worth telling apart.
+    absolute threshold: 10.0
   - filter: BlackList
     where:
     - variable: {name: MetaData/latitude}

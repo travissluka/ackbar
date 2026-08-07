@@ -101,6 +101,12 @@ APPLICATIONS = {
     "var4d": "soca_var.x",
     "letkf": "soca_letkf.x",
     "recenter": "soca_ensrecenter.x",
+    # The vertical half of the background error's correlation, recalibrated
+    # against the cycle's own background. The same executable the offline
+    # `tools/soca-diffusion.sh` runs, and deliberately so: an experiment that
+    # cycles this and one that does not must be reading a file built by the
+    # same operator, or the two are not comparable.
+    "vt": "soca_error_covariance_toolbox.x",
 }
 
 #: Which template each window type builds its analysis from. Three siblings
@@ -192,6 +198,11 @@ RECENTERED = ("rcnt", "an")
 #: above, because by then the file is in that member's own directory and an
 #: index in the name is redundant.
 ENSEMBLE_TYPE = "ens"
+
+#: What a per-cycle vertical calibration is called, without the `.nc` saber
+#: appends. The same word the offline stage uses, so that the `filepath` an
+#: analysis reads differs between static and cycled only in its directory.
+VT_STEM = "vt"
 
 #: The ensemble's prior and posterior spread. `sprdb` and `sprda` rather than
 #: words, because `exp` becomes a dot-separated field of a filename and a dot
@@ -406,6 +417,39 @@ def recenter(config, site, paths, cycle, task, *, center, ensemble, members,
     written = _positions(run / "out", members, mean=False)
     return commit([(source, target(member) / name)
                    for member, source in written.items()], move=True)
+
+
+def calibrate_vt(config, site, paths, cycle, task, *, background, scales,
+                 target):
+    """Rebuild the vertical correlation of B against one cycle's background.
+
+    The mixed layer sets how many model levels the analysis may spread a
+    surface observation down through, and the offline calibration fixes it to
+    the MLD of whatever restart `tools/soca-diffusion.sh` was handed. That is a
+    constant standing in for something with a seasonal cycle of a factor of
+    several and a response to a single storm. This is the same calibration
+    against the state the cycle is about to assimilate into.
+
+    *scales* is the length scale field, already written, and *target* is where
+    the calibrated file belongs. Both are the caller's because the scale field
+    comes from `ackbar.diffusion` rather than from SOCA, and because where the
+    product goes is a fact about the experiment's layout.
+
+    saber appends `.nc` to the stem it is given, here and in the `filepath` an
+    analysis reads it back through, so what this returns is the file and what
+    the configuration names is the stem.
+    """
+    run = run_application(
+        "vt", config, site, paths, cycle, task,
+        vt_config(config, cycle, background=background, scales=scales,
+                  templates=paths.templates))
+    written = run / "out" / f"{VT_STEM}.nc"
+    if not written.exists():
+        raise ModelError(
+            f"{written} was not written, so the calibration produced no "
+            f"vertical correlation for this cycle to be analysed through. The "
+            f"application exited 0; its log is beside this task's yaml.")
+    return commit([(written, target)], move=True)[0]
 
 
 def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
@@ -890,6 +934,65 @@ def recenter_config(config, cycle, *, center, ensemble, members, templates=None)
                                          variables=variables),
         "RECENTERED_OUTPUT": _written(RECENTERED, type=ENSEMBLE_TYPE, date=date),
     }, templates=templates)
+
+
+def vt_config(config, cycle, *, background, scales, templates=None):
+    """The whole `soca_error_covariance_toolbox.x` YAML. See `config/soca/vt.yaml`.
+
+    The vertical scheme comes from the experiment's own `solver.background
+    error`, not from `config/static/diffusion.yaml`, and that is the point
+    rather than an oversight: the file written here is read back through that
+    block, and a normalization computed with one operator and applied by
+    another is a background error wrong by a factor nothing reports. Reading
+    the same place both times is what makes them unable to disagree.
+    """
+    model = config["model"]
+    background = Path(background)
+    vertical = _vertical_block(config["solver"])
+
+    return build_document("vt", config, cycle, {
+        "GEOMETRY": _geometry(model),
+        "BACKGROUND": {
+            "read_from_file": 1,
+            "basename": _basename(background.parent),
+            "ocn_filename": background.name,
+            "date": _date(config, cycle),
+            # One field, because one is all the calibration reads: it needs a
+            # state to define the geometry against and the scales come from the
+            # separate file below.
+            "state variables": ["sea_water_potential_temperature"],
+        },
+        # Nothing performs these: the horizontal randomization is what they
+        # count and this document has no horizontal group. Small rather than
+        # the offline stage's ten thousand, so that a reader of the trace is not
+        # left thinking this cycle paid for them.
+        "NORMALIZATION_ITERATIONS": 1,
+        "VERTICAL_METHOD": _require(vertical, "method"),
+        "VERTICAL_ITERATIONS": _require(vertical, "iterations"),
+        "SCALES_DATE": _date(config, cycle),
+        "SCALES_FILE": Path(scales).name,
+        "WRITE_STEM": f"out/{VT_STEM}",
+    }, templates=templates)
+
+
+def _vertical_block(solver):
+    """The `vertical:` mapping of the group that carries the tracers.
+
+    Found by looking for it rather than by index, because the groups are a list
+    an experiment may reorder and only one of them has a vertical: sea surface
+    height is a single level and has no vertical correlation to describe.
+    """
+    groups = (((solver.get("background error") or {})
+               .get("saber central block") or {})
+              .get("read") or {}).get("groups") or []
+    for group in groups:
+        if "vertical" in group:
+            return group["vertical"]
+    raise ModelError(
+        "no group under `solver.background error` states a `vertical:`, so "
+        "there is no vertical correlation to recalibrate. `b.vt` runs because "
+        "the experiment asked for `solver.vertical background error: cycled`; "
+        "one of the two is wrong.")
 
 
 def background_error(solver, variables, *, ensemble=None):
