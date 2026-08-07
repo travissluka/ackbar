@@ -328,14 +328,16 @@ def main(argv=None):
             lon, lat, when = observe(grid, spec, begin, begin + length, rng)
             path = target / f"{platform}.{begin.strftime('%Y%m%d%H')}.nc4"
             if lon.size == 0:
-                # A satellite that did not pass over the domain this cycle, and
-                # a file is still written: the observer reads a path built from
-                # the cycle date and a missing file is a failed job, not an
-                # empty obs space. Which is right, and this is a real gap in the
-                # observing system rather than a missing input.
-                empty = np.array([])
-                write_obs(path, spec, empty, empty, empty, begin, empty)
-                print(f"obs-archive-osse: {path} (no pass this cycle)")
+                # A satellite that did not pass over the domain this cycle. No
+                # file, rather than a file with no locations in it: ACKBAR
+                # already drops an observer whose window is missing from the
+                # archive, and `ackbar validate` says so in as many words, while
+                # an ioda file with a zero length `Location` dimension is
+                # something the observer has to survive and nothing promises it
+                # will. CryoSat-2 does this about once in forty five cycles,
+                # which is what a 369 day repeat over a small domain looks like.
+                print(f"obs-archive-osse: {platform} does not pass over the "
+                      f"domain during {begin:%Y-%m-%d %H:%M}, no file written")
                 continue
 
             noise = rng.normal(0.0, spec["error"], size=lon.shape)

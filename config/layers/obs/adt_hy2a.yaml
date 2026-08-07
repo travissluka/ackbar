@@ -43,7 +43,15 @@ observations:
     - variable: {name: GeoVaLs/sea_surface_temperature}
       minvalue: 5.0
   - filter: Background Check
-    absolute threshold: 0.2
+    # 0.5 m, and `obs/adt_3a.yaml` says 0.2. The threshold is there to reject
+    # observations the background cannot possibly be that far from, and how far
+    # that is depends on the background. This OSSE's is deliberately wrong by
+    # about 9 cm rms at cycle zero and grows from there, with the largest
+    # departures along the Loop Current front, which is precisely the signal.
+    # At 0.2 m it rejects 4 per cent of the network on the first day and more
+    # every cycle after, and every one of those is a real observation of a real
+    # error: there are no gross errors in a synthetic archive to catch.
+    absolute threshold: 0.5
   - filter: BlackList
     where:
     - variable: {name: MetaData/latitude}
