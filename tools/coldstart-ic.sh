@@ -47,7 +47,11 @@ HOURS=${3:?usage: coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <source-slug>
 SLUG=${4:?usage: coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <source-slug>}
 
 : "${ACKBAR_STATIC_ROOT:?the site did not set ACKBAR_STATIC_ROOT}"
-NTASKS=${NTASKS:-8}
+
+# How many ranks is a property of the machine, so the site file owns it and
+# nothing here may name a number. Overridable per invocation because this runs
+# outside Slurm and nothing schedules it against what else is on the box.
+NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
 
 # Read out of the domain layer, so this integrates the same configuration a
 # cycling forecast would.

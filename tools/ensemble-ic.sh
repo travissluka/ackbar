@@ -122,8 +122,12 @@ python3 "$ACKBAR_ROOT/tools/ensemble-ic.py" plan \
     "$LAYER" "$STATIC" "$LEVELS" "$METADATA" "$IC/MOM.res.nc" \
     "$MEMBERS" enspert.yaml
 
+# How many ranks is a property of the machine, so the site file owns it and
+# nothing here may name a number. Overridable per invocation because this runs
+# outside Slurm and nothing schedules it against what else is on the box.
+NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
 echo "ensemble-ic: drawing $MEMBERS perturbation(s) from the static background error"
-mpiexec -n 8 "$ENSPERT" enspert.yaml > enspert.log 2>&1 || {
+mpiexec -n "$NTASKS" "$ENSPERT" enspert.yaml > enspert.log 2>&1 || {
     tail -40 enspert.log >&2
     echo "ensemble-ic: soca_enspert.x failed; the log above is its last 40 lines" >&2
     exit 1

@@ -118,8 +118,16 @@ python3 "$ACKBAR_ROOT/tools/dirac.py" plan \
     "$LAYER" "$STATIC" "$LEVELS" "$METADATA" "$GRIDSPEC" "$RESTART" \
     dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"}
 
-echo "soca-dirac: applying the correlation to the diracs"
-mpiexec -n 8 "$TOOLBOX" dirac.yaml > toolbox.log 2>&1 || {
+# How many ranks is a property of the machine, so the site file owns it and
+# nothing here may name a number. See site/rancor.sh.
+#
+# Overridable per invocation because this runs outside Slurm, so nothing
+# schedules it against whatever else is on the box. The tier 3 suite is the
+# case that bites: its experiment tests go through Slurm while this goes
+# straight to mpiexec, and the two together can oversubscribe the node.
+NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
+echo "soca-dirac: applying the correlation to the diracs on $NTASKS ranks"
+mpiexec -n "$NTASKS" "$TOOLBOX" dirac.yaml > toolbox.log 2>&1 || {
     tail -40 toolbox.log >&2
     echo "soca-dirac: the toolbox failed; the log above is its last 40 lines" >&2
     exit 1

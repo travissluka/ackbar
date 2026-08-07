@@ -44,11 +44,17 @@ vars:
   domain_static: $(static_root)/static/gom_4km
 
   # Vertical levels the background error's diffusion parameters are
-  # calibrated on, which is this domain's NK. Here rather than in the da
-  # layer because a B built for the wrong number of levels is wrong
-  # whatever the solver says, and because the da layer is shared by every
-  # domain.
-  diffusion_levels: 36
+  # calibrated on. Here rather than in the da layer because a B built for
+  # the wrong number of levels is wrong whatever the solver says, and
+  # because the da layer is shared by every domain.
+  #
+  # **This has to equal NK, which every Gulf domain now takes from
+  # `config/model/mom6sis2/domain/gom/common/MOM_input`.** It is the one
+  # copy of the level count that lives outside that file, and it does not
+  # fail loudly when it disagrees: SABER reads a calibration with more
+  # levels than it was told to expect and spins, at full CPU on every rank,
+  # writing nothing.
+  diffusion_levels: 50
 
 domain:
   name: gom_4km

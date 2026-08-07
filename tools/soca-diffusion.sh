@@ -243,13 +243,22 @@ for path, variable, groups in ((hz_out, HZ_VARIABLE, horizontal),
                        sort_keys=False, default_flow_style=False)
 PY
 
-# Eight ranks because that is what this machine has cores for and the
+# Eight ranks because that is what this machine has physical cores for, and the
 # randomization is the whole cost. See the note above about this not being bit
 # reproducible across a change to this number.
-echo "soca-diffusion: calibrating the horizontal"
-mpiexec -n 8 "$TOOLBOX" calibrate_hz.yaml
-echo "soca-diffusion: calibrating the vertical"
-mpiexec -n 8 "$TOOLBOX" calibrate_vt.yaml
+#
+# How many ranks is a property of the machine, so the site file owns it and
+# nothing here may name a number. See site/rancor.sh.
+#
+# Overridable per invocation because this runs outside Slurm, so nothing
+# schedules it against whatever else is on the box. The tier 3 suite is the
+# case that bites: its experiment tests go through Slurm while this goes
+# straight to mpiexec, and the two together can oversubscribe the node.
+NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
+echo "soca-diffusion: calibrating the horizontal on $NTASKS ranks"
+mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_hz.yaml
+echo "soca-diffusion: calibrating the vertical on $NTASKS ranks"
+mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_vt.yaml
 
 # What the toolbox writes is what the da layers read, so check for the files
 # rather than for an exit status. `filepath` in saber is a stem: the file is the

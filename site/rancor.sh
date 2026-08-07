@@ -20,6 +20,18 @@ ACKBAR_BUILD_TYPE=RelWithDebInfo
 # than inheriting it by accident.
 ACKBAR_CMAKE_GENERATOR=Ninja
 
+# --- offline tools -----------------------------------------------------------
+# Ranks for the tools that run MPI outside Slurm: soca-diffusion, soca-dirac,
+# coldstart-ic. Physical cores, not threads, because these are all
+# floating-point bound and the second hyperthread buys nothing.
+#
+# Separate from ACKBAR_NJOBS, which is a compiler job count and wants threads.
+#
+# Nothing schedules these against Slurm, so they and a running experiment can
+# oversubscribe the box between them. Lower it when running a tool beside an
+# experiment; the tools take NTASKS in the environment for exactly that.
+ACKBAR_MPI_TASKS=8
+
 # --- data roots --------------------------------------------------------------
 ACKBAR_DATASETS_ROOT=/data/mom6-datasets
 # What the offline stages produce: static/<domain>, initial conditions,
