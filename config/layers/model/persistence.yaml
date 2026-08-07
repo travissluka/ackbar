@@ -32,5 +32,15 @@
 # degrades in a way no ocean does. Read any score from a persistence experiment
 # as a statement about the workflow.
 
+# This layer inherits `model/mom6sis2` rather than asking an experiment to list
+# both. It is an *overlay*: on its own it is a handful of keys that only mean
+# something on top of that base, and an experiment that listed it alone used to
+# get a config that was quietly missing everything the base supplies. Listing
+# both still works and still means the same thing, because a layer reached twice
+# is loaded once.
+
+inherit:
+  - model/mom6sis2
+
 model:
   name: persistence

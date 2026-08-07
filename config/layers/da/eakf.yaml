@@ -20,6 +20,16 @@
 # `letkf.yml`, which differ in exactly these places and nowhere else that
 # matters.
 
+# This layer inherits `da/letkf` rather than asking an experiment to list
+# both. It is an *overlay*: on its own it is a handful of keys that only mean
+# something on top of that base, and an experiment that listed it alone used to
+# get a config that was quietly missing everything the base supplies. Listing
+# both still works and still means the same thing, because a layer reached twice
+# is loaded once.
+
+inherit:
+  - da/letkf
+
 solver:
   local ensemble DA:
     # `EAKF` in oops's own factory: `instantiateLocalEnsembleSolverFactory.h`

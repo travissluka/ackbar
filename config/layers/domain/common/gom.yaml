@@ -1,0 +1,125 @@
+# Everything the four Gulf of Mexico resolutions share, which is nearly all of
+# it. Not a domain: this layer sets no `domain.name`, so an experiment that
+# inherited it alone would fail the schema. `domain/gom_25km` and its three
+# siblings inherit it and state what makes them a resolution.
+#
+# The four differ in eight values, and they are worth listing because the number
+# is the argument for this file existing:
+#
+#   $(domain_slug)          the directory name under the static root, and the
+#                           domain's own name
+#   $(domain_resolution)    which MOM_override directory makes it that grid
+#   $(mom6_dt_cpld)         3600 at 25 and 12 km, 1800 at 8 and 4
+#   forecast, forecast.ext  wall time and memory, which scale with the grid
+#
+# Everything else, including every other task's resources, was written out four
+# times. `om_1deg` is not in this family and does not inherit this: it shares
+# one line of fifty with a Gulf domain, being a different ocean on a different
+# grid with a different case.
+#
+# Resolution names are in kilometres because the source configurations were
+# named in fractions of a degree with ambiguous digits, and `025deg` there meant
+# 1/25 degree rather than a quarter. Kilometres cannot be misread and sort the
+# right way round. See `docs/domains.md`.
+
+vars:
+  # The stock MOM6-SIS2 configuration, in this repository, because MOM6-examples
+  # ships no Gulf of Mexico setup and this one is therefore ours. Shared by
+  # every Gulf resolution: the four imported configurations were 77 identical
+  # MOM6 parameters apiece plus 26 that differed, and keeping four copies of the
+  # 77 is how they drifted apart in the first place. What makes a domain its
+  # resolution is in its own MOM_override, which is therefore also the readable
+  # list of how the Gulf domains disagree.
+  #
+  # This file is the same argument applied one level up, to the layers rather
+  # than to the MOM6 parameters.
+  mom6_base_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/common
+
+  # The data half, out of the repository. Grid, bathymetry, initial condition
+  # and open boundary conditions, plus a symlink to the shared forcing stage.
+  mom6_input_dir: $(static_root)/domain/$(domain_slug)/INPUT
+
+  # What ACKBAR changes about the shared configuration: the parameters that make
+  # this domain this resolution, and the bug-retention flags it turns off on
+  # every domain.
+  mom6_override_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/$(domain_resolution)
+
+  # Where this domain's offline stages land: the gridspec today, the background
+  # error parameters once they are built. A var as well as a `domain.static`
+  # key, because the da layer names files under it and cannot know which domain
+  # it is being merged with.
+  domain_static: $(static_root)/static/$(domain_slug)
+
+  # The coupler timestep. 3600 is what the two coarse Gulf domains have always
+  # run at; the two fine ones halve it and say so themselves.
+  mom6_dt_cpld: 3600
+
+  # Vertical levels the background error's diffusion parameters are calibrated
+  # on. Here rather than in the da layer because a B built for the wrong number
+  # of levels is wrong whatever the solver says, and because the da layer is
+  # shared by every domain.
+  #
+  # **This has to equal NK, which every Gulf domain now takes from
+  # `config/model/mom6sis2/domain/gom/common/MOM_input`.** It is the one copy of
+  # the level count that lives outside that file, and it does not fail loudly
+  # when it disagrees: SABER reads a calibration with more levels than it was
+  # told to expect and spins, at full CPU on every rank, writing nothing.
+  # Thirty-three minutes of that is how this comment got written.
+  diffusion_levels: 50
+
+domain:
+  static: $(domain_static)
+
+  resources:
+    default:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 4G
+
+    # 8 PEs is this machine's physical core count, not a property of the domain.
+    # At 25 km, 87 x 56 does not really justify eight of them, and the measured
+    # speedup over om_1deg is 28x rather than the 38x the grid sizes alone
+    # predict, because the subdomains get too small for the halo exchange to
+    # pay. It is still the fastest thing available and there is no reason to
+    # leave cores idle. No layout: MOM6 decomposes for itself.
+    #
+    # Only `time` and `mem` are restated per resolution. The rank count is the
+    # machine's and does not change with the grid.
+    forecast:
+      ntasks: 8
+      time: '00:20:00'
+      mem: 8G
+    forecast.ext:
+      ntasks: 8
+      time: '01:00:00'
+      mem: 8G
+    da:
+      ntasks: 8
+      time: '00:30:00'
+      mem: 16G
+    # The ensemble's own analysis, where a hybrid runs one. Same shape as `da`:
+    # one MPI job holding every member at once.
+    da.ens:
+      ntasks: 8
+      time: '00:30:00'
+      mem: 16G
+    hofx:
+      ntasks: 8
+      time: '00:10:00'
+      mem: 8G
+    b.vt:
+      ntasks: 8
+      time: '00:10:00'
+      mem: 8G
+    recenter:
+      ntasks: 8
+      time: '00:10:00'
+      mem: 8G
+    writeback:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 8G
+    post.state:
+      ntasks: 1
+      time: '00:10:00'
+      mem: 4G

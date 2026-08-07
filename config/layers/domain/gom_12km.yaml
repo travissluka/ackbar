@@ -12,99 +12,31 @@
 # Resolution names are in kilometres because the source configurations were named
 # in fractions of a degree with ambiguous digits, and `08deg` there meant 1/8
 # degree, which is this, at about 12 km. Kilometres cannot be misread.
+#
+# Everything not stated here comes from `domain/common/gom.yaml`, which this
+# layer inherits: the stock case, the static roots, the level count, and every
+# task's resources but the two that scale with the grid.
+
+inherit:
+  - domain/common/gom
 
 vars:
-  # The stock MOM6-SIS2 configuration, in this repository, because MOM6-examples
-  # ships no Gulf of Mexico setup and this one is therefore ours. Shared by
-  # every Gulf resolution: the four imported configurations were 77 identical
-  # MOM6 parameters apiece plus 26 that differed, and keeping four copies of the
-  # 77 is how they drifted apart in the first place. What makes this domain this
-  # resolution is in its own MOM_override, which is therefore also the readable
-  # list of how the Gulf domains disagree.
-  mom6_base_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/common
-
-  # The data half, out of the repository. Grid, bathymetry, initial condition
-  # and open boundary conditions, plus a symlink to the shared forcing stage.
-  mom6_input_dir: $(static_root)/domain/gom_12km/INPUT
-
-  # The coupler timestep this domain has always run at.
-  mom6_dt_cpld: 3600
-
-  # What ACKBAR changes about the shared configuration: the parameters that make
-  # this domain this resolution, and the bug-retention flags it turns off on
-  # every domain.
-  mom6_override_dir: $(ackbar_root)/config/model/mom6sis2/domain/gom/12km
-
-  # Where this domain's offline stages land: the gridspec today, the
-  # background error parameters once they are built. A var as well as a
-  # `domain.static` key, because the da layer names files under it and
-  # cannot know which domain it is being merged with.
-  domain_static: $(static_root)/static/gom_12km
-
-  # Vertical levels the background error's diffusion parameters are
-  # calibrated on. Here rather than in the da layer because a B built for
-  # the wrong number of levels is wrong whatever the solver says, and
-  # because the da layer is shared by every domain.
-  #
-  # **This has to equal NK, which every Gulf domain now takes from
-  # `config/model/mom6sis2/domain/gom/common/MOM_input`.** It is the one
-  # copy of the level count that lives outside that file, and it does not
-  # fail loudly when it disagrees: SABER reads a calibration with more
-  # levels than it was told to expect and spins, at full CPU on every rank,
-  # writing nothing.
-  diffusion_levels: 50
+  # The directory name under the static root, and the domain's own name. The
+  # common layer builds `mom6_input_dir` and `domain_static` from it.
+  domain_slug: gom_12km
+  # Which MOM_override under `config/model/mom6sis2/domain/gom/` makes this
+  # domain this grid. Not derivable from the slug: one is named for the
+  # spacing in kilometres and the other for the fraction of a degree.
+  domain_resolution: 12km
 
 domain:
   name: gom_12km
 
-  static: $(domain_static)
-
+  # The two that scale with the grid. Everything else is the common layer's.
   resources:
-    default:
-      ntasks: 1
-      time: '00:10:00'
-      mem: 4G
-
-    # 8 PEs is this machine's physical core count, not a property of the
-    # domain. 174 x 111 decomposes across them well and the measured 6.3x over
-    # om_1deg is what the grid sizes predict, which is not true of gom_25km:
-    # that one is small enough that its subdomains stop paying for their halo
-    # exchange. No layout: MOM6 decomposes for itself.
     forecast:
-      ntasks: 8
       time: '00:40:00'
       mem: 12G
     forecast.ext:
-      ntasks: 8
       time: '03:00:00'
       mem: 12G
-    da:
-      ntasks: 8
-      time: '00:30:00'
-      mem: 16G
-    # The ensemble's own analysis, where a hybrid runs one. Same shape as
-    # `da`: one MPI job holding every member at once.
-    da.ens:
-      ntasks: 8
-      time: '00:30:00'
-      mem: 16G
-    hofx:
-      ntasks: 8
-      time: '00:10:00'
-      mem: 8G
-    b.vt:
-      ntasks: 8
-      time: '00:10:00'
-      mem: 8G
-    recenter:
-      ntasks: 8
-      time: '00:10:00'
-      mem: 8G
-    writeback:
-      ntasks: 1
-      time: '00:10:00'
-      mem: 8G
-    post.state:
-      ntasks: 1
-      time: '00:10:00'
-      mem: 4G

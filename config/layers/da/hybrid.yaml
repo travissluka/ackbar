@@ -18,6 +18,16 @@
 # which the experiment states because it is a statement about how much machinery
 # the experiment is willing to run rather than about the covariance.
 
+# This layer inherits `da/variational` rather than asking an experiment to list
+# both. It is an *overlay*: on its own it is a handful of keys that only mean
+# something on top of that base, and an experiment that listed it alone used to
+# get a config that was quietly missing everything the base supplies. Listing
+# both still works and still means the same thing, because a layer reached twice
+# is loaded once.
+
+inherit:
+  - da/variational
+
 solver:
   covariance: hybrid
 

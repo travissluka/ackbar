@@ -19,5 +19,16 @@
 # same analysis: because it is not the same experiment. This one has no static B
 # in it to mis-weight, and the pair of them is what separates "the ensemble is
 # carrying the analysis" from "the weights happen to be tuned".
+
+# This layer inherits `da/hybrid` rather than asking an experiment to list
+# both. It is an *overlay*: on its own it is a handful of keys that only mean
+# something on top of that base, and an experiment that listed it alone used to
+# get a config that was quietly missing everything the base supplies. Listing
+# both still works and still means the same thing, because a layer reached twice
+# is loaded once.
+
+inherit:
+  - da/hybrid
+
 solver:
   covariance: ensemble
