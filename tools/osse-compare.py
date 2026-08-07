@@ -200,7 +200,11 @@ def skill(runs, platforms, skip, out):
     if not others or not platforms:
         return None
 
-    labels = [f"{platform}\n{variable}" for platform, variable in platforms]
+    # The platform alone. The variable was on a second line and every altimeter
+    # spells it `absoluteDynamicTopography`, which is 24 characters of the same
+    # word seven times and ran the labels into each other. The prefix already
+    # says which is which.
+    labels = [platform for platform, _ in platforms]
     at = np.arange(len(platforms))
     width = 0.8 / len(others)
 
