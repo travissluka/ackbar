@@ -57,6 +57,16 @@ LOOP_BOX = {"lon": (-92.0, -83.0), "lat": (21.0, 30.0)}
 #: the honest simplification and 1025 is the number to state.
 RHO0 = 1025.0
 
+#: The depths the drift figures are sampled at, in metres. Fixed, and shared by
+#: every cycle and every experiment, because the whole point is that two states
+#: are compared at the same depth rather than at the same layer index. Spaced
+#: to resolve the mixed layer and the thermocline and to say something about the
+#: abyss without pretending to resolve it.
+DEPTHS = np.array([
+    0., 5., 10., 20., 30., 50., 75., 100., 125., 150., 200., 250., 300.,
+    400., 500., 600., 800., 1000., 1250., 1500., 2000., 2500., 3000.,
+])
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -151,6 +161,47 @@ def to_center(field, axis):
     return 0.5 * (filled + shifted)
 
 
+def _at_depths(field, thick, weight, ocean):
+    """Area-mean of *field* on `DEPTHS`, interpolated per column first.
+
+    Per column and then averaged, rather than averaging the layers and
+    interpolating the mean profile. The two differ wherever the layer
+    interfaces are not flat, which on a hybrid coordinate is everywhere the
+    density structure varies, and the second is the one that reintroduces the
+    artefact this function exists to remove.
+
+    Below a column's own bottom the profile is not extended: those columns drop
+    out of the average at that depth, so a deep level is a mean over the ocean
+    deep enough to have one. The alternative, holding the bottom value, invents
+    an abyss under the shelf.
+    """
+    values = np.ma.filled(field, np.nan)
+    thickness = np.ma.filled(thick, 0.0)
+    # Layer centres, which is where a layer's mean value actually sits.
+    edges = np.cumsum(thickness, axis=0)
+    centres = edges - 0.5 * thickness
+
+    levels, rows, cols = values.shape
+    out = np.full((DEPTHS.size, rows, cols), np.nan)
+    for j in range(rows):
+        for i in range(cols):
+            if weight[j, i] == 0.0:
+                continue
+            column = centres[:, j, i]
+            good = np.isfinite(values[:, j, i]) & (thickness[:, j, i] > 0)
+            if good.sum() < 2:
+                continue
+            inside = DEPTHS <= column[good][-1]
+            out[inside, j, i] = np.interp(
+                DEPTHS[inside], column[good], values[good, j, i])
+
+    mask = np.isfinite(out)
+    scaled = np.where(mask, out, 0.0) * weight
+    covered = np.where(mask, weight, 0.0).sum(axis=(1, 2))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(covered > 0, scaled.sum(axis=(1, 2)) / covered, np.nan)
+
+
 def read_record(path, grid):
     """One cycle, reduced to the handful of numbers and fields plotted."""
     date = path.parent.name
@@ -176,9 +227,20 @@ def read_record(path, grid):
     # Depth-integrated kinetic energy per unit area, J/m2, then area averaged.
     column = (0.5 * RHO0 * (uc**2 + vc**2) * thick.filled(0.0)).sum(axis=0)
 
-    layer_temp = (temp * weight).sum(axis=(1, 2)) / ocean
-    layer_salt = (salt * weight).sum(axis=(1, 2)) / ocean
     volume = thick * weight
+
+    # **On fixed depths, not on layer index.** The vertical coordinate is
+    # HYCOM1: z* near the surface and isopycnal below, so a layer moves, and
+    # layer 30 at the end of a run holds different water than layer 30 at the
+    # start. Differencing by index reports that migration as a temperature
+    # change, and it does it in the most misleading possible form, a smooth
+    # anomaly of one sign spread over the whole lower column.
+    #
+    # Measured coordinate-free on a 60 day nature run, that artefact read as
+    # +0.29 K of warming from 100 m to 1100 m where the actual heat change below
+    # 200 m was -0.0015 K. This is what `h` is kept in the record for.
+    layer_temp = _at_depths(temp, thick, weight, ocean)
+    layer_salt = _at_depths(salt, thick, weight, ocean)
 
     surface = np.hypot(uc[0], vc[0])
 
@@ -191,7 +253,7 @@ def read_record(path, grid):
         "speed": surface,
         "layer_temp": layer_temp,
         "layer_salt": layer_salt,
-        "depth": np.cumsum((thick * weight).sum(axis=(1, 2)) / ocean),
+        "depth": DEPTHS,
         "temp_mean": float((temp * volume).sum() / volume.sum()),
         "salt_mean": float((salt * volume).sum() / volume.sum()),
     }
@@ -344,10 +406,14 @@ def volume_means(series, times, out):
 
 
 def drift(series, times, out):
-    """Area-mean T and S per level against time, as anomalies from cycle 1.
+    """Area-mean T and S at fixed depths against time, as anomalies from cycle 1.
 
     Anomalies rather than values because the signal is a fraction of a degree
     against a 25 degree range, and the question is whether it is still moving.
+
+    Depths, not layers: see `_at_depths`. A version of this figure that
+    differenced layer index showed a smooth 0.3 K warming reaching the abyss
+    that was entirely the hybrid coordinate migrating.
     """
     figures = []
     depth = series[0]["depth"]
@@ -363,17 +429,25 @@ def drift(series, times, out):
                                vmin=-limit, vmax=limit, shading="nearest")
         axes.set_yscale("symlog", linthresh=100)
         axes.invert_yaxis()
+        # Ticks stated rather than left to symlog, which labels the decades and
+        # nothing in the linear part, so the mixed layer came out unlabelled.
+        axes.set_yticks([0, 25, 50, 100, 300, 1000, 3000])
+        axes.get_yaxis().set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
         axes.set_ylabel("depth  [m]")
-        axes.set_title(f"Area mean {label} anomaly from the first cycle")
+        axes.set_title(f"Area mean {label} anomaly from the first cycle, "
+                       "at fixed depth")
         figure.colorbar(mesh, ax=axes, label=unit)
         figure.autofmt_xdate()
         figure.tight_layout()
         name = f"drift-{label}.png"
         figure.savefig(out / name, dpi=120)
         plt.close(figure)
-        figures.append((name, f"Layer-mean {label} drift. Depth is log below "
-                              "100 m, so the mixed layer is readable next to "
-                              "the abyss."))
+        figures.append((name, f"{label.capitalize()} drift at fixed depths, "
+                              "interpolated per column. Depth is log below "
+                              "100 m so the mixed layer is readable next to the "
+                              "abyss. A deep level averages only the columns "
+                              "deep enough to have one."))
     return figures
 
 

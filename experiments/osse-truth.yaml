@@ -1,7 +1,7 @@
 # Stage B of the Gulf of Mexico OSSE: the nature run.
 #
 # See docs/osse.md. This is the run every experiment is scored against, and the
-# run the synthetic observations are sampled from. It is an ordinary free run
+# run the synthetic observations are sampled from. It is an ordinary free run,
 # and the only two things that make it truth are that nothing assimilates into
 # it and that its states get promoted to a read-only archive afterwards, by
 # `tools/promote-truth.sh`.
@@ -12,21 +12,27 @@
 # cadence than the experiments would have to be interpolated in time before
 # anything could be scored, and an interpolated truth is a truth with an error
 # nobody stated.
+#
+# At 1/8 degree rather than the quarter degree this used to run at. The first
+# baroclinic Rossby radius in the Gulf is 35 to 45 km; at 25 km the domain is
+# barely eddy permitting and an analysis has very little to correct, which
+# makes it a poor thing to benchmark against. At 12 km the Loop Current
+# resolves and sheds rings, so altimetry has real mesoscale to work on. See
+# docs/domains.md.
 inherit:
-  - domain/gom_25km
+  - domain/gom_12km
   - model/mom6sis2
   - da/none
 
 experiment:
   name: osse-truth
-  description: OSSE stage B, the gom_25km nature run
+  description: OSSE stage B, the gom_12km nature run
 
 cycle:
-  # Where the spinup left off. Not a round number and not chosen: it is the
-  # valid time of the last state stage A wrote, and `cycle.start` has to equal
-  # the initial condition's valid time or every window downstream sits offset
-  # from its background.
-  start: '2015-07-04T00:00:00Z'
+  # Where the spinup left off. Not chosen: it is the valid time of the last
+  # state stage A wrote, and `cycle.start` has to equal the initial condition's
+  # valid time or every window downstream sits offset from its background.
+  start: '2015-07-02T00:00:00Z'
   length: PT24H
   count: 60
 
@@ -43,13 +49,12 @@ forecast:
 
 cleanup:
   # Nothing is reaped until it has been promoted, and promotion is a separate
-  # step run by hand after the run finishes. Sixty cycles of restarts plus their
-  # slots is about 3 GB on this domain, which is affordable, and the alternative
-  # is a truth archive with holes in it wherever cleanup got there first.
+  # step run by hand after the run finishes. The alternative is a truth archive
+  # with holes in it wherever cleanup got there first.
   keep_cycles: 60
   keep_every: P1D
 
 model:
   # The end of the spinup. Naming another experiment's restart set directly is
   # what `cleanup.keep_every` exists to make safe; see the schema.
-  initial_condition: $(output_root)/osse-spinup/run/20150629T000000Z/rst/mem000
+  initial_condition: $(output_root)/osse-spinup/run/20150702T000000Z/rst/mem000
