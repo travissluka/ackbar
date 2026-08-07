@@ -5,7 +5,7 @@ asks it where things are. A second spelling of any of these answers is a bug
 that surfaces only as a missing file eight hours into a run.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -53,6 +53,20 @@ def test_the_products_are_one_file_per_member_per_cycle(paths):
         paths.product("rst", 2, 0)
 
 
+def test_a_sub_window_state_is_filed_under_its_own_valid_time(paths):
+    # A 4D forecast writes states *between* analysis times, so no cycle number
+    # spells them and `at` names the instant directly. They go under `bkg/`
+    # beside the states on analysis times because that is what they are: the
+    # background FGAT compares an observation against at its own time.
+    when = datetime(2018, 4, 16, 6, tzinfo=timezone.utc)
+    assert paths.product("bkg", 2, 0, at=when) == \
+        Path("/out/e/bkg/20180416T060000Z/mem000.nc")
+    # The cycle argument is ignored for the path and is still passed, because it
+    # is what the record's own `cycle` attribute carries.
+    assert paths.product("bkg", 99, 0, at=when) == \
+        paths.product("bkg", 2, 0, at=when)
+
+
 def test_cycle_zero_is_one_length_before_the_start(paths):
     # Where setup materializes the offline initial condition, which is what
     # makes cycle 1 an ordinary cycle rather than a special case.
@@ -96,12 +110,19 @@ def test_scratch_is_per_cycle_per_task_and_per_member(paths):
     assert paths.scratch(2, "da") == Path("/scratch/e/20180416T000000Z/da")
 
 
-def test_ensure_creates_every_subdirectory(tmp_path):
+def test_ensure_creates_only_what_is_written_before_a_cycle_runs(tmp_path):
+    # `cfg` and `run` alone. The products are made by whatever writes the first
+    # file into them, so that the tree of a running experiment says what it has
+    # actually produced: an empty `ana/` under a free run, or an empty `fcst/`
+    # under one with no extended forecast, is a claim about output that does not
+    # exist, and reading the tree mid-run is how anyone checks on it.
     paths = Paths.of(CONFIG, {
         "scratch_root": str(tmp_path / "s"), "output_root": str(tmp_path / "o"),
     }).ensure()
-    for name in ("cfg", "ana", "bkg", "obs_out", "run"):
+    for name in ("cfg", "run"):
         assert paths.sub(name).is_dir()
+    for name in ("ana", "bkg", "fcst", "obs_out"):
+        assert not paths.sub(name).exists()
     assert paths.scratch_dir.is_dir()
     paths.ensure()  # idempotent
 

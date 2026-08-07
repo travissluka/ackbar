@@ -230,17 +230,32 @@ class Paths:
 
     # --- the product tier: what the experiment is for ------------------------
 
-    def product(self, kind, cycle, member):
+    def product(self, kind, cycle, member, *, at=None):
         """The compressed state one cycle leaves behind. See `ackbar/post.py`.
 
         `kind` is `ana` or `bkg`, and the two are separate files rather than one
         file holding both, because they are separate answers: a free run has a
         background and no analysis, and an experiment being compared against
         another is compared on one or the other, not on a pair.
+
+        *at* names the valid time directly, and exists for the sub-window states
+        a 4D forecast writes: those fall *between* analysis times, so no cycle
+        number identifies them and `self.date` cannot spell them. The caller
+        still passes the cycle that produced the state, because that is what the
+        record's `cycle` attribute carries and what a heal is computed from.
+
+        Sub-window states are filed under `bkg/` beside the ones on analysis
+        times, not in a subdirectory of their own. A sub-window state *is* a
+        background: it is what FGAT and 4D-Ens-Var compare an observation
+        against at its own time, and the only thing separating it from the rest
+        is that no cycle begins there. Two directories would force every
+        consumer to know which kind it wanted before it could ask for a time,
+        and the truth archive wants exactly the union.
         """
         if kind not in ("ana", "bkg"):
             raise KeyError(f"unknown product {kind!r}; the products are ana and bkg")
-        return self.sub(kind) / self.date(cycle) / f"{member_dir(member)}.nc"
+        stamp = self.date(cycle) if at is None else at.strftime(CYCLE_DATE)
+        return self.sub(kind) / stamp / f"{member_dir(member)}.nc"
 
     def fcst_out(self, cycle, member, lead):
         """One state of the extended forecast, raw, as the model wrote it.
@@ -407,9 +422,26 @@ class Paths:
         """
         return self.sub("run") / f"submitted.{self.date(cycle)}"
 
+    #: Made when the experiment is created, because something writes into them
+    #: before any cycle runs: `cfg` holds the frozen config and the job scripts
+    #: that `create` emits, and `run` holds the ledger and the submit markers.
+    #: The rest of `SUBDIRS` are products, and a product directory is made by
+    #: whatever writes the first file into it.
+    EAGER = ("cfg", "run")
+
     def ensure(self):
-        """Create the experiment directory tree. Idempotent."""
-        for name in SUBDIRS:
+        """Create the experiment directory tree. Idempotent.
+
+        **Only the directories something is about to write into.** An empty
+        `ana/` under a free run, or an empty `fcst/` under an experiment with no
+        extended forecast, is a claim that the experiment produces something it
+        does not, and the person reading the tree while it runs is the one who
+        pays for it: the useful question there is "what has this produced so
+        far", and six directories that are always present answer it wrongly at a
+        glance. Every writer already creates its own parent, so the products
+        appear exactly when the first one is written.
+        """
+        for name in self.EAGER:
             self.sub(name).mkdir(parents=True, exist_ok=True)
         self.scratch_dir.mkdir(parents=True, exist_ok=True)
         return self

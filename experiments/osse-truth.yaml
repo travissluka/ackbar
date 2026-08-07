@@ -48,11 +48,22 @@ forecast:
   slots: PT6H
 
 cleanup:
-  # Nothing is reaped until it has been promoted, and promotion is a separate
-  # step run by hand after the run finishes. The alternative is a truth archive
-  # with holes in it wherever cleanup got there first.
-  keep_cycles: 60
-  keep_every: P1D
+  # **Ordinary reaping, because the truth is now recorded as it is produced.**
+  # `post.state` reduces every sub-window state to a `bkg/` record inside the
+  # cycle that wrote it, so the archive is complete before cleanup ever looks at
+  # the restart sets it came from. This used to read `keep_cycles: 60`, which
+  # held every state of the whole run so that a promotion step at the end had
+  # something to copy: 770 MB a cycle, 46 GB by the end, to produce an archive
+  # of 1.8 GB.
+  keep_cycles: 1
+
+  # Pins `rst` alone, every ten days. A `bkg/` record is a record and not a
+  # restart: it carries the fields a comparison reads, quantized, and a model
+  # cannot be started from one. `tools/restamp-ic.sh` needs a real restart set
+  # to build the free run's control initial condition from, so a handful are
+  # kept, at 168 MB each, rather than the one that would be exactly enough and
+  # would have to be chosen correctly now.
+  keep_every: P10D
 
 model:
   # The end of the spinup. Naming another experiment's restart set directly is

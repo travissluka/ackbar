@@ -889,7 +889,11 @@ def test_the_shipped_layers_produce_an_analysis_soca_would_accept(tmp_path):
     # The B is read from the domain's static stage, and `filepath` is a stem.
     groups = cost["background error"]["saber central block"]["read"]["groups"]
     assert groups[0]["horizontal"]["filepath"] == "/static/static/gom_25km/diffusion/hz"
-    assert groups[0]["vertical"]["levels"] == 36
+    # Must equal the domain's `diffusion_levels`, which must equal MOM6's NK.
+    # When they disagree saber reads a calibration carrying more levels than it
+    # was told to expect and spins at full CPU on every rank, indefinitely,
+    # writing nothing and logging nothing.
+    assert groups[0]["vertical"]["levels"] == 50
     # An integer, not the string the substitution pass started with: eckit does
     # not coerce, and `levels: "75"` is a type error inside saber.
     assert isinstance(groups[0]["vertical"]["levels"], int)

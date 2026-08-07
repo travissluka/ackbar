@@ -1236,23 +1236,49 @@ def _post(config, paths, cycle, task, member):
     # The cost is that `bkg/` starts one cycle in. The state at the first
     # analysis time is the offline initial condition, which is read-only in the
     # static root and is not this experiment's output to record.
-    sources = {"bkg": (paths.member_out("rst", cycle, member), cycle + 1)}
+    gridspec = Path(config["domain"]["static"]) / soca.GRIDSPEC
+    end = cycle_time(config, cycle + 1)
+
+    # (source directory, valid time, product kind), in the order they are
+    # written. The restart first, so that if a slot at the same instant slipped
+    # through the filter below the complete state would still be the one on
+    # disk.
+    records = [(paths.member_out("rst", cycle, member), end, "bkg")]
+
     analysed = paths.member_out("ana", cycle, member)
     if (analysed / "MOM.res.nc").exists():
         # A free run has no analysis, and that is a complete record of a free
         # run rather than half a record of an experiment.
-        sources["ana"] = (analysed, cycle)
+        records.append((analysed, cycle_time(config, cycle), "ana"))
 
-    gridspec = Path(config["domain"]["static"]) / soca.GRIDSPEC
-    for state, (source, when) in sources.items():
-        target = paths.product(state, when, member)
+    # **Every sub-window state, not just the one that becomes a background at an
+    # analysis time.** The forecast writes at `forecast.slots` on its way, and
+    # until this reduced them the only way to keep them was to keep the restart
+    # sets they came in, which is a hundred and fifty megabytes per slot against
+    # eight for the record. That is the difference between a truth run costing
+    # forty gigabytes and costing two, and it is what lets `cleanup` reap `slot/`
+    # on its ordinary schedule instead of the experiment pinning every cycle.
+    #
+    # The last slot is dropped: the forecast ends on an analysis time, so FMS
+    # writes an intermediate restart there *and* the final one, and they are the
+    # same state byte for byte. Reducing both would write the same numbers to
+    # the same path twice. This is the same rule `stored_leads` applies to the
+    # extended forecast, for the same reason.
+    for when in slot_times(config, cycle):
+        if when == end:
+            continue
+        records.append((paths.slot_out(cycle, member, when), when, "bkg"))
+
+    for source, valid, kind in records:
+        target = paths.product(kind, cycle, member, at=valid)
         try:
             written = post.state_record(
-                state, source, gridspec, target, cycle=cycle, member=member,
-                valid=format_instant(cycle_time(config, when)))
+                kind, source, gridspec, target, cycle=cycle, member=member,
+                valid=format_instant(valid))
         except post.PostError as error:
             raise TaskError(f"{cycle}.{task}: {error}") from error
-        print(f"ackbar: {cycle}.post.state: {state} {len(written)} field(s), "
+        print(f"ackbar: {cycle}.post.state: {kind} {format_instant(valid)} "
+              f"{len(written)} field(s), "
               f"{target.stat().st_size / 1e6:.1f} MB -> {target}")
 
 
