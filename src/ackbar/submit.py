@@ -69,6 +69,13 @@ def submit_cycle(config, site, paths, cycle, *, graph=None, tasks=None,
             submitted[node.id] = 0
             continue
 
+        # Slurm opens `--output` before the job script runs and will not create
+        # the directory, so this is the last moment it can be made. Here rather
+        # than in `emit` so that a cycle's run directory appears when the cycle
+        # is submitted rather than when the experiment is created.
+        paths.job_log(node.cycle, node.task, node.is_array).parent.mkdir(
+            parents=True, exist_ok=True
+        )
         job_id = slurm.sbatch(
             script,
             job_name=emit.job_name(paths.experiment, node.cycle, node.task),

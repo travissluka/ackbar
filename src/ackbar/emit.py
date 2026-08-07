@@ -118,12 +118,19 @@ def script_text(config, paths, node, *, root, python):
 
 
 def write_script(config, paths, node, *, root, python):
-    """Emit one node's script, and the log directory Slurm will not create."""
+    """Emit one node's script.
+
+    Deliberately *not* the log directory. Slurm opens `--output` before the job
+    script runs and will not create the path, so it has to exist before
+    `sbatch`, which is where `submit` now makes it. Making it here instead meant
+    `ackbar create` laid down `run/<date>/log/` for every cycle of the
+    experiment at once, so a sixty cycle run showed sixty run directories before
+    it had run anything, fifty nine of them holding one empty directory. What
+    someone reads the tree of a running experiment *for* is which cycles have
+    happened.
+    """
     target = paths.job_script(node.cycle, node.task)
     target.parent.mkdir(parents=True, exist_ok=True)
-    paths.job_log(node.cycle, node.task, node.is_array).parent.mkdir(
-        parents=True, exist_ok=True
-    )
     target.write_text(script_text(config, paths, node, root=root, python=python))
     target.chmod(target.stat().st_mode | stat.S_IXUSR)
     return target

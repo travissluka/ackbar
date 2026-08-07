@@ -104,12 +104,16 @@ def test_the_interpreter_is_frozen_rather_than_found_on_path(paths):
     assert '"/venv/bin/python" -m ackbar.cli run e' in text(paths, ARRAY)
 
 
-def test_writing_a_script_creates_the_log_directory_slurm_will_not(paths):
+def test_writing_a_script_does_not_create_the_cycle_directory(paths):
+    # The log directory Slurm will not create is made by `submit`, immediately
+    # before `sbatch`, and not here. Making it here meant `ackbar create` laid
+    # down `run/<date>/log/` for every cycle at once, so a sixty cycle run
+    # showed sixty run directories before it had run anything.
     target = emit.write_script(
         CONFIG, paths, ARRAY, root="/repo", python="/venv/bin/python",
     )
     assert target.exists()
-    assert Path(paths.job_log(2, "forecast", True)).parent.is_dir()
+    assert not Path(paths.job_log(2, "forecast", True)).parent.exists()
     assert target.stat().st_mode & 0o100  # executable
 
 
