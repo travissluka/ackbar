@@ -1004,14 +1004,32 @@ def _b_vt(config, site, paths, cycle, task):
     run = paths.scratch(cycle, task)
     run.mkdir(parents=True, exist_ok=True)
     scales = run / "scales_vt.nc"
+    solver = config["solver"]
 
     try:
         grid = diffusion.read_gridspec(
             Path(config["domain"]["static"]) / soca.GRIDSPEC)
-        smoothing = diffusion.smoothing_scale(grid)
-        thickness, mld = diffusion.read_restart(background, grid, smoothing)
-        field = diffusion.vertical_scales(
-            thickness, mld, soca.vertical_scale_spec(config["solver"]))
+        climatology = soca.vertical_scale_climatology(solver)
+        mld = None
+        if climatology:
+            field = diffusion.read_vertical(Path(climatology), grid)
+            source = f"climatology {climatology}"
+        else:
+            smoothing = diffusion.smoothing_scale(grid)
+            thickness, mld = diffusion.read_restart(background, grid, smoothing)
+            field = diffusion.vertical_scales(
+                thickness, mld, soca.vertical_scale_spec(solver))
+            source = "this cycle's background"
+            field, source = _carry_vertical(
+                config, paths, cycle, grid, field, source)
+
+        # The record before the calibration input, and durable rather than in
+        # the run directory: it is what the *next* cycle blends against, and it
+        # is the only way to see afterwards what the vertical B was doing over a
+        # run. `cleanup` does not reap it; it is one field per cycle.
+        record = vertical_scales_record(paths, cycle)
+        record.parent.mkdir(parents=True, exist_ok=True)
+        diffusion.write(record, grid, vt=field)
         diffusion.write(scales, grid, vt=field)
         diffusion.report("vt", field[0], grid["mask"], "levels")
 
@@ -1022,10 +1040,57 @@ def _b_vt(config, site, paths, cycle, task):
     except (mom6sis2.ModelError, OSError) as error:
         raise TaskError(f"{cycle}.{task}: {error}") from error
 
-    inside = mld[grid["mask"]]
-    print(f"ackbar: {cycle}.{task}: mixed layer {inside.mean():.1f} m mean, "
-          f"{inside.max():.1f} m max; vertical correlation "
+    layer = ""
+    if mld is not None:
+        inside = mld[grid["mask"]]
+        layer = f"mixed layer {inside.mean():.1f} m mean, {inside.max():.1f} m max; "
+    print(f"ackbar: {cycle}.{task}: {layer}{source}; vertical correlation "
           f"{field[0][grid['mask']].mean():.2f} levels mean -> {written}")
+
+
+def vertical_scales_record(paths, cycle):
+    """Where a cycled vertical B leaves the scales it used.
+
+    Its own product directory rather than beside the calibrated operator under
+    `ana/`, because the next cycle reads it and `ana/` is reaped one cycle
+    behind the restarts. A rolling average whose history is deleted underneath
+    it would silently restart from the domain's static calibration partway
+    through a run.
+    """
+    return paths.sub("bvt") / paths.date(cycle) / "scales_vt.nc"
+
+
+def _carry_vertical(config, paths, cycle, grid, field, source):
+    """This cycle's scales blended with the ones carried forward. See `diffusion.blend`.
+
+    The first cycle has nothing to blend against and seeds from the domain's
+    offline calibration, so a cycled experiment and a static one start from the
+    same background error and diverge only as the rolling average moves. Seeding
+    from this cycle's own field instead would make cycle one the only one with
+    no smoothing in it, which is the cycle furthest from a settled state.
+    """
+    memory = soca.vertical_scale_memory(config["solver"])
+    if not memory or memory >= 1.0:
+        return field, source
+
+    previous = vertical_scales_record(paths, cycle - 1)
+    if not previous.exists():
+        previous = Path(config["domain"]["static"]) / "diffusion" / "scales_vt.nc"
+        origin = "the domain's offline calibration"
+    else:
+        origin = "the previous cycle"
+    if not previous.exists():
+        raise TaskError(
+            f"{cycle}.b.vt: solver.vertical scale memory is {memory}, so this "
+            f"cycle blends against what came before it, and neither the "
+            f"previous cycle's record nor {previous} exists. Run "
+            f"`tools/soca-diffusion.sh` for this domain, which is what seeds "
+            f"the first cycle.")
+
+    carried = diffusion.read_vertical(previous, grid)
+    return (diffusion.blend(field, carried, memory),
+            f"{memory:.2f} of this cycle's background and "
+            f"{1.0 - memory:.2f} of {origin}")
 
 
 def _analysis(config, site, paths, cycle, task):

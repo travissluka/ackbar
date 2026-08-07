@@ -381,6 +381,52 @@ def write(path, grid, hz=None, vt=None):
                                ("z", "y", "x"))[:] = vt
 
 
+def read_vertical(path, grid):
+    """A vertical scale field back off disk, from a file `write` produced.
+
+    The offline stage's `scales_vt.nc` and every cycle's own record are the same
+    file in the same layout, which is what lets a cycled experiment seed itself
+    from the domain's calibration and then carry its own forward.
+    """
+    with netCDF4.Dataset(path) as src:
+        if VT_VARIABLE not in src.variables:
+            raise OSError(f"{path} has no {VT_VARIABLE}, so it is not a "
+                          f"vertical scale file")
+        field = np.asarray(src.variables[VT_VARIABLE][:])
+    if field.shape[1:] != grid["mask"].shape:
+        raise OSError(f"{path} is {field.shape[1:]} and the gridspec is "
+                      f"{grid['mask'].shape}. They are different grids.")
+    return field
+
+
+def blend(new, carried, memory):
+    """`memory` of this cycle's scales and the rest of the one carried forward.
+
+    **On the finished scales rather than on the mixed layer they came from.**
+    Every source of cycle to cycle noise in this field arrives through a
+    different intermediate: the mixed layer estimate, the layer thicknesses the
+    free surface moves, and the analysis increment that the next background
+    carries. Smoothing one of them leaves the others, and smoothing the output
+    catches all three at once with one number to explain.
+
+    **Before the normalization, not after.** `vtNorm` in the calibrated file is
+    computed *from* these scales, so a blended normalization beside an
+    unblended scale, or the reverse, is a background error wrong by a factor
+    nothing reports. This runs on the calibration's input and the calibration
+    then runs on what it produced.
+
+    A cell that is land or a vanished layer in either field stays zero. The
+    column depth moves with the free surface, so the deepest live level is not
+    the same every cycle, and a weighted mean against a zero would taper the
+    bottom level towards nothing over a run.
+    """
+    if new.shape != carried.shape:
+        raise OSError(f"the carried scales are {carried.shape} and this "
+                      f"cycle's are {new.shape}")
+    live = (new > 0.0) & (carried > 0.0)
+    return np.where(live, memory * new + (1.0 - memory) * carried, new)
+
+
 def report(name, field, mask, units):
     """What was written, in the units it was written in.
 

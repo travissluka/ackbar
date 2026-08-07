@@ -146,8 +146,36 @@ solver:
     #
     # `min`, `max`, `dz` and `efold` are the block's defaults (0.1 K, 2.0 K,
     # 20 m, 500 m), which are also what hat10 states explicitly.
+    #
+    # **These are good enough and are not tuned.** What they are measured
+    # against is `tools/soca-dirac.sh <domain> --full`, whose `save
+    # diagnostics` writes the standard deviations, beside the free run's own
+    # error against the nature run on the state space page. A cycling
+    # background is better than a free run, so that error is an upper bound on
+    # what B should be, and the test applied here was only that nothing sits
+    # above its own upper bound.
     - saber block name: SOCAParametricOceanStdDev
       temperature:
+        # **The near surface layers are excluded from dT/dz, and this is the one
+        # number here that had to change.** The default is a centimetre, which
+        # assumes a grid whose top layers are much thicker than this one's two
+        # metres. With it, the gradient at the top two levels is measured across
+        # 1 to 5 m of a background stamped at 00Z, which is late afternoon at
+        # 90 W: it reads the diurnal warm layer, `dz * |dT/dz|` comes out at
+        # 4 K, and the surface standard deviation is the 2.0 K ceiling over three
+        # fifths of the basin. That is six times the free run's own surface
+        # error, which no background can be worse than.
+        #
+        # At 3 m the mask reaches the level near 20 m where the spacing starts to
+        # grow, so the sst floor governs the mixed layer, which is what it is for.
+        # The surface falls from 2.00 K to 0.38 K and every level from 50 m down
+        # moves by less than two per cent. 5 m gives nearly the same answer, so
+        # the exact value is not delicate.
+        #
+        # It is the same trap `ackbar/diffusion.py` documents for MOM6's
+        # instantaneous `MLD`, reached from the other side.
+        min layer thickness: 3.0
+
         # The GODAS field, remapped onto this domain's cell centres by
         # `tools/sst-bgerr.py`. It replaces a flat 1.0 K that was a placeholder
         # for want of the file, and that was about two and a half times what
@@ -161,8 +189,18 @@ solver:
           filepath: $(domain_static)/sst_bgerr.nc
           variable: sst_bgerr
 
-      # The block's own defaults: 0.01 to 0.25 psu, shaped by the mixed layer.
-      unbalanced salinity: {}
+      # Shaped by the mixed layer, at twice the block's default ceiling. The
+      # deep value is a tenth of `max` by construction, so 0.25 put 0.025 psu
+      # everywhere below a hundred metres against a free run error of 0.12 to
+      # 0.25, and 0.22 at the surface against 0.70. Doubling it is closer
+      # everywhere and still under the upper bound everywhere, which is as far
+      # as one restart's diagnostics can honestly take it.
+      #
+      # It matters more here than it would elsewhere because `kst` is off: with
+      # no temperature to salinity balance, salinity moves only where a
+      # salinity observation is, and this is what decides how much it moves.
+      unbalanced salinity:
+        max: 0.5
 
       # **Zero, so that every sea surface height increment arrives through the
       # balance operator below**, out of the temperature and salinity the

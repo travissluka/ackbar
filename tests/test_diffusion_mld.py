@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ackbar import diffusion  # noqa: E402
+from ackbar import diffusion, run, soca  # noqa: E402
 
 
 def column(levels, thickness, temperature, salinity):
@@ -189,3 +189,81 @@ def test_the_restart_is_read_for_temperature_and_salinity_not_for_mld(tmp_path):
     grid = {"mask": np.ones((1, 1), dtype=bool)}
     _, mld = diffusion.read_restart(path, grid, np.array([0.0]))
     assert mld[0, 0] > 15.0
+
+
+class TestRollingAverage:
+    """`solver.vertical scale memory`, and what it is applied to.
+
+    The rolling average exists because the field it smooths is a function of
+    the background, and the background is the forecast from the analysis this
+    field configured. See `ackbar.diffusion.blend`.
+    """
+
+    def test_blend_is_arithmetic_and_the_off_switch_is_the_callers(self):
+        """`blend` weights; it does not decide whether to.
+
+        `solver.vertical scale memory: 0` means no rolling average, which is a
+        discontinuity: arithmetically a weight of zero on the new cycle keeps
+        the carried field, which is the opposite. That reading belongs where it
+        is a configuration statement rather than a multiplication, so `run`
+        makes the decision and this stays a weighted mean.
+        """
+        new = np.full((3, 2, 2), 4.0)
+        carried = np.full((3, 2, 2), 1.0)
+        assert np.array_equal(diffusion.blend(new, carried, 0.0), carried)
+
+    def test_a_memory_of_zero_never_reaches_blend(self):
+        field = np.full((2, 1, 1), 7.0)
+        blended, why = run._carry_vertical(
+            {"solver": {"vertical scale memory": 0.0}}, None, 4,
+            {"mask": np.ones((1, 1), dtype=bool)}, field, "this cycle")
+        assert np.array_equal(blended, field) and why == "this cycle"
+
+    def test_a_memory_of_one_never_reaches_blend_either(self):
+        # The same thing said the other way, and allowed for the same reason a
+        # weight of zero on the carried field should be sayable.
+        field = np.full((2, 1, 1), 7.0)
+        blended, why = run._carry_vertical(
+            {"solver": {"vertical scale memory": 1.0}}, None, 4,
+            {"mask": np.ones((1, 1), dtype=bool)}, field, "this cycle")
+        assert np.array_equal(blended, field) and why == "this cycle"
+
+    def test_a_fifth_keeps_a_fifth_of_this_cycle(self):
+        new = np.full((3, 2, 2), 5.0)
+        carried = np.full((3, 2, 2), 10.0)
+        assert np.allclose(diffusion.blend(new, carried, 0.2), 9.0)
+
+    def test_a_level_that_is_dead_in_either_field_is_not_averaged_towards_zero(self):
+        """The column depth moves with the free surface.
+
+        The deepest live level is not the same every cycle, so a weighted mean
+        against a zero would taper the bottom of every column towards nothing
+        over a run, which is a vertical B quietly switching itself off.
+        """
+        new = np.array([[[2.0]], [[2.0]]])
+        carried = np.array([[[10.0]], [[0.0]]])
+        blended = diffusion.blend(new, carried, 0.5)
+        assert blended[0, 0, 0] == pytest.approx(6.0)
+        assert blended[1, 0, 0] == pytest.approx(2.0)
+
+    def test_a_carried_field_on_another_grid_is_refused(self):
+        with pytest.raises(OSError, match="carried scales are"):
+            diffusion.blend(np.zeros((3, 2, 2)), np.zeros((3, 4, 4)), 0.5)
+
+
+class TestVerticalScaleSolverKeys:
+    def test_memory_defaults_to_no_rolling_average(self):
+        assert soca.vertical_scale_memory({}) == 0.0
+
+    def test_memory_outside_zero_to_one_is_refused(self):
+        with pytest.raises(soca.ModelError, match="outside 0 to 1"):
+            soca.vertical_scale_memory({"vertical scale memory": 1.5})
+
+    def test_memory_that_is_not_a_number_is_refused(self):
+        with pytest.raises(soca.ModelError, match="weight on"):
+            soca.vertical_scale_memory({"vertical scale memory": "0.2"})
+
+    def test_a_climatology_is_absent_until_it_is_stated(self):
+        assert soca.vertical_scale_climatology({}) is None
+        assert soca.vertical_scale_climatology(
+            {"vertical scale climatology": "/static/mld.nc"}) == "/static/mld.nc"

@@ -1008,6 +1008,48 @@ def vertical_scale_spec(solver):
             "iterations": _require(vertical, "iterations")}
 
 
+def vertical_scale_memory(solver):
+    """How much of the new cycle a cycled vertical B keeps. See `diffusion.blend`.
+
+    `solver.vertical scale memory`, a weight on *this* cycle's scales. Zero, and
+    absent, mean no rolling average at all: the cycle's own scales are used as
+    they came out. One is the same thing said the other way and is allowed for
+    the same reason a weight of zero on the carried field should be sayable.
+
+    A rolling average is here rather than nowhere because the field this
+    smooths is a function of the background, and the background is the forecast
+    from the analysis this field configured. Without it that loop has no damping
+    in it: an analysis that deepens a mixed layer gets a broader vertical
+    correlation next cycle, which deepens it further.
+    """
+    value = (solver or {}).get("vertical scale memory", 0.0)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ModelError(
+            f"solver.vertical scale memory is {value!r}; it is the weight on "
+            f"this cycle's own vertical scales, between 0 and 1, and 0 means "
+            f"no rolling average")
+    if not 0.0 <= float(value) <= 1.0:
+        raise ModelError(
+            f"solver.vertical scale memory is {value}, which is outside 0 to 1. "
+            f"It is a weight: 0.2 keeps a fifth of this cycle and four fifths "
+            f"of what was carried forward.")
+    return float(value)
+
+
+def vertical_scale_climatology(solver):
+    """A fixed vertical scale field to use instead of the background's, or None.
+
+    `solver.vertical scale climatology`, a path to a file `ackbar.diffusion`
+    wrote. When it is set the background is not consulted for the mixed layer at
+    all and no rolling average runs: there is nothing to average, the field is
+    the same every cycle, and blending a constant with itself is the constant.
+
+    The calibration still runs every cycle, because the normalization depends on
+    the geometry and the geometry is this cycle's state.
+    """
+    return (solver or {}).get("vertical scale climatology") or None
+
+
 def _vertical_block(solver):
     """The `vertical:` mapping of the group that carries the tracers.
 
