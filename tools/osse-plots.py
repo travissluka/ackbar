@@ -91,7 +91,7 @@ def main(argv=None):
     out = args.out or (DOCROOT / args.experiment)
     out.mkdir(parents=True, exist_ok=True)
 
-    grid = read_grid(records[0])
+    grid = read_grid(records[0], Path(root) / args.experiment)
     series = [read_record(path, grid) for path in records]
     times = [entry["time"] for entry in series]
 
@@ -110,7 +110,30 @@ def main(argv=None):
 
 # --- reading -----------------------------------------------------------------
 
-def read_grid(path):
+def domain_of(experiment):
+    """The domain name, out of the experiment's own frozen config.
+
+    This used to be `$ACKBAR_OSSE_DOMAIN`, defaulting to `gom_25km`. That was
+    right for exactly as long as every OSSE experiment was at a quarter degree,
+    and the day one was not it read a gridspec belonging to a different grid.
+    Here that happened to be caught by a shape mismatch on the mask; a domain
+    with the same shape and different areas would have produced weighted means
+    that were quietly wrong.
+
+    `tools/promote-truth.sh` reads it the same way and for the same reason: the
+    domain is a property of the experiment being read, and a second place to
+    state it is a second thing that can disagree.
+    """
+    frozen = experiment / "cfg" / "experiment.yaml"
+    if not frozen.exists():
+        sys.exit(f"osse-plots: {frozen} does not exist, so there is no way to "
+                 f"know which domain this experiment ran on. It is written by "
+                 f"`ackbar create`.")
+    import yaml
+    return yaml.safe_load(frozen.read_text())["domain"]["name"]
+
+
+def read_grid(path, experiment):
     """Coordinates, masks and cell area, which are the same in every record.
 
     Area comes from the domain's gridspec rather than from the record, which
@@ -125,8 +148,8 @@ def read_grid(path):
                 "mask_v": ds["mask_v"][:].astype(bool)}
 
     static = os.environ.get("ACKBAR_STATIC_ROOT")
-    domain = os.environ.get("ACKBAR_OSSE_DOMAIN", "gom_25km")
-    gridspec = Path(static or "") / "static" / domain / "soca_gridspec.nc"
+    gridspec = (Path(static or "") / "static" / domain_of(experiment)
+                / "soca_gridspec.nc")
     if gridspec.exists():
         with netCDF4.Dataset(gridspec) as ds:
             grid["area"] = np.asarray(ds["area"][:]).squeeze()
