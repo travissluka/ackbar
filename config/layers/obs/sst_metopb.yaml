@@ -1,0 +1,49 @@
+# Sea surface temperature from AVHRR on Metop-B, swath.
+#
+# Mid-morning orbit: 09:30 local descending, so it sees the Gulf
+# before the afternoon platforms and before the diurnal warm layer.
+#
+# See `obs/adt_3a.yaml` for what an observer layer states and what it
+# deliberately leaves to the solver layer and to `ackbar/soca.py`. The
+# observation error is not here: `covariance model: diagonal` with nothing
+# assigned reads `ObsError/<variable>` out of the file, and for a synthetic
+# archive that is what `PLATFORMS` in `tools/obs-archive-osse.py` wrote there
+# and drew the noise with. `docs/observing-system.md` says where it comes from.
+
+observations:
+- obs space:
+    name: sst_metopb
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/sst_metopb.{{window_begin:%Y%m%d%H}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).sst_metopb.{{window_begin:%Y%m%d%H}}.nc4
+    simulated variables: [seaSurfaceTemperature]
+    io pool:
+      max pool size: 1
+    obs perturbations seed: '{{seed}}'
+  obs operator:
+    name: Identity
+    # Absolute, so `ackbar validate` stats it before anything is submitted. The
+    # relative name the JEDI examples use resolves against the run directory,
+    # where the only thing that can notice its absence is the job that fails.
+    observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+  obs error:
+    covariance model: diagonal
+  obs filters:
+  - filter: Domain Check
+    where:
+    - variable: {name: GeoVaLs/sea_area_fraction}
+      minvalue: $(obs_land_mask_min)
+  - filter: Bounds Check
+    minvalue: -2.0
+    maxvalue: 36.0
+  - filter: Background Check
+    threshold: 5.0
+  - filter: Domain Check
+    where:
+    - variable: {name: ObsError/seaSurfaceTemperature}
+      minvalue: 0.001

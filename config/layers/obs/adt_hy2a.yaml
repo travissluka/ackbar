@@ -1,0 +1,62 @@
+# Absolute dynamic topography from HY-2A, along track.
+#
+# A 14 day repeat, between Jason-2 and SARAL in every respect.
+#
+# See `obs/adt_3a.yaml` for what an observer layer states and what it
+# deliberately leaves to the solver layer and to `ackbar/soca.py`. The
+# observation error is not here: `covariance model: diagonal` with nothing
+# assigned reads `ObsError/<variable>` out of the file, and for a synthetic
+# archive that is what `PLATFORMS` in `tools/obs-archive-osse.py` wrote there
+# and drew the noise with. `docs/observing-system.md` says where it comes from.
+
+observations:
+- obs space:
+    name: adt_hy2a
+    # The archive is keyed by date, because an archive has no cycle numbers: it
+    # is built once and read by experiments that number their cycles
+    # differently. The experiment's own output is keyed by cycle number, like
+    # every other directory it writes, so cleanup and the harvest address it the
+    # same way they address restarts. See the header of `ackbar/paths.py`.
+    obsdatain:
+      engine:
+        type: H5File
+        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/adt_hy2a.{{window_begin:%Y%m%d%H}}.nc4
+    obsdataout:
+      engine:
+        type: H5File
+        obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).adt_hy2a.{{window_begin:%Y%m%d%H}}.nc4
+    simulated variables: [absoluteDynamicTopography]
+    io pool:
+      max pool size: 1
+    obs perturbations seed: '{{seed}}'
+  obs operator:
+    name: ADT
+  obs error:
+    covariance model: diagonal
+  obs filters:
+  - filter: Domain Check
+    where:
+    - variable: {name: GeoVaLs/sea_area_fraction}
+      minvalue: $(obs_land_mask_min)
+  - filter: Domain Check
+    where:
+    - variable: {name: GeoVaLs/sea_surface_temperature}
+      minvalue: 5.0
+  - filter: Background Check
+    absolute threshold: 0.2
+  - filter: BlackList
+    where:
+    - variable: {name: MetaData/latitude}
+      minvalue: -65
+      maxvalue: -30
+    - variable: {name: MetaData/longitude}
+      minvalue: -125
+      maxvalue: -90
+  - filter: BlackList
+    where:
+    - variable: {name: MetaData/latitude}
+      minvalue: -65
+      maxvalue: -30
+    - variable: {name: MetaData/longitude}
+      minvalue: 60
+      maxvalue: 110
