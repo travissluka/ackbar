@@ -34,7 +34,6 @@ inherit:
   - obs/adt_saral
   - obs/adt_c2
   - obs/adt_hy2a
-  - obs/sst_n19
   - obs/sst_metopb
   - obs/sst_npp
 
@@ -77,7 +76,7 @@ ensemble:
 cleanup:
   # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
   # `post.state`, so nothing has to be held for a promotion step at the end;
-  # see `tools/promote-truth.sh` and the note it carries.
+  # see `tools/local/promote-truth.sh` and the note it carries.
   keep_cycles: 1
 
 model:

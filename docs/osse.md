@@ -115,7 +115,27 @@ argument the observation archive layout already rests on; see the header of
 output can be reaped.
 
 **The control initial condition** is one truth date, chosen outside the DA
-period. **The members** are `N` further truth dates, sampled at random from the
+period.
+
+> **What the quarter degree OSSE actually does, and why it differs.** The
+> control is not a truth date at all: it is GLORYS 2014-07-10 asserted to be an
+> estimate of 2015-07-10, built by `tools/fetch-glorys.py ic --valid-at` and
+> settled by `osse25-spinup`. Drawing the control from the truth run means the
+> experiment starts from a state produced by the same model at the same
+> resolution, which understates the error; drawing it from a reanalysis of a
+> different year gives a real ocean with an independent Loop Current phase and
+> no shared model lineage at all.
+>
+> The year matters more than the offset. A control drawn from 2015, two days
+> before the truth's own launch, sat 0.022 m from the truth in sea surface
+> height, which is below the altimeter noise: nearly every departure the
+> analysis saw was noise it could not remove, and the reported skill was
+> roughly half what the analysis achieved. The same week of 2014 is 0.178 m.
+> Lagging within 2015 reaches a similar number but buys it by moving up the
+> seasonal cycle, which is bias rather than mesoscale error and rewards a
+> different scheme.
+
+**The members** are `N` further truth dates, sampled at random from the
 truth run, then recentred:
 
     member_i  :=  control + (state_i - mean over i of state_i)
@@ -123,6 +143,23 @@ truth run, then recentred:
 so the ensemble mean is exactly the control and the spread is the truth run's
 own climatological spread. This is a time-lagged ensemble and it is the cheapest
 honest way to get spread out of a model with no perturbed forcing.
+
+> **This part is not built and its absence is measurable.** `tools/ensemble-ic.sh`
+> draws members from the static background error with `soca_enspert.x` instead,
+> which its own header is explicit about. The result was underdispersive against
+> the actual error by a factor of twelve in sea surface height and eighteen in
+> temperature, flat for the whole run, which makes a 50/50 hybrid into 3DVar
+> with the static B at half weight. That is not a tuning problem: static
+> perturbations carry B's correlation scales and none of the flow structure, and
+> nothing in a run where every member sees the same atmosphere and the same open
+> boundary will grow them.
+>
+> Recentring on truth dates is one fix and it leaks the truth's model and
+> resolution into the experiment. The other, now that `--valid-at` exists, is to
+> draw the members the way the control is drawn: `N` GLORYS dates far enough
+> apart to be independent, each asserted at the control's date and settled the
+> same way, then recentred. Every member is then a real ocean with real
+> mesoscale structure, and none of them is the truth.
 
 Three constraints on the sampling, all worth stating because getting any of them
 wrong makes the experiment look better than it is:
@@ -233,7 +270,7 @@ declared and empty (`DEFERRED` in `run.py`), and the OSSE is what forces them.
    source being absent (a real-observation experiment has no truth). It reads
    `bkg/`, `ana/` and `fcst/` and keys off artifact existence rather than job
    state, for the reason given under the graph below.
-5. **Truth promotion.** *Done.* `tools/promote-truth.sh` copies
+5. **Truth promotion.** *Done.* `tools/local/promote-truth.sh` copies
    `exp/<name>/run/<date>/rst/` and its slots to
    `$ACKBAR_STATIC_ROOT/truth/<domain>/<name>/<date>/`, keyed by the date each
    state is *valid* at, which for a restart set is one cycle after the directory

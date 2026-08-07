@@ -12,12 +12,23 @@
 # observation space, which is where they are compared: `verify` is in
 # `run.DEFERRED` and state space verification is done offline.
 #
-# **The truth is at gom_12km and this is at gom_25km.** The two grids and the
-# two integrations are what makes the error real. Nothing here restamps a truth
-# state to a different date to manufacture an initial condition; the initial
-# condition is a different, real ocean, and the difference between it and the
-# truth is ten days of the truth run's own free mesoscale evolution plus the
-# resolution.
+# **The truth is at gom_12km and this is at gom_25km**, and the initial
+# condition is drawn from a different year. Both matter and they do different
+# work. The resolution makes the two integrations fraternal twins rather than
+# identical ones; the year is what puts the Loop Current somewhere else.
+#
+# An earlier version of this ran from a 2015 initial condition, two days before
+# the truth's own launch date, and started 0.022 m from the truth in sea surface
+# height. That is under the altimeter noise, so most of what the analysis
+# appeared to be correcting was noise it could not correct, and the reported
+# skill was diluted by it. The control is now GLORYS 2014-07-10 asserted to be
+# an estimate of 2015-07-10: a real ocean, an independent mesoscale, 0.178 m.
+# See the README beside the initial condition, and `osse25-spinup.yaml` for why
+# 2014 rather than one of the other years.
+#
+# Nothing is restamped in the sense `tools/restamp-ic.sh` means and no noise is
+# added anywhere. The only assertion is the date, and `ic.nc` records both the
+# day it was read from and the day it is claimed to describe.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
@@ -26,7 +37,6 @@ inherit:
   - obs/adt_saral
   - obs/adt_c2
   - obs/adt_hy2a
-  - obs/sst_n19
   - obs/sst_metopb
   - obs/sst_npp
 
@@ -58,7 +68,7 @@ vars:
 cleanup:
   # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
   # `post.state`, so nothing has to be held for a promotion step at the end;
-  # see `tools/promote-truth.sh` and the note it carries.
+  # see `tools/local/promote-truth.sh` and the note it carries.
   keep_cycles: 1
 
 model:

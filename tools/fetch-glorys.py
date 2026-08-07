@@ -258,7 +258,7 @@ def interpolate_to(values, src_lon, src_lat, lon, lat):
     return out.reshape(*values.shape[:-2], points.shape[0])
 
 
-def write_ic(path, data, when):
+def write_ic(path, data, when, source_date=None):
     """`ic.nc`: temperature and salinity on GLORYS's own grid and levels.
 
     Deliberately *not* regridded to the model grid. MOM6 does its own
@@ -266,7 +266,15 @@ def write_ic(path, data, when):
     `initialize_temp_salt_from_Z_file`, and doing it twice only adds a
     smoothing pass. What matters is that nothing is missing, which
     `fill_horizontally` guarantees.
+
+    *when* is the date the state is asserted to be an estimate of, and
+    *source_date* the GLORYS day it was actually read from. They are the same
+    day unless an OSSE control is being built, where the whole point is that
+    they differ: see `--valid-at` in `main`. `time` carries the assertion,
+    because that is what everything downstream cycles on, and `source` carries
+    the fact, because the assertion is not one.
     """
+    source_date = source_date or when
     lon = np.asarray(data["longitude"])
     lat = np.asarray(data["latitude"])
     depth = np.asarray(data["depth"])
@@ -315,7 +323,15 @@ def write_ic(path, data, when):
                            else "Practical Salinity")
             v[:] = field
 
-        f.source = f"GLORYS12V1 {DATASET}, {when:%Y-%m-%d}"
+        f.source = f"GLORYS12V1 {DATASET}, {source_date:%Y-%m-%d}"
+        if source_date != when:
+            f.valid_at = f"{when:%Y-%m-%d}"
+            f.comment_on_date = (
+                f"Read from {source_date:%Y-%m-%d} and asserted to be an "
+                f"estimate of {when:%Y-%m-%d}. The difference between the two "
+                "oceans is the initial error an OSSE built on this exists to "
+                "correct. See tools/restamp-ic.sh, which makes the same "
+                "assertion about a restart set.")
         f.comment = ("Land flood-filled horizontally per level so that MOM6 "
                      "never interpolates from a missing value.")
 
@@ -431,7 +447,17 @@ def main():
 
     one = sub.add_parser("ic", help="one snapshot, for TEMP_SALT_Z_INIT_FILE")
     one.add_argument("domain")
-    one.add_argument("date", help="YYYY-MM-DD")
+    one.add_argument("date", help="YYYY-MM-DD, the GLORYS day to read")
+    one.add_argument("--valid-at", metavar="YYYY-MM-DD",
+                     help="the day this state is asserted to be an estimate "
+                          "of, if that is not the day it was read from. An "
+                          "OSSE control is built by reading the same season "
+                          "of a different year: the ocean is real and the "
+                          "mesoscale is an independent draw, so the error is "
+                          "a Loop Current in the wrong place rather than a "
+                          "seasonal bias. Nothing in MOM6 reads the date out "
+                          "of this file, so this exists to keep the file from "
+                          "claiming to be something it is not.")
 
     many = sub.add_parser("obc", help="a time series, for the open boundaries")
     many.add_argument("domain")
@@ -445,11 +471,17 @@ def main():
            sy.min() - MARGIN, sy.max() + MARGIN)
 
     if args.what == "ic":
-        when = dt.datetime.strptime(args.date, "%Y-%m-%d")
-        print(f"fetch-glorys: {args.domain} initial condition at {args.date}")
-        data = fetch(GLORYS_IC, box, when, when)
+        source_date = dt.datetime.strptime(args.date, "%Y-%m-%d")
+        when = (dt.datetime.strptime(args.valid_at, "%Y-%m-%d")
+                if args.valid_at else source_date)
+        if when != source_date:
+            print(f"fetch-glorys: {args.domain} initial condition read from "
+                  f"{args.date}, asserted valid at {args.valid_at}")
+        else:
+            print(f"fetch-glorys: {args.domain} initial condition at {args.date}")
+        data = fetch(GLORYS_IC, box, source_date, source_date)
         target = out / "ic.nc"
-        write_ic(target.with_suffix(".nc.partial"), data, when)
+        write_ic(target.with_suffix(".nc.partial"), data, when, source_date)
         target.with_suffix(".nc.partial").rename(target)
         print(f"fetch-glorys: wrote {target}")
     else:

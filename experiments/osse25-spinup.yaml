@@ -7,19 +7,38 @@
 # its own dynamics.
 #
 # **Not a spinup in the sense `osse-spinup` is.** The initial condition is
-# GLORYS 2015-07-10 integrated 24 hours by `tools/coldstart-ic.sh`, which is
-# enough for MOM6 to have written a restart set and not enough for anything to
-# have settled. This adds one more day, for the initialization transient: MOM6
-# finding its own balance rather than NEMO's, and the Z* coordinate settling.
-# Two days total.
+# GLORYS **2014**-07-10 asserted to be an estimate of 2015-07-10, integrated 24
+# hours by `tools/coldstart-ic.sh`, which is enough for MOM6 to have written a
+# restart set and not enough for anything to have settled. This adds one more
+# day, for the initialization transient: MOM6 finding its own balance rather
+# than NEMO's, and the Z* coordinate settling. Two days total.
 #
-# Longer would be worse, and for a reason specific to an OSSE. The error this
-# initial condition carries is what the assimilation exists to remove, and it is
-# supposed to be *mesoscale* error: a Loop Current in the wrong place, rings
-# that have not shed. Integrating under a climatological atmosphere replaces
-# that with model drift, which is a bias, and a bias is a different problem that
-# rewards a different scheme. Two days of settling leaves the GLORYS mesoscale
-# where GLORYS put it.
+# **The year is the design and not an accident.** The truth is GLORYS 2015-07-02
+# integrated at 12 km, so an initial condition drawn from 2015 is a near
+# neighbour of it: the free run started 0.022 m from the truth in sea surface
+# height, which is under the altimeter noise, and left the analysis almost
+# nothing to correct. The same week of a different year is a real ocean with the
+# Loop Current in an independent phase: 0.178 m, eight times the error, and
+# mesoscale rather than manufactured. 2014 of the four years tried, because it
+# gives the most sea surface height difference per degree of sea surface
+# temperature difference, and the temperature part is interannual anomaly, which
+# is a bias, rather than the mesoscale signal an analysis is meant to fix.
+# `tools/fetch-glorys.py --valid-at` makes the assertion and records it in the
+# file it writes.
+#
+# Longer settling would be worse, and for a reason specific to an OSSE. The
+# error this initial condition carries is what the assimilation exists to
+# remove, and it is supposed to be *mesoscale* error: a Loop Current in the
+# wrong place, rings that have not shed. Integrating under a climatological
+# atmosphere replaces that with model drift, which is a bias, and a bias is a
+# different problem that rewards a different scheme. Two days of settling leaves
+# the mesoscale where GLORYS put it.
+#
+# The open boundary is 2015 and is shared with the truth, which is what keeps
+# this an initial condition error rather than a boundary error. The Yucatan
+# inflow is therefore right from the first step and slowly argues with a 2014
+# interior; two days is not enough for it to have won anything, and the argument
+# over 45 cycles is a property of the experiment rather than a flaw in it.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
@@ -27,12 +46,12 @@ inherit:
 
 experiment:
   name: osse25-spinup
-  description: OSSE, gom_25km settling from the GLORYS initial condition
+  description: OSSE, gom_25km settling from the 2014 GLORYS initial condition
 
 cycle:
-  # The valid time of the cold start below, which is GLORYS 07-10 plus its 24
-  # hours of integration. One cycle from here lands on 07-12T00, which is where
-  # every experiment downstream begins.
+  # The valid time of the cold start below, which is the asserted 07-10 plus its
+  # 24 hours of integration. One cycle from here lands on 07-12T00, which is
+  # where every experiment downstream begins.
   start: '2015-07-11T00:00:00Z'
   length: PT24H
   count: 1
@@ -41,9 +60,9 @@ cleanup:
   # The restart set this run exists to produce is the one the experiments name,
   # so it is pinned rather than reaped. `keep_every` and not `keep_cycles`,
   # because a record under `bkg/` is not a restart and a model cannot be started
-  # from one; see `tools/promote-truth.sh` for the same distinction.
+  # from one; see `tools/local/promote-truth.sh` for the same distinction.
   keep_cycles: 1
   keep_every: PT24H
 
 model:
-  initial_condition: $(static_root)/ic/gom_25km/glorys/20150711T00
+  initial_condition: $(static_root)/ic/gom_25km/glorys-2014/20150711T00

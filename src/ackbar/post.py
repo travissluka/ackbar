@@ -54,6 +54,15 @@ import numpy as np
 #: rounding. Deriving rather than inheriting means this module does not have to
 #: be right about which vintage is in the build.
 OBS_VALUE = "ObsValue"
+#: The declared observation error, which is what a departure has to be read
+#: against. O-B carries the model's error and the instrument's together, so an
+#: O-B rms is not an error and a percentage reduction in one understates the
+#: reduction in the other by however much of it the instrument owns. In an OSSE
+#: that share is known exactly, because the noise was drawn with this number;
+#: `tools/local/osse-compare.py` subtracts it in variance. `ObsError` and not
+#: `EffectiveError`, which is what the filters left after inflation and is a
+#: different quantity.
+OBS_ERROR = "ObsError"
 FORWARD = "hofx"
 BACKGROUND = "ombg"
 ANALYSIS = "oman"
@@ -196,6 +205,7 @@ def _one_variable(data, groups, name):
         "assimilated": int(kept.sum()),
         "qc_group": qc_group,
         "obs_mean": _mean(observed[kept]),
+        "obs_error_rms": _error(data, groups, name, kept),
     }
     if flags is None:
         # No QC group at all means the file cannot say, which is not the same
@@ -267,6 +277,21 @@ def _kept(data, qc_group, name, shape):
         return np.ones(shape, dtype=bool), None
     flags = np.asarray(data.groups[qc_group].variables[name][:]).ravel()
     return flags == QC_KEPT, flags
+
+
+def _error(data, groups, name, kept):
+    """The rms declared observation error over the observations that were kept.
+
+    `None` where the file has no `ObsError` group, which is not zero: a reader
+    that cannot find the instrument's share must not conclude the instrument
+    has none. See `OBS_ERROR`.
+    """
+    if OBS_ERROR not in groups or name not in data.groups[OBS_ERROR].variables:
+        return None
+    values = _column(data, OBS_ERROR, name)[kept]
+    values = values[np.isfinite(values)]
+    return (_round(float(np.sqrt(np.mean(values ** 2))))
+            if values.size else None)
 
 
 def _departure(values, kept):

@@ -36,7 +36,7 @@ tier 3 archive is built with, and it stays because those tests are pinned to it.
         --start 2015-07-14T00:00:00Z --length PT24H --count 21 \\
         --out $ACKBAR_STATIC_ROOT/obs/gom-osse-2015/2015
 
-`--truth-run` is the real thing: a free run promoted by `tools/promote-truth.sh`,
+`--truth-run` is the real thing: a free run promoted by `tools/local/promote-truth.sh`,
 sampled at **each observation's own time** rather than at the analysis time.
 That distinction is the reason the truth run writes sub-window states at all.
 An observation an hour before the analysis time compared against the
@@ -192,23 +192,9 @@ PLATFORMS = {
     # `clear` is the fraction of the swath an infrared retrieval survives. It is
     # applied as coherent holes hundreds of kilometres across that persist from
     # one cycle to the next, not as a random thinning; see `Cloud`.
-    "sst_n19": {
-        "variable": "seaSurfaceTemperature",
-        "error": 0.5,           # [K]
-        "layout": "orbit",
-        "field": "sst",
-        "inclination": 99.2,
-        "repeat": 9.0,          # 127 revolutions in nine days, 102.0 min each
-        "revolutions": 127,
-        "ltan": 14.5,           # drifted later than the 13:45 it launched into
-        "swath": 2900.0,        # [km]
-        "along": 50.0,          # [km]
-        "cross": 50.0,          # [km]
-        "clear": 0.5,
-    },
     "sst_metopb": {
         "variable": "seaSurfaceTemperature",
-        "error": 0.5,
+        "error": 0.25,
         "layout": "orbit",
         "field": "sst",
         "inclination": 98.7,
@@ -216,13 +202,13 @@ PLATFORMS = {
         "revolutions": 412,
         "ltan": 21.5,           # 09:30 descending is 21:30 ascending
         "swath": 2900.0,
-        "along": 50.0,
-        "cross": 50.0,
-        "clear": 0.5,
+        "along": 25.0,
+        "superob": 25.0,        # [km], the L3 grid it is delivered on
+        "clear": 0.75,
     },
     "sst_npp": {
         "variable": "seaSurfaceTemperature",
-        "error": 0.4,           # VIIRS is the better instrument of the two
+        "error": 0.1,           # VIIRS is the better instrument of the two
         "layout": "orbit",
         "field": "sst",
         "inclination": 98.7,
@@ -230,9 +216,57 @@ PLATFORMS = {
         "revolutions": 227,
         "ltan": 13.5,
         "swath": 3060.0,
-        "along": 50.0,
-        "cross": 50.0,
-        "clear": 0.5,
+        "along": 25.0,
+        "superob": 25.0,        # [km], the L3 grid it is delivered on
+        "clear": 0.8,
+    },
+
+    # -- the surface drifter array --------------------------------------------
+    #
+    # Two platforms, one array: `Drifters` is built once and both of these hold
+    # the same object, so a temperature report and a salinity report from the
+    # same hull are at the same place at the same instant.
+    #
+    # **The only in situ observations in this archive, and they are surface
+    # only.** That is what the Gulf actually had in 2015. Argo is thin here:
+    # AOML calls the open Gulf chronically under-observed, and the twenty to
+    # twenty five float arrays in the Loop Current are the UGOS campaign, from
+    # 2021 and after. At Argo's design density the deep Gulf supports five to
+    # eight floats on a ten day cycle, which is under one profile a day in the
+    # whole basin. So the honest subsurface network for this period is nearly
+    # empty, and nothing here pretends otherwise.
+    #
+    # `every` is the reporting interval after thinning. The array transmits
+    # hourly over Iridium; an analysis is not given twenty four nearly
+    # identical values a day from one hull, because consecutive reports from a
+    # drifter are correlated through the same water and declaring them
+    # independent would let thirty drifters outvote the satellites.
+    #
+    # The errors are representativeness rather than instrument. An SVP
+    # thermistor is good to 0.05 K in a laboratory and the array is what the
+    # satellite records are calibrated against; what is uncertain is what a
+    # point measurement at 15 cm says about the mean of a 25 km cell whose top
+    # layer is 2 m thick, across a diurnal cycle. Salinity is worse, because
+    # the Gulf has a river plume in it and sub-grid salinity structure near one
+    # is large.
+    "drifter_sst": {
+        "variable": "seaSurfaceTemperature",
+        "error": 0.2,           # [K]
+        "layout": "drifter",
+        "field": "sst",
+        "drifters": 25,
+        "salinity fraction": 0.2,
+        "every": timedelta(hours=6),
+    },
+    "drifter_sss": {
+        "variable": "seaSurfaceSalinity",
+        "error": 0.1,           # [psu]
+        "layout": "drifter",
+        "field": "sss",
+        "salinity only": True,
+        "drifters": 25,
+        "salinity fraction": 0.2,
+        "every": timedelta(hours=6),
     },
 }
 
@@ -303,6 +337,19 @@ def main(argv=None):
     else:
         truth = FixedTruth(grid, read_state(args.state), args.seed)
         write_truth(args.out / "truth.nc", grid, truth.anomaly, args.seed)
+
+    # One drifter array behind every drifter platform, because they are views of
+    # the same hulls and not two deployments. Built here rather than lazily in
+    # `observe` so that it exists before the first window and is stepped through
+    # the whole run in order: a drifter's position at cycle 20 is the result of
+    # nineteen cycles of advection, which is the entire reason it is simulated.
+    drifting = [name for name in args.platforms
+                if PLATFORMS[name]["layout"] == "drifter"]
+    if drifting:
+        array = Drifters(grid, PLATFORMS[drifting[0]], args.seed)
+        for name in drifting:
+            PLATFORMS[name]["_array"] = array
+            PLATFORMS[name]["_truth"] = truth
 
     start = parse_instant(args.start)
     length = parse_duration(args.length)
@@ -387,7 +434,7 @@ class TruthRun:
         self.root = Path(root)
         if not self.root.is_dir():
             sys.exit(f"obs-archive-osse: {root} is not a directory. It is a "
-                     f"truth archive, written by tools/promote-truth.sh.")
+                     f"truth archive, written by tools/local/promote-truth.sh.")
         self.times = sorted(
             datetime.strptime(match.group(1), "%Y%m%dT%H%M")
             .replace(tzinfo=timezone.utc)
@@ -397,7 +444,7 @@ class TruthRun:
             sys.exit(f"obs-archive-osse: {root} holds no states named like "
                      f"20150704T0000.nc. An archive promoted before the truth "
                      f"run recorded its own trajectory held a directory per "
-                     f"state instead; re-run tools/promote-truth.sh.")
+                     f"state instead; re-run tools/local/promote-truth.sh.")
         self._cached = (None, None)
 
     def __str__(self):
@@ -491,9 +538,23 @@ def read_grid(path):
 #: one it is holding: `--state` names an offline initial condition, which is
 #: always a restart, and `--truth-run` names an archive, which since the truth
 #: run began recording its own trajectory is always records.
+#: Which variable and which slice of it each field comes from, per file layout.
+#:
+#: `sss` and the two velocity components are read for the drifters: their
+#: salinity is an observation and the velocity is what moves them. The velocity
+#: lives on the staggered u and v grids, which are offset from the tracer grid
+#: by half a cell. That offset is not corrected, and it does not need to be: it
+#: displaces a drifter by six kilometres over a day at Gulf speeds, against a
+#: drogue that is itself slipping and a trajectory nothing downstream verifies.
+#: What the trajectory has to be is *plausible and divergent*, so that drifters
+#: gather in convergences and get swept around the Loop Current the way real
+#: ones do, rather than accurate.
 LAYOUTS = {
-    "restart": {"sst": ("Temp", (0, 0)), "ssh": ("ave_ssh", (0,))},
-    "record": {"sst": ("temperature", (0,)), "ssh": ("sea_surface_height", ())},
+    "restart": {"sst": ("Temp", (0, 0)), "ssh": ("ave_ssh", (0,)),
+                "sss": ("Salt", (0, 0)), "u": ("u", (0, 0)), "v": ("v", (0, 0))},
+    "record": {"sst": ("temperature", (0,)), "ssh": ("sea_surface_height", ()),
+               "sss": ("salinity", (0,)), "u": ("eastward_velocity", (0,)),
+               "v": ("northward_velocity", (0,))},
 }
 
 
@@ -730,18 +791,30 @@ class Cloud:
     #: Resolution of the field, its smoothing, and how fast it moves.
     #:
     #: The two that matter are the scale and the drift, and they matter
-    #: *against each other*. A field smoothed to four degrees and moved five a
-    #: day travels a bit over one correlation length between cycles, so a hole
-    #: is recognisably the same hole tomorrow and is gone in three days, which
-    #: is how a summer Gulf convective system behaves. The first attempt used
-    #: two degrees and six a day, which is three correlation lengths a cycle:
-    #: coherent within a pass and completely redrawn by the next one, which is
-    #: half of the point and looks like the whole of it in a snapshot.
+    #: *against each other*. The field travels a bit over one correlation
+    #: length between cycles, so a hole is recognisably the same hole tomorrow
+    #: and is gone in three days, which is how a summer Gulf convective system
+    #: behaves. An early attempt used two degrees and six a day, which is three
+    #: correlation lengths a cycle: coherent within a pass and completely
+    #: redrawn by the next one, which is half of the point and looks like the
+    #: whole of it in a snapshot.
     #:
-    #: The drift is westward because the flow that steers them is.
+    #: **Two and a half degrees rather than four, and the reason is the size of
+    #: the basin.** At four degrees the Gulf held only a handful of independent
+    #: cloud cells, so coverage over the domain was close to all or nothing:
+    #: the delivered count ran from 21 observations in a cycle to 2246, around
+    #: a long-run mean that was correct. A calibrated mean over a domain that
+    #: spends whole cycles blind is not a calibrated cloud mask, and a blind
+    #: cycle is not a harder analysis problem but an absent one. Two and a half
+    #: degrees is still several times the correlation length of the background
+    #: error, so a hole is still a region the analysis has to reach across,
+    #: which is the property this class exists for.
+    #:
+    #: The drift is westward because the flow that steers them is, and it moves
+    #: with the scale so that the one-length-per-cycle property is preserved.
     STEP = 0.25          # [deg]
-    SCALE = 4.0          # [deg], the smoothing radius
-    DRIFT = -5.0         # [deg/day], westward, about six metres a second
+    SCALE = 2.5          # [deg], the smoothing radius
+    DRIFT = -3.0         # [deg/day], westward, about four metres a second
 
     def __init__(self, seed, clear):
         from scipy.ndimage import gaussian_filter
@@ -775,6 +848,14 @@ def observe(grid, spec, begin, end, rng):
     """
     if spec["layout"] == "orbit":
         return _pass(grid, spec, begin, end, rng)
+    if spec["layout"] == "drifter":
+        lon, lat, when, salty = spec["_array"].report(
+            grid, spec["_truth"], begin, end, spec["every"])
+        if spec.get("salinity only") and lon.size:
+            # The hulls that carry conductivity, which is a minority of them.
+            lon, lat = lon[salty], lat[salty]
+            when = [moment for moment, keep in zip(when, salty) if keep]
+        return lon, lat, when
     # The pinned layouts, whose times are drawn by the caller.
     if spec["layout"] == "swath":
         lon, lat = _swath(grid, spec["count"], rng)
@@ -818,18 +899,14 @@ def _pass(grid, spec, begin, end, rng):
     if not near.any():
         return np.array([]), np.array([]), []
 
+    # A scanning radiometer is asked for its footprint, which needs `near` to
+    # still index the untrimmed track: `_passes` cuts it into overflights and
+    # slices these arrays with the result.
+    if half > 0.0:
+        return _footprint(grid, spec, near, lon, lat, when, half, rng)
+
     lon, lat = lon[near], lat[near]
     when = [moment for moment, keep in zip(when, near) if keep]
-
-    if half > 0.0:
-        bearing = _bearing(lon, lat) + np.pi / 2      # to the right of the track
-        # One row of cross-track samples per offset, so the swath is built as
-        # whole scan lines and every point keeps the time of the line it is on.
-        offsets = np.arange(-half, half + spec["cross"] / 2, spec["cross"])
-        rows = [_offset(lon, lat, bearing, distance) for distance in offsets]
-        lon = np.concatenate([row[0] for row in rows])
-        lat = np.concatenate([row[1] for row in rows])
-        when = when * len(offsets)
 
     inside = ((lon >= west) & (lon <= east) & (lat >= south) & (lat <= north))
     lon, lat = lon[inside], lat[inside]
@@ -848,6 +925,276 @@ def _pass(grid, spec, begin, end, rng):
         lon, lat = lon[seen], lat[seen]
         when = [moment for moment, keep in zip(when, seen) if keep]
     return lon, lat, when
+
+
+def _unit(lon, lat):
+    """Points on the unit sphere, so distances can be compared without a map.
+
+    A tree in (lon, lat) degrees would measure a degree of longitude as a
+    degree of latitude, which at 25N is an error of ten per cent, and would
+    have to be told what to do at the date line. Neither problem exists in
+    three dimensions.
+    """
+    phi, theta = np.radians(np.asarray(lon)), np.radians(np.asarray(lat))
+    return np.column_stack([np.cos(theta) * np.cos(phi),
+                            np.cos(theta) * np.sin(phi),
+                            np.sin(theta)])
+
+
+def _passes(near):
+    """Index ranges of the contiguous runs of *near*, one per overflight.
+
+    A window holds two or three passes and they must not be merged: a cell can
+    be seen twice in a day, at two different times, and treating the whole
+    window as one track would give it one observation at whichever time
+    happened to be nearest.
+    """
+    edges = np.diff(near.astype(int))
+    starts = list(np.flatnonzero(edges == 1) + 1)
+    stops = list(np.flatnonzero(edges == -1) + 1)
+    if near[0]:
+        starts.insert(0, 0)
+    if near[-1]:
+        stops.append(len(near))
+    return list(zip(starts, stops))
+
+
+def _footprint(grid, spec, near, lon, lat, when, half, rng):
+    """The cells a scanning radiometer sees, one observation each, per pass.
+
+    **This replaced a ray cast and the reason was an artifact.** The swath used
+    to be built by firing a fan of cross-track great-circle rays from every
+    along-track point, at a fixed spacing, out to the half swath width. Rays
+    from successive track points are not parallel: the track curves, so the
+    fans converge on the inside of the curve and diverge on the outside, and at
+    fifteen hundred kilometres of range they cross. Where they cross, points
+    pile up. The archive came out carrying rings of concentrated observations
+    with clear ground between them, which is a caustic and not a scan pattern,
+    and no amount of care in the interpolation afterwards could undo it because
+    it was in the locations rather than in the values.
+
+    So the footprint is asked for directly instead: which cells of the domain
+    lie within the half swath width of this pass's ground track. One
+    observation per cell, jittered inside it so the archive is not a lattice,
+    carrying the time of the nearest point on the track. That is a superobbed
+    L3 product, which is what an analysis is given in practice and is what
+    justifies observation errors of a quarter of a degree rather than the
+    instrument's own. It cannot produce a caustic, because the locations come
+    from the domain and never from an intersection.
+    """
+    # Superob spacing, as a stride over the truth grid. The cells are the truth
+    # run's, at 12 km, and one observation per cell would file the archive at
+    # the resolution of the ocean it was sampled from rather than the one the
+    # analysis runs at: four times more observations than the analysis grid can
+    # hold distinct information about, every one of them correlated with its
+    # neighbour through the same truth cell and declared independent. The
+    # spacing an L3 product is delivered on is a property of the product, so it
+    # is stated per platform rather than derived from the domain.
+    stride = max(1, int(round(spec["superob"] / _kilometres(grid))))
+    keep = np.zeros_like(grid["open"])
+    keep[::stride, ::stride] = True
+    cells = np.argwhere(grid["open"] & keep)
+    if not len(cells):
+        return np.array([]), np.array([]), []
+    j, i = cells[:, 0], cells[:, 1]
+    clon, clat = grid["lon"][j, i], grid["lat"][j, i]
+    points = _unit(clon, clat)
+
+    # Chord length subtending the half swath width, since the tree measures
+    # straight lines through the sphere rather than arcs along it.
+    reach = 2.0 * np.sin(half / (2.0 * EARTH_RADIUS))
+
+    from scipy.spatial import cKDTree
+    seen_lon, seen_lat, seen_when = [], [], []
+    for start, stop in _passes(near):
+        track = _unit(lon[start:stop], lat[start:stop])
+        if not len(track):
+            continue
+        distance, index = cKDTree(track).query(points)
+        inside = distance <= reach
+        if not inside.any():
+            continue
+        moments = [when[start:stop][k] for k in index[inside]]
+        seen_lon.append(clon[inside])
+        seen_lat.append(clat[inside])
+        seen_when.extend(moments)
+    if not seen_lon:
+        return np.array([]), np.array([]), []
+
+    out_lon = np.concatenate(seen_lon)
+    out_lat = np.concatenate(seen_lat)
+    out_lon, out_lat = _jitter(grid, out_lon, out_lat, rng)
+
+    if "clear" in spec and out_lon.size:
+        clear = spec["_cloud"].clear(out_lon, out_lat, seen_when)
+        out_lon, out_lat = out_lon[clear], out_lat[clear]
+        seen_when = [m for m, keep in zip(seen_when, clear) if keep]
+    return out_lon, out_lat, seen_when
+
+
+class Drifters:
+    """A Global Drifter Program array, advected by the truth's own currents.
+
+    Every other platform here is placed by geometry: an orbit is where it is
+    whatever the ocean does. A drifter is placed by the ocean, and that is the
+    reason it is worth simulating rather than scattering. Real drifters are
+    swept into convergences and wound around the Loop Current, so the array
+    thins where the water diverges and piles up where it does not, and the
+    places it stops sampling are exactly the places an analysis would like it
+    to. Scattering points at random every cycle would produce the same count
+    and none of that.
+
+    So the positions are stepped with the truth's surface velocity, read at
+    each drifter's own place and time. They are the only observations in this
+    archive whose *locations* depend on the truth as well as their values,
+    which also means a drifter cannot be placed without reading the state it
+    will be sampled from.
+
+    **Temperature on every drifter, salinity on a minority.** An SVP hull
+    carries a thermistor at about 15 cm depth as standard; conductivity is an
+    add-on and most of the array does not have it. Reporting both from every
+    drifter would roughly quintuple the surface salinity observations an
+    analysis sees, and salinity is the variable the network is otherwise
+    thinnest in, so the mistake would flatter exactly the thing it is least
+    entitled to.
+
+    Drifters die: they ground on a shelf, they are picked up, they leave
+    through the Straits of Florida. One that leaves the domain is replaced by a
+    new deployment rather than clamped to the boundary, which keeps the array
+    size steady and is what the program does.
+    """
+
+    #: Integration step for the trajectory. Well inside the time a drifter
+    #: takes to cross a 12 km truth cell at Gulf speeds, so the path is
+    #: resolved rather than jumped along.
+    STEP = timedelta(hours=1)
+
+    def __init__(self, grid, spec, seed):
+        self.rng = np.random.default_rng([seed, 0xD819])
+        self.count = spec["drifters"]
+        self.salty = spec["salinity fraction"]
+        self.lon, self.lat = self._deploy(grid, self.count)
+        # Which hulls carry conductivity. Fixed for the life of a hull rather
+        # than redrawn per report, because it is a property of the instrument.
+        self.has_salinity = self.rng.random(self.count) < self.salty
+        self.when = None
+        self._cached = None
+
+    def _deploy(self, grid, count):
+        """*count* new drifters, in open water away from the coast."""
+        cells = np.argwhere(grid["open"])
+        picked = cells[self.rng.choice(len(cells), count, replace=True)]
+        j, i = picked[:, 0], picked[:, 1]
+        dlat, dlon = _spacing(grid)
+        return (grid["lon"][j, i] + self.rng.uniform(-0.5, 0.5, count) * dlon,
+                grid["lat"][j, i] + self.rng.uniform(-0.5, 0.5, count) * dlat)
+
+    def advance(self, grid, truth, until):
+        """Step every drifter forward to *until*, through the truth's currents."""
+        if self.when is None:
+            self.when = until
+            return
+        while self.when < until:
+            step = min(self.STEP, until - self.when)
+            state = truth.state(truth.nearest(self.when))
+            east = _interpolate(grid, self.lon, self.lat, state["u"])
+            north = _interpolate(grid, self.lon, self.lat, state["v"])
+            # A hull sitting over land has no velocity to be moved by. It stays
+            # put for this step and `_replace` retires it at the end of the
+            # window, which is the same treatment as one that grounds.
+            east = np.where(np.isfinite(east), east, 0.0)
+            north = np.where(np.isfinite(north), north, 0.0)
+            seconds = step.total_seconds()
+            # Metres per second to degrees, with the longitude scaled by the
+            # latitude the drifter is actually at.
+            scale = 180.0 / (np.pi * EARTH_RADIUS * 1000.0)
+            self.lat = self.lat + north * seconds * scale
+            self.lon = self.lon + east * seconds * scale / np.maximum(
+                np.cos(np.radians(self.lat)), 0.1)
+            self.when += step
+        self._replace(grid)
+
+    def _replace(self, grid):
+        """Redeploy any drifter that has run aground or left the domain."""
+        wet = _nearest(grid, self.lon, self.lat, grid["open"]).astype(bool)
+        inside = ((self.lon >= grid["lon"].min()) & (self.lon <= grid["lon"].max())
+                  & (self.lat >= grid["lat"].min()) & (self.lat <= grid["lat"].max()))
+        lost = ~(wet & inside)
+        if lost.any():
+            fresh_lon, fresh_lat = self._deploy(grid, int(lost.sum()))
+            self.lon[lost], self.lat[lost] = fresh_lon, fresh_lat
+            self.has_salinity[lost] = self.rng.random(int(lost.sum())) < self.salty
+
+    def report(self, grid, truth, begin, end, every):
+        """Positions and times of every report in the window.
+
+        Returns (lon, lat, when, salinity), the last a boolean saying whether
+        that report carries conductivity as well as temperature.
+
+        **Cached on the window, because the array is shared and stateful.** The
+        temperature platform and the salinity platform are two views of one set
+        of hulls, and the caller reaches them one after the other. Advancing
+        the trajectory twice would step the array through the window twice and
+        file the salinity a day downstream of the temperature it was measured
+        with, which is a thing no comparison would notice: both files would
+        look entirely ordinary.
+        """
+        if self._cached and self._cached[0] == (begin, end, every):
+            return self._cached[1]
+
+        lon, lat, when, salty = [], [], [], []
+        moment = begin
+        while moment < end:
+            self.advance(grid, truth, moment)
+            lon.append(self.lon.copy())
+            lat.append(self.lat.copy())
+            when.extend([moment] * self.count)
+            salty.append(self.has_salinity.copy())
+            moment += every
+        if not lon:
+            answer = (np.array([]), np.array([]), [], np.array([], dtype=bool))
+        else:
+            answer = (np.concatenate(lon), np.concatenate(lat), when,
+                      np.concatenate(salty))
+        self._cached = ((begin, end, every), answer)
+        return answer
+
+
+def _kilometres(grid):
+    """The domain's grid spacing in kilometres, as one number.
+
+    A median over the whole grid rather than a nominal figure, because the
+    spacing is a property of the file and a domain regridded later would leave
+    a constant here silently wrong. Longitude differences are scaled by the
+    cosine of the latitude they sit at, without which a quarter degree at 25N
+    reads ten per cent too wide.
+
+    Distinct from `_spacing`, which answers in degrees and as a (dlat, dlon)
+    pair and is what the jitter wants.
+    """
+    step = np.abs(np.diff(grid["lon"], axis=1)) * np.cos(
+        np.radians(grid["lat"][:, :-1]))
+    return float(np.median(step)) * np.pi * EARTH_RADIUS / 180.0
+
+
+#: Jitter applied to a superob, as a fraction of one *truth* cell.
+#:
+#: Enough to break the lattice and no further. The job is only to stop an
+#: archive whose locations are exactly a model's grid points, which would let
+#: an observation operator that happens to collocate look better than one that
+#: interpolates. Scattering across the whole superob cell instead, which is
+#: twice as wide, does that job no better and moves the value away from the
+#: water it is an average over: a superob is already a claim about a 25 km
+#: cell, and displacing it a further 12 km adds a representativeness error on
+#: top of the one it honestly has.
+JITTER = 0.5
+
+
+def _jitter(grid, lon, lat, rng):
+    """A little scatter, so the archive is not the domain's own lattice."""
+    dlat, dlon = _spacing(grid)
+    return (lon + rng.uniform(-JITTER, JITTER, size=lon.shape) * dlon,
+            lat + rng.uniform(-JITTER, JITTER, size=lat.shape) * dlat)
 
 
 def _swath(grid, count, rng):
@@ -919,15 +1266,79 @@ def _nearest(grid, lon, lat, field):
     return field.ravel()[index]
 
 
-def sample(grid, field, lon, lat):
-    """The truth at each observation, from the nearest cell.
+#: Cells combined per interpolated point, and the floor on a distance before it
+#: is treated as a coincidence rather than divided by. The floor is in degrees
+#: and is far below one cell of any domain here, so it fires only when an
+#: observation lands exactly on a grid point.
+NEIGHBOURS = 4
+COINCIDENT = 1.0e-9
 
-    Nearest rather than interpolated on purpose: the observation operator
-    interpolates, and generating with the same interpolation would hide any
-    error in it. The half-cell offset this introduces is a representativeness
-    error, which is what an observation has anyway.
+
+def _interpolate(grid, lon, lat, field):
+    """*field* at each point, inverse distance weighted over `NEIGHBOURS` cells.
+
+    Land is excluded from the average rather than blended into it. A cell under
+    the coast holds whatever the model left there, and letting it contribute to
+    an observation a few kilometres offshore is how a synthetic archive grows a
+    cold bias along every coastline. Where all four neighbours are dry the
+    nearest wet cell is used, which is the only answer available and is what
+    the caller's own `open` test has already made rare.
     """
-    return _nearest(grid, lon, lat, field)
+    if "_tree" not in grid:
+        from scipy.spatial import cKDTree
+        grid["_tree"] = cKDTree(
+            np.column_stack([grid["lon"].ravel(), grid["lat"].ravel()]))
+
+    points = np.column_stack([lon, lat])
+    distance, index = grid["_tree"].query(points, k=NEIGHBOURS)
+    values = field.ravel()[index]
+    # Land is dry whether the mask says so or the value does. `read_state`
+    # carries land through as NaN, and a NaN multiplied by a zero weight is
+    # still a NaN, so excluding a cell by weighting it out is not enough: the
+    # value has to leave the sum as well. Without this a drifter that passes
+    # near the coast picks up a NaN velocity and its position becomes NaN,
+    # which surfaces much later as an unrelated failure in the tree.
+    usable = grid["mask"].ravel()[index] & np.isfinite(values)
+    values = np.where(usable, values, 0.0)
+
+    weight = usable.astype(float) / np.maximum(distance, COINCIDENT)
+    total = weight.sum(axis=1)
+
+    out = np.empty(len(points))
+    any_wet = total > 0.0
+    out[any_wet] = ((values * weight)[any_wet].sum(axis=1) / total[any_wet])
+    # Every neighbour dry: fall back to the nearest cell of any kind, which is
+    # what the whole function replaced and is right for exactly this case.
+    out[~any_wet] = field.ravel()[index[~any_wet, 0]]
+    return out
+
+
+def sample(grid, field, lon, lat):
+    """The truth at each observation, interpolated from the surrounding cells.
+
+    **This used to take the nearest cell, and that was an aliasing bug.** The
+    argument for nearest was that the observation operator interpolates and
+    generating with an interpolation of ACKBAR's own would hide an error in it.
+    That argument does not survive the two grids being different: the truth is
+    at 12 km and the analysis at 25 km, so the operator's interpolation is over
+    a different mesh and there is nothing to hide.
+
+    What nearest actually did was quantize every observation onto the truth
+    grid. A swath samples on its own regular lattice, and a regular lattice
+    read through a nearest-cell lookup on a second regular lattice beats
+    against it: the observations acquire a moire pattern with a wavelength set
+    by the ratio of the two spacings, which is visible in a map of them and is
+    a spatially correlated error nothing declares. It is worst exactly where
+    the two spacings are close, which is where a well designed observing system
+    puts them.
+
+    Inverse distance over the four nearest cells, rather than bilinear in index
+    space, because the model grid is curvilinear and there is no separable
+    (i, j) to interpolate along. The half-cell offset nearest introduced was
+    defended as a representativeness error, and a representativeness error is
+    fine; a representativeness error organised into stripes is not.
+    """
+    return _interpolate(grid, lon, lat, field)
 
 
 # --- the file ----------------------------------------------------------------
