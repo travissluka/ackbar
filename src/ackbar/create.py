@@ -8,6 +8,20 @@ that may have been edited since.
 Everything here is a one-time cost paid before any job exists, so it is the
 right place to be thorough: validate all six steps, write the provenance, and
 emit every cycle's job script up front.
+
+`cfg/experiment.yaml` is the whole record of what an experiment is, and it is
+the *finished* config: layers merged, observer bodies expanded, every `$(...)`
+substituted. What is left in it is `{{...}}`, which is job time by definition
+and cannot be resolved here.
+
+The ordered layer files used to be copied in beside it, under `cfg/layers/`.
+They are not any more. Nothing read them: `ackbar config why` replays the merge
+over the layer tree in the checkout, not over a copy, and every other consumer
+reads the merged config. They were a second, pre-substitution account of the
+same thing, and two accounts of one config is how the wrong one gets read.
+`provenance.json` still lists the layers by name and in order, with the commit
+they were read at, which is what makes the copy reconstructable and made it
+redundant.
 """
 
 import json
@@ -54,7 +68,6 @@ def create(config, site, schema, layers, *, root, force=False, python=None):
     paths.frozen_config.write_text(
         yaml.safe_dump(config, sort_keys=False, default_flow_style=False)
     )
-    _freeze_layers(paths, layers)
     _freeze_templates(paths, root)
     _provenance(paths, config, site, root, layers)
 
@@ -77,27 +90,20 @@ def _refuse_if_live(paths):
         )
 
 
-def _freeze_layers(paths, layers):
-    """The ordered layer files, verbatim and numbered.
-
-    Verbatim rather than merged, because "which file said this" is the question
-    asked when a result looks wrong, and the merged config has already thrown
-    that away. Numbered because merge order is the whole semantics.
-    """
-    target = paths.sub("cfg") / "layers"
-    target.mkdir(parents=True, exist_ok=True)
-    for index, layer in enumerate(layers, start=1):
-        safe = layer.name.replace("/", "_")
-        shutil.copyfile(layer.path, target / f"{index:02d}-{safe}.yaml")
-
-
 def _freeze_templates(paths, root):
     """The SOCA document templates, copied out of the checkout.
 
-    Frozen for the reason the layers are, and it is the same question: a result
-    that looks wrong is investigated from the experiment directory, and the
-    shape of the document an application read is half of what produced it. The
-    other half, the values, is in the `*.yaml` each task keeps beside its log.
+    These are the one thing under `cfg/` that is *not* finished, and it is not
+    an oversight. Their `$(UPPERCASE)` slots are task time: `$(BACKGROUND_DIR)`,
+    `$(SLOT)` and `$(WINDOW_BEGIN)` vary by cycle, `$(MEMBER_BACKGROUNDS)` by
+    member, and `$(OBSERVERS)` is not known until `stage.obs` has looked at the
+    archive and seen which platforms have a file for that window. Filling them
+    at create time would mean deciding at create time which observers a cycle
+    six weeks out will have, which is the decision `observations.realize` exists
+    to make and record.
+
+    So these stay templates, and each task writes the document it actually ran
+    beside its log. That file is the finished one.
 
     Copied rather than referenced, so that editing `config/soca/` in the
     checkout while an experiment is cycling cannot give cycle 40 a different
