@@ -1,0 +1,71 @@
+# The quarter degree OSSE's null experiment: a free run, with observers.
+#
+# See docs/osse.md. `da/none`, so nothing is assimilated and the model runs away
+# from the truth at whatever rate it runs away. Every skill number the
+# assimilating experiments produce is measured against this one, and its
+# departures are the only thing that says how much error there was to remove.
+#
+# It carries the observers, which a free run does not need and this one does:
+# with `solver: none` a standalone `hofx` task evaluates each cycle's background
+# against the archive and writes the same `ombg` a DA run gets from its analysis
+# application. That makes this and the experiments directly comparable in
+# observation space, which is where they are compared: `verify` is in
+# `run.DEFERRED` and state space verification is done offline.
+#
+# **The truth is at gom_12km and this is at gom_25km.** The two grids and the
+# two integrations are what makes the error real. Nothing here restamps a truth
+# state to a different date to manufacture an initial condition; the initial
+# condition is a different, real ocean, and the difference between it and the
+# truth is ten days of the truth run's own free mesoscale evolution plus the
+# resolution.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/none
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_n19
+  - obs/sst_metopb
+  - obs/sst_npp
+
+experiment:
+  name: osse25-noda
+  description: OSSE, gom_25km free run against the gom_12km truth
+
+cycle:
+  # Ten days into the truth period, so that the truth archive covers the whole
+  # window of every cycle including the first, whose window opens half a cycle
+  # before its analysis time.
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # Five days short of where the truth ends (2015-08-31), for the mirror of the
+  # reason the start is late: the last cycle's window closes after its analysis
+  # time.
+  count: 45
+
+vars:
+  # Sampled from the promoted 12km truth run at each observation's own time by
+  # `tools/obs-archive-osse.py --truth-run`, which is why the slug names the
+  # nature run's grid and not this experiment's. Every experiment in the
+  # comparison reads this one directory: the observations are of the ocean, not
+  # of a model, and two archives sampled from different nature runs must never
+  # be mixed, because nothing downstream reads the provenance and the mixture
+  # would score as ordinary observation error.
+  obs_dir: $(static_root)/obs/gom12-osse-2015/2015
+
+cleanup:
+  # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
+  # `post.state`, so nothing has to be held for a promotion step at the end;
+  # see `tools/promote-truth.sh` and the note it carries.
+  keep_cycles: 1
+
+model:
+  # The settling run's output, promoted to the initial condition stage rather
+  # than named where it landed. `osse25-spinup/run/.../rst/mem000` is the same
+  # bytes and would work, and it lives under a directory `cleanup` is entitled
+  # to reap: an experiment that reads another experiment's run directory is one
+  # retention setting away from being unreproducible. The README beside this
+  # says what it is and how to rebuild it.
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

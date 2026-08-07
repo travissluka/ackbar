@@ -1,0 +1,90 @@
+# The quarter degree OSSE's hybrid 3D EnVar.
+#
+# See docs/osse.md. `osse25-3dvar` with one layer added, for the same reason
+# that experiment is `osse25-noda` with one layer changed: everything else is
+# identical, so the difference in O-B is attributable.
+#
+# Half the background error from the static B and half from a twenty member
+# ensemble the LETKF beside it maintains. What it should show over 3DVar is a
+# background error that knows where the Loop Current is *today*: the static B
+# spreads an observation isotropically over a fixed length scale, and the
+# ensemble spreads it along the flow. The Gulf is the case that makes the
+# difference visible, because almost all of its error is in the position of one
+# strongly steered current and its rings.
+#
+# **Twenty members drawn from the static B is a weak ensemble at cycle one.**
+# `tools/ensemble-ic.sh` says why: the perturbations carry B's correlation
+# scales and none of the ocean's flow structure, so the first cycles are spin
+# up and the ensemble only becomes flow dependent by being cycled. The initial
+# spread is about 2 cm of sea surface height against a mesoscale error several
+# times that, so the ensemble starts underdispersive, which is the direction
+# that makes a hybrid behave like its static half rather than the direction
+# that makes it diverge.
+#
+# The 0.5/0.5 weights are the textbook hybrid and are not tuned, which is the
+# first thing to sweep if this does not beat 3DVar. With a twenty member
+# ensemble the usual finding is that less ensemble is better than the textbook
+# says, so the sweep to run is downward.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_n19
+  - obs/sst_metopb
+  - obs/sst_npp
+
+experiment:
+  name: osse25-hybrid
+  description: OSSE, gom_25km hybrid 3D EnVar against the gom_12km truth
+
+cycle:
+  # Ten days into the truth period, so that the truth archive covers the whole
+  # window of every cycle including the first, whose window opens half a cycle
+  # before its analysis time.
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # Five days short of where the truth ends (2015-08-31), for the mirror of the
+  # reason the start is late: the last cycle's window closes after its analysis
+  # time.
+  count: 45
+
+vars:
+  # Sampled from the promoted 12km truth run at each observation's own time by
+  # `tools/obs-archive-osse.py --truth-run`, which is why the slug names the
+  # nature run's grid and not this experiment's. Every experiment in the
+  # comparison reads this one directory: the observations are of the ocean, not
+  # of a model, and two archives sampled from different nature runs must never
+  # be mixed, because nothing downstream reads the provenance and the mixture
+  # would score as ordinary observation error.
+  obs_dir: $(static_root)/obs/gom12-osse-2015/2015
+
+ensemble:
+  size: 20
+  control: true
+  # An LETKF beside the variational analysis, which is what makes the ensemble
+  # component flow dependent and observation informed rather than a decaying
+  # sample of the perturbations it started with. The members are then recentred
+  # on the variational analysis, so the ensemble follows the run being reported.
+  source: letkf
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
+  # `post.state`, so nothing has to be held for a promotion step at the end;
+  # see `tools/promote-truth.sh` and the note it carries.
+  keep_cycles: 1
+
+model:
+  # The settling run's output, promoted to the initial condition stage rather
+  # than named where it landed. `osse25-spinup/run/.../rst/mem000` is the same
+  # bytes and would work, and it lives under a directory `cleanup` is entitled
+  # to reap: an experiment that reads another experiment's run directory is one
+  # retention setting away from being unreproducible. The README beside this
+  # says what it is and how to rebuild it.
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

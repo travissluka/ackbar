@@ -1,0 +1,70 @@
+# The quarter degree OSSE's 3DVar.
+#
+# See docs/osse.md. `osse25-noda` with one layer changed, which is the whole
+# design: the domain, the dates, the initial condition and the observation
+# archive are identical, so the difference between the two O-B statistics is
+# the assimilation and nothing else.
+#
+# What it should show is a background that fits the observations better than
+# the free run's does, and by a margin that grows over the first few cycles and
+# then holds. If it does not, the order to diagnose in is: the increment's
+# magnitude (`solver.background error` standard deviations), then whether the
+# minimization converged (`ninner`), then a single-observation experiment to see
+# what the covariance actually spreads. Not blind tuning toward a number.
+#
+# The static background error is `da/variational`'s default and is not tuned
+# for this domain or this season. That is stated rather than hidden because it
+# bounds what the comparison below can claim: that assimilating these
+# observations through this covariance beats not assimilating them, not that
+# this is the best 3DVar the Gulf admits.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_n19
+  - obs/sst_metopb
+  - obs/sst_npp
+
+experiment:
+  name: osse25-3dvar
+  description: OSSE, gom_25km 3DVar against the gom_12km truth
+
+cycle:
+  # Ten days into the truth period, so that the truth archive covers the whole
+  # window of every cycle including the first, whose window opens half a cycle
+  # before its analysis time.
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # Five days short of where the truth ends (2015-08-31), for the mirror of the
+  # reason the start is late: the last cycle's window closes after its analysis
+  # time.
+  count: 45
+
+vars:
+  # Sampled from the promoted 12km truth run at each observation's own time by
+  # `tools/obs-archive-osse.py --truth-run`, which is why the slug names the
+  # nature run's grid and not this experiment's. Every experiment in the
+  # comparison reads this one directory: the observations are of the ocean, not
+  # of a model, and two archives sampled from different nature runs must never
+  # be mixed, because nothing downstream reads the provenance and the mixture
+  # would score as ordinary observation error.
+  obs_dir: $(static_root)/obs/gom12-osse-2015/2015
+
+cleanup:
+  # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
+  # `post.state`, so nothing has to be held for a promotion step at the end;
+  # see `tools/promote-truth.sh` and the note it carries.
+  keep_cycles: 1
+
+model:
+  # The settling run's output, promoted to the initial condition stage rather
+  # than named where it landed. `osse25-spinup/run/.../rst/mem000` is the same
+  # bytes and would work, and it lives under a directory `cleanup` is entitled
+  # to reap: an experiment that reads another experiment's run directory is one
+  # retention setting away from being unreproducible. The README beside this
+  # says what it is and how to rebuild it.
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

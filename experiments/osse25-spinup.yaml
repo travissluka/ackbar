@@ -1,0 +1,49 @@
+# The quarter degree OSSE's settling run: one day, and that is the whole of it.
+#
+# See docs/osse.md. The experiments this feeds are at gom_25km and the truth
+# they are scored against is at gom_12km, which is the point: a coarser model
+# against a finer truth is a fraternal twin rather than an identical one, so the
+# experiment is not being asked to recover its own dynamics from observations of
+# its own dynamics.
+#
+# **Not a spinup in the sense `osse-spinup` is.** The initial condition is
+# GLORYS 2015-07-10 integrated 24 hours by `tools/coldstart-ic.sh`, which is
+# enough for MOM6 to have written a restart set and not enough for anything to
+# have settled. This adds one more day, for the initialization transient: MOM6
+# finding its own balance rather than NEMO's, and the Z* coordinate settling.
+# Two days total.
+#
+# Longer would be worse, and for a reason specific to an OSSE. The error this
+# initial condition carries is what the assimilation exists to remove, and it is
+# supposed to be *mesoscale* error: a Loop Current in the wrong place, rings
+# that have not shed. Integrating under a climatological atmosphere replaces
+# that with model drift, which is a bias, and a bias is a different problem that
+# rewards a different scheme. Two days of settling leaves the GLORYS mesoscale
+# where GLORYS put it.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/none
+
+experiment:
+  name: osse25-spinup
+  description: OSSE, gom_25km settling from the GLORYS initial condition
+
+cycle:
+  # The valid time of the cold start below, which is GLORYS 07-10 plus its 24
+  # hours of integration. One cycle from here lands on 07-12T00, which is where
+  # every experiment downstream begins.
+  start: '2015-07-11T00:00:00Z'
+  length: PT24H
+  count: 1
+
+cleanup:
+  # The restart set this run exists to produce is the one the experiments name,
+  # so it is pinned rather than reaped. `keep_every` and not `keep_cycles`,
+  # because a record under `bkg/` is not a restart and a model cannot be started
+  # from one; see `tools/promote-truth.sh` for the same distinction.
+  keep_cycles: 1
+  keep_every: PT24H
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/glorys/20150711T00
