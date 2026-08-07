@@ -110,10 +110,11 @@ PLATFORMS = {
     },
 }
 
-#: A truth archive's state directories: `20150704T0000`, the instant the state
-#: is valid at. Matched rather than parsed loosely so that a README or a stray
-#: directory beside them is skipped instead of crashing the run.
-_STAMP = re.compile(r"^\d{8}T\d{4}$")
+#: A truth archive's states: `20150704T0000.nc`, the instant the state is valid
+#: at. Matched rather than parsed loosely so that the README, and the `restart/`
+#: directory of complete restart sets beside them, are skipped instead of
+#: crashing the run.
+_STAMP = re.compile(r"^(\d{8}T\d{4})\.nc$")
 
 #: A cell is only usable if its whole neighbourhood is ocean. The observers
 #: apply `Domain Check` on `GeoVaLs/sea_area_fraction` at 0.9, which is the
@@ -230,12 +231,15 @@ class TruthRun:
             sys.exit(f"obs-archive-osse: {root} is not a directory. It is a "
                      f"truth archive, written by tools/promote-truth.sh.")
         self.times = sorted(
-            datetime.strptime(path.name, "%Y%m%dT%H%M").replace(tzinfo=timezone.utc)
-            for path in self.root.iterdir()
-            if path.is_dir() and _STAMP.match(path.name))
+            datetime.strptime(match.group(1), "%Y%m%dT%H%M")
+            .replace(tzinfo=timezone.utc)
+            for match in (_STAMP.match(path.name) for path in self.root.iterdir())
+            if match)
         if not self.times:
-            sys.exit(f"obs-archive-osse: {root} holds no state directories "
-                     f"named like 20150704T0000.")
+            sys.exit(f"obs-archive-osse: {root} holds no states named like "
+                     f"20150704T0000.nc. An archive promoted before the truth "
+                     f"run recorded its own trajectory held a directory per "
+                     f"state instead; re-run tools/promote-truth.sh.")
         self._cached = (None, None)
 
     def __str__(self):
@@ -254,8 +258,8 @@ class TruthRun:
 
     def state(self, when):
         if self._cached[0] != when:
-            self._cached = (when,
-                            read_state(self.root / when.strftime("%Y%m%dT%H%M")))
+            self._cached = (
+                when, read_state(self.root / when.strftime("%Y%m%dT%H%M.nc")))
         return self._cached[1]
 
     def sample(self, grid, field, lon, lat, when):
@@ -320,15 +324,44 @@ def read_grid(path):
     return grid
 
 
+#: The two layouts a truth state arrives in, as {field: (variable, index)}.
+#:
+#: A MOM6 restart set spells its fields the model's way and carries a leading
+#: `Time` axis. An ackbar state record (`ackbar/post.py`) spells them the way
+#: anything downstream would guess and has no time axis, because the file *is*
+#: one time. Both are truth states and the caller should not have to know which
+#: one it is holding: `--state` names an offline initial condition, which is
+#: always a restart, and `--truth-run` names an archive, which since the truth
+#: run began recording its own trajectory is always records.
+LAYOUTS = {
+    "restart": {"sst": ("Temp", (0, 0)), "ssh": ("ave_ssh", (0,))},
+    "record": {"sst": ("temperature", (0,)), "ssh": ("sea_surface_height", ())},
+}
+
+
 def read_state(path):
-    """Surface temperature and sea surface height, from a restart."""
+    """Surface temperature and sea surface height, from a restart or a record."""
     path = Path(path)
     if path.is_dir():
         path = path / "MOM.res.nc"
     with netCDF4.Dataset(path) as data:
-        data.set_auto_mask(False)
-        return {"sst": np.asarray(data.variables["Temp"][0, 0]),
-                "ssh": np.asarray(data.variables["ave_ssh"][0])}
+        layout = "restart" if "Temp" in data.variables else "record"
+        if layout == "record" and "temperature" not in data.variables:
+            sys.exit(f"obs-archive-osse: {path} holds neither a MOM6 restart's "
+                     f"'Temp' nor a state record's 'temperature', so it is not "
+                     f"a truth state this can read.")
+        state = {}
+        for field, (name, index) in LAYOUTS[layout].items():
+            # Land is a fill value in a record and an arbitrary real number in a
+            # restart, so it is carried through as NaN rather than as either. An
+            # observation is only ever placed on `grid["open"]`, so a NaN
+            # reaching an output file means the placement and the mask disagree,
+            # and that is worth being loud about rather than writing 1e20 into
+            # an ObsValue where it reads as an ordinary bad observation.
+            state[field] = np.ma.filled(
+                np.ma.masked_invalid(data.variables[name][index]).astype(float),
+                np.nan)
+        return state
 
 
 def perturb(grid, state, seed):
