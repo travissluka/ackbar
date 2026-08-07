@@ -1,10 +1,14 @@
 #!/bin/bash
 # Check a domain's calibrated diffusion operator by applying it to a dirac.
 #
-#   tools/soca-dirac.sh <domain> [<lat>,<lon>]... [--keep <dir>]
+#   tools/soca-dirac.sh <domain> [<lat>,<lon>]... [--full] [--keep <dir>]
 #   tools/soca-dirac.sh gom_25km
 #   tools/soca-dirac.sh gom_8km 26.5,-90.0 28.9,-88.4
-#   tools/soca-dirac.sh gom_8km --keep ~/dirac
+#   tools/soca-dirac.sh gom_25km --full --keep ~/dirac
+#
+# `--full` applies the whole background error rather than the correlation alone:
+# the standard deviations, the depth taper and the balance operator. See the
+# section below and the header of tools/dirac.py.
 #
 # `--keep` copies the increment, the document that produced it and the placement
 # record into a directory instead of dropping them with the working directory.
@@ -39,24 +43,34 @@
 # ---------------------------------------------------------------------------
 # It reads the experiment's own B
 #
-# The saber block below is lifted out of `config/layers/da/variational.yaml`
+# The saber blocks below are lifted out of `config/layers/da/variational.yaml`
 # rather than written here. A dirac test against a second description of the
 # background error would pass while the analysis used a different operator,
-# which is the failure it exists to catch. What it does drop is everything
-# outside the central block: the standard deviations, the depth taper and the
-# balance operator. Those turn a correlation into a covariance, and including
-# them would leave the peak value meaning nothing.
+# which is the failure it exists to catch.
+#
+# By default it drops everything outside the central block: the standard
+# deviations, the depth taper and the balance operator. Those turn a correlation
+# into a covariance, and including them would leave the peak value meaning
+# nothing, because a covariance does not return 1 at its own dirac.
+#
+# `--full` keeps them, and is the other test. There is then no peak to check and
+# nothing passes or fails; what comes back is the increment one observation
+# would produce, in every variable, including the ones the balance operator
+# reached rather than the dirac. It also writes the standard deviation fields
+# the parametric block built, which are otherwise never visible.
 set -euo pipefail
 
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
-DOMAIN=${1:?usage: soca-dirac.sh <domain> [<lat>,<lon>]... [--keep <dir>]}
+DOMAIN=${1:?usage: soca-dirac.sh <domain> [<lat>,<lon>]... [--full] [--keep <dir>]}
 shift
 POINTS=()
 KEEP=
+FULL=()
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --full) FULL=(--full); shift ;;
         --keep) KEEP=${2:?--keep needs a directory}; shift 2 ;;
         -*) echo "soca-dirac: unknown option $1" >&2; exit 1 ;;
         *) POINTS+=("$1"); shift ;;
@@ -89,9 +103,14 @@ if [[ -z $RESTART ]]; then
     RESTART=${candidates[0]}
 fi
 
-for path in "$TOOLBOX" "$LAYER" "$NAMELIST" "$METADATA" "$GRIDSPEC" "$RESTART" \
-            "$STATIC/diffusion/hz.nc" "$STATIC/diffusion/hz_ssh.nc" \
-            "$STATIC/diffusion/vt.nc"; do
+REQUIRED=("$TOOLBOX" "$LAYER" "$NAMELIST" "$METADATA" "$GRIDSPEC" "$RESTART"
+          "$STATIC/diffusion/hz.nc" "$STATIC/diffusion/hz_ssh.nc"
+          "$STATIC/diffusion/vt.nc")
+# Only `--full` reads the standard deviations, so only `--full` needs the file
+# they are floored by. See tools/sst-bgerr.py.
+[[ ${#FULL[@]} -gt 0 ]] && REQUIRED+=("$STATIC/sst_bgerr.nc")
+
+for path in "${REQUIRED[@]}"; do
     [[ -e $path ]] || {
         echo "soca-dirac: $path does not exist" >&2
         echo "soca-dirac: run tools/soca-diffusion.sh $DOMAIN first" >&2
@@ -116,7 +135,7 @@ mkdir -p out
 
 python3 "$ACKBAR_ROOT/tools/dirac.py" plan \
     "$LAYER" "$STATIC" "$LEVELS" "$METADATA" "$GRIDSPEC" "$RESTART" \
-    dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"}
+    dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"} ${FULL[@]+"${FULL[@]}"}
 
 # How many ranks is a property of the machine, so the site file owns it and
 # nothing here may name a number. See site/rancor.sh.
@@ -152,13 +171,15 @@ grep "Diffusion: \(horizontal\|vertical\) iterations" toolbox.log |
 # fails, and `set -e` would take the script down with it before `--keep` ran.
 status=0
 python3 "$ACKBAR_ROOT/tools/dirac.py" report "$GRIDSPEC" "$STATIC" points.json out \
-    || status=$?
+    ${FULL[@]+"${FULL[@]}"} || status=$?
 
 # After the report, and unconditionally: a failing check is exactly when the
 # increment is worth opening.
 if [[ -n $KEEP ]]; then
     mkdir -p "$KEEP"
     cp out/*.nc dirac.yaml points.json "$KEEP/"
+    # Only --full writes this. See `save diagnostics` in tools/dirac.py.
+    [[ -e stddev.nc ]] && cp stddev.nc "$KEEP/"
     echo "soca-dirac: kept the increment and its document in $KEEP"
 fi
 exit $status

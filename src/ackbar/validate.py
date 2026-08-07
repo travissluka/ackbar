@@ -245,7 +245,14 @@ def _collect_paths(node, out):
     if isinstance(node, dict):
         for key, value in node.items():
             if key in STEM_KEYS and isinstance(value, str) and _looks_like_path(value):
-                out.add(value + STEM_SUFFIX)
+                # A `filepath` that already carries the extension is a whole
+                # filename and not a stem. Not every reader behind this key is
+                # `util::readFieldSet`: `SOCAParametricOceanStdDev` reaches its
+                # sst floor through `soca::readNcAndInterp`, which opens the
+                # string as given. Appending to that produced `sst_bgerr.nc.nc`,
+                # a step 3 failure against a file that was there all along.
+                out.add(value if value.endswith(STEM_SUFFIX)
+                        else value + STEM_SUFFIX)
                 continue
             _collect_paths(value, out)
     elif isinstance(node, list):

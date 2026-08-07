@@ -324,6 +324,24 @@ class TestStep3InputPaths:
         assert found, "the variational fixture names no diffusion parameters"
         assert all(where.endswith(".nc") for where in found)
 
+    def test_a_filepath_that_already_ends_in_nc_is_left_alone(self, keys, schema):
+        """Not every reader behind `filepath` takes a stem.
+
+        `SOCAParametricOceanStdDev` reaches its sst floor through
+        `soca::readNcAndInterp`, which opens the string as given, so the layer
+        names a whole file. Appending unconditionally produced `.nc.nc` and step
+        3 failed against a file that was there all along, which is the same
+        false alarm the stem rule exists to prevent, in the other direction.
+        """
+        config = load("var_om1deg", keys)
+        blocks = config["solver"]["background error"]["saber outer blocks"]
+        block = next(b for b in blocks
+                     if b.get("saber block name") == "SOCAParametricOceanStdDev")
+        block["temperature"] = {"sst": {"filepath": "/static/sst_bgerr.nc",
+                                        "variable": "sst_bgerr"}}
+        named = [f.where for f in full(config, schema) if "sst_bgerr" in f.where]
+        assert named == ["/static/sst_bgerr.nc"]
+
     def test_output_paths_are_not_mistaken_for_inputs(self, keys, schema):
         # The experiment is about to create them; that is the point of it.
         config = load("var_om1deg", keys)

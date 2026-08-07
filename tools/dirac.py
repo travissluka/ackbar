@@ -1,15 +1,33 @@
 #!/usr/bin/env python3
-"""Plan a dirac test of the diffusion operator, and read back what it did.
+"""Plan a dirac test of the background error, and read back what it did.
 
     tools/dirac.py plan   <layer> <static> <levels> <metadata> <gridspec> \\
-                          <restart> <out.yaml> <points.json> [lat,lon]...
-    tools/dirac.py report <gridspec> <static> <points.json> <outdir>
+                          <restart> <out.yaml> <points.json> [lat,lon]... [--full]
+    tools/dirac.py report <gridspec> <static> <points.json> <outdir> [--full]
 
 Two verbs in one file because they have to agree about which dirac is which.
-The toolbox applies the correlation to a single increment holding every dirac
-at once, so `points.json` written by `plan` is the only record of what was
-placed where, and both halves read the node ordering of the calibration files
-the same way. `tools/soca-dirac.sh` is what calls them.
+The toolbox applies the operator to a single increment holding every dirac at
+once, so `points.json` written by `plan` is the only record of what was placed
+where, and both halves read the node ordering of the calibration files the same
+way. `tools/soca-dirac.sh` is what calls them.
+
+## Two tests, and they answer different questions
+
+Without `--full` this is a test of the **correlation** alone: the central
+diffusion block and nothing else. The response at the dirac is then exactly 1
+by definition, so the peak measures the normalization's Monte Carlo error and
+the radius measures whether the operator built the scale the calibration
+ordered. It is a test of `tools/soca-diffusion.sh` and of nothing in
+`config/layers/da/variational.yaml` below the central block.
+
+With `--full` it is a test of the **covariance** the analysis actually uses:
+the standard deviations, the depth taper and the balance operator are all in.
+Nothing is normalized to anything, and there is nothing to pass or fail. What
+it shows is what one observation would do: the size of the increment in the
+variable the dirac was placed in, and the size of the increment the balance
+operator puts into the other two. A `--full` run writes the standard deviation
+fields as well, which is the only way to see what the parametric block built
+before it was multiplied by anything.
 """
 
 import json
@@ -39,6 +57,18 @@ DATADIR = "out"
 EXPERIMENT = "dirac_%id%"
 DATE = "2000-01-01T00:00:00Z"
 
+#: Where `--full` asks `SOCAParametricOceanStdDev` to write the fields it built.
+#: A stem: `util::writeFieldSet` appends `.nc`. Beside `out/` rather than in it,
+#: because `read_increment` takes the one netCDF file there and a second one
+#: would make it ambiguous which is the increment.
+DIAGS = "stddev"
+
+#: The units each variable's increment comes back in, for the `--full` report.
+#: Only for printing; nothing computes with them.
+UNITS = {"sea_water_potential_temperature": "degC",
+         "sea_water_salinity": "psu",
+         "sea_surface_height_above_geoid": "m"}
+
 #: The fraction of the peak whose distance is reported. For a Gaussian kernel of
 #: Daley length L the response is exp(-0.5) at exactly L, which makes the
 #: reported radius directly comparable to the scale the calibration was given.
@@ -59,14 +89,16 @@ PEAK_TOLERANCE = 0.05
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("plan", "report"):
         sys.exit(__doc__.strip())
-    return plan(argv[2:]) if argv[1] == "plan" else report(argv[2:])
+    rest = [word for word in argv[2:] if word != "--full"]
+    full = "--full" in argv[2:]
+    return plan(rest, full) if argv[1] == "plan" else report(rest, full)
 
 
 # ------------------------------------------------------------------------------
 # plan
 
 
-def plan(argv):
+def plan(argv, full=False):
     layer, static, levels, metadata, gridspec, restart = argv[0:6]
     out_yaml, out_points = argv[6:8]
     requested = argv[8:]
@@ -79,13 +111,14 @@ def plan(argv):
     else:
         cells = default_cells(grid, depth, static)
 
-    points = place(grid, cells, deepest_level)
+    points = place(grid, cells, deepest_level, full)
     warn_if_crowded(grid, points, static)
 
     with open(out_points, "w") as stream:
         json.dump(points, stream, indent=2)
     with open(out_yaml, "w") as stream:
-        yaml.safe_dump(document(layer, static, levels, metadata, restart, points),
+        yaml.safe_dump(document(layer, static, levels, metadata, restart, points,
+                                full),
                        stream, sort_keys=False, default_flow_style=False)
 
     for point in points:
@@ -205,7 +238,7 @@ def default_cells(grid, depth, static):
     return cells
 
 
-def place(grid, cells, deepest_level):
+def place(grid, cells, deepest_level, full=False):
     """Two diracs per location: temperature at mid-depth, and height.
 
     Two rather than three, and neither of them a surface temperature, because
@@ -218,14 +251,25 @@ def place(grid, cells, deepest_level):
     a single level and give the same kernel at every depth, so the surface buys
     nothing, while a dirac at the top of the column has half its vertical kernel
     cut off by the boundary.
+
+    **`full` places the temperature dirac alone**, because the argument above
+    stops holding once the balance operator is in. A correlation is block
+    diagonal in the variables, so a temperature dirac cannot reach the height
+    field and the two never interfere. A covariance is not: the height a
+    temperature dirac produces through balance lands in the same cell as the
+    height dirac's own response, they add, and no reading of the sum separates
+    them. One dirac per location, in temperature, makes every height and
+    salinity number in the report the balance operator's and nothing else.
     """
     points = []
     for j, i, why in cells:
         nk = int(deepest_level[j, i])
         if nk < 4:
             sys.exit(f"dirac: the cell chosen for '{why}' is only {nk} levels deep")
-        for variable, level in (("sea_water_potential_temperature", nk // 2),
-                                ("sea_surface_height_above_geoid", 1)):
+        placed = (("sea_water_potential_temperature", nk // 2),)
+        if not full:
+            placed += (("sea_surface_height_above_geoid", 1),)
+        for variable, level in placed:
             points.append({
                 # Fortran indexing, and global rather than per task: SOCA
                 # compares these against each rank's `isc`/`iec` directly and
@@ -243,6 +287,7 @@ def place(grid, cells, deepest_level):
 
 def short(variable):
     return {"sea_water_potential_temperature": "temperature",
+            "sea_water_salinity": "salinity",
             "sea_surface_height_above_geoid": "height"}.get(variable, variable)
 
 
@@ -268,21 +313,46 @@ def warn_if_crowded(grid, points, static):
                 return
 
 
-def document(layer, static, levels, metadata, restart, points):
-    """The experiment's own central block, and nothing else from its B.
+def document(layer, static, levels, metadata, restart, points, full=False):
+    """The experiment's own background error, lifted out of the layer.
 
-    Lifted out of the layer rather than written here: a dirac test against a
-    second description of the background error would pass while the analysis
-    used a different operator. What is dropped is everything outside the central
-    block, because the standard deviations and the balance operator turn a
-    correlation into a covariance and would leave the peak value meaning
-    nothing.
+    Lifted rather than written here: a dirac test against a second description
+    of the background error would pass while the analysis used a different
+    operator, which is the failure this exists to catch.
+
+    Without *full*, everything outside the central block is dropped, because the
+    standard deviations and the balance operator turn a correlation into a
+    covariance and would leave the peak value meaning nothing. With *full* they
+    are all kept and the peak means something else instead; see the module
+    docstring.
     """
-    background_error = yaml.safe_load(open(layer))["solver"]["background error"]
-    covariance = substitute({
-        "covariance model": background_error["covariance model"],
-        "saber central block": background_error["saber central block"],
-    }, {"domain_static": static, "diffusion_levels": levels})
+    solver = yaml.safe_load(open(layer))["solver"]
+    background_error = solver["background error"]
+    wanted = {"covariance model": background_error["covariance model"],
+              "saber central block": background_error["saber central block"]}
+    analysis_variables = solver["analysis variables"]
+    state_variables = list(IFDIR)
+
+    if full:
+        wanted["saber outer blocks"] = with_diagnostics(
+            background_error["saber outer blocks"])
+        # `input variables` and `output variables` are absent from the layer on
+        # purpose, because `ackbar/soca.py` fills them in from the analysis
+        # variables. Nothing here goes through that, so this is the second place
+        # that has to know it, and omitting them is not a configuration error
+        # that anything reports: oops holds a null pointer and dereferences it
+        # the first time it evaluates Jb.
+        change = dict(background_error["linear variable change"])
+        change["input variables"] = analysis_variables
+        change["output variables"] = analysis_variables
+        wanted["linear variable change"] = change
+        # The outer blocks read fields the central block does not: thickness is
+        # what makes anything addressable by depth, and the parametric standard
+        # deviations are built out of the mixed layer and the depth.
+        state_variables = solver["background variables"]
+
+    covariance = substitute(
+        wanted, {"domain_static": static, "diffusion_levels": levels})
 
     return {
         "geometry": {
@@ -298,9 +368,16 @@ def document(layer, static, levels, metadata, restart, points):
             # Salinity is here although no dirac goes into it: it shares a
             # diffusion group with temperature, and leaving it out would change
             # which fields the block is built over.
-            "state variables": list(IFDIR),
+            "state variables": state_variables,
         },
         "background error": covariance,
+        # What the dirac increment is built over. Without it the toolbox takes
+        # the background's own variable list, which in `--full` is six fields
+        # rather than three because the outer blocks read thickness, the mixed
+        # layer and the depth. The increment would then carry three fields the
+        # linear variable change does not, and SOCA fails an assertion on
+        # `Increment::operator=` rather than saying so.
+        **({"increment variables": analysis_variables} if full else {}),
         # The toolbox prints the value at every dirac itself, before anything
         # here reads a file. Two independent readings of the peak are worth the
         # one line of output.
@@ -309,6 +386,30 @@ def document(layer, static, levels, metadata, restart, points):
         "output dirac": {"datadir": DATADIR, "date": DATE,
                          "exp": EXPERIMENT, "type": "an"},
     }
+
+
+def with_diagnostics(blocks):
+    """The layer's outer blocks, with the parametric one asked to show its work.
+
+    `SOCAParametricOceanStdDev` builds the standard deviations out of the
+    background and then hands them to the next block, and nothing downstream
+    reports what they were. `save diagnostics` writes them, along with the
+    intermediate fields they were built from: `dtdz`, the mixed layer, the
+    depth, and the sst floor as it landed on this grid after interpolation.
+    That last one is the only direct check that `tools/sst-bgerr.py` produced a
+    file SOCA can read.
+
+    Added here rather than in the layer because it is a per cycle write of every
+    field in the covariance, and an experiment that turned it on would spend
+    more disk on the diagnostic than on the analysis. An experiment that wants
+    it can add the same two lines.
+    """
+    out = []
+    for block in blocks:
+        if block.get("saber block name") == "SOCAParametricOceanStdDev":
+            block = dict(block, **{"save diagnostics": {"filepath": DIAGS}})
+        out.append(block)
+    return out
 
 
 def substitute(node, values):
@@ -339,11 +440,13 @@ def substitute(node, values):
 # report
 
 
-def report(argv):
+def report(argv, full=False):
     gridspec, static, points_path, outdir = argv[0:4]
     grid = read_gridspec(gridspec)
     points = json.load(open(points_path))
     increment = read_increment(outdir)
+    if full:
+        return report_full(grid, static, points, increment)
 
     requested = {
         "sea_water_potential_temperature":
@@ -398,6 +501,97 @@ def report(argv):
         return 1
     print("dirac: the operator is normalized and the scales are the ones asked for.")
     return 0
+
+
+def report_full(grid, static, points, increment):
+    """What one observation would do, through the covariance as configured.
+
+    Nothing here passes or fails. A correlation returns 1 at its own dirac and
+    that is a statement about the operator; a covariance returns the variance,
+    and whether that number is right is a question about the ocean that no
+    single run can answer. What this is for is seeing the three things a
+    configuration change was meant to do:
+
+    * the size of the increment in the variable the dirac went into, which is
+      the standard deviation squared where the correlation is 1,
+    * the size of the increment the balance operator put into the other two,
+      which is the whole of the ssh response once unbalanced ssh error is zero,
+    * the standard deviation fields themselves, which the parametric block
+      wrote on the way past.
+    """
+    print()
+    print(f"  {'dirac':<26}{'variable':>13}{'value':>11} {'units':<6}"
+          f"{'east':>8}{'west':>8}{'north':>8}{'south':>8}")
+    print("  " + "-" * 90)
+    for point in points:
+        j, i, k = point["j"], point["i"], point["level"] - 1
+        for variable, io in IO_NAME.items():
+            field = increment.get(io)
+            if field is None:
+                continue
+            plane = field[k] if field.ndim == 3 else field
+            value = float(plane[j, i])
+            # The response of a variable the dirac did not go into is the
+            # balance operator's, and it can be either sign. The radius is only
+            # meaningful where there is something to measure a radius of.
+            spread = ("      -       -       -       -" if abs(value) < 1e-12
+                      else " ".join(
+                          f"{radius(line, spacing, value) / 1e3:7.1f}" for line, spacing in (
+                              (plane[j, i:], grid["dx"][j, i:]),
+                              (plane[j, i::-1], grid["dx"][j, i::-1]),
+                              (plane[j:, i], grid["dy"][j:, i]),
+                              (plane[j::-1, i], grid["dy"][j::-1, i]))))
+            mark = "*" if variable == point["variable"] else " "
+            label = f"{point['what']} {mark}" if mark == "*" else point["what"]
+            print(f"  {label if variable == point['variable'] else '':<26}"
+                  f"{short(variable):>13}{value:11.4f} {UNITS[variable]:<6}"
+                  f"{spread}")
+        print(f"  {'':<26}{point['lat']:.2f}, {point['lon']:.2f}   {point['why']}")
+        print()
+
+    print("  * is the variable the dirac was placed in. The other rows are the")
+    print("    balance operator, which is the only thing that moves them.")
+    diagnostics(static, grid)
+    return 0
+
+
+def diagnostics(static, grid):
+    """The standard deviations the parametric block wrote, as a summary.
+
+    Domain medians and the range, per field, over ocean. The fields themselves
+    are in the file for anything that wants to look at where they are, which is
+    the question a median cannot answer.
+    """
+    path = f"{DIAGS}.nc"
+    if not os.path.exists(path):
+        print(f"\ndirac: no {path}; the parametric block did not write its "
+              f"diagnostics, which means it is not in this experiment's outer "
+              f"blocks.")
+        return
+    print(f"\n  the standard deviations this B was built from ({path}), "
+          f"over ocean")
+    print(f"  {'field':<34}{'median':>10}{'10th':>10}{'90th':>10}{'max':>10}")
+    print("  " + "-" * 74)
+    with netCDF4.Dataset(path) as src:
+        for name in sorted(src.variables):
+            data = src.variables[name]
+            if data.ndim < 1 or name in ("lon", "lat"):
+                continue
+            values = np.ma.filled(np.ma.masked_invalid(data[:]), np.nan).ravel()
+            values = values[np.isfinite(values)]
+            if not values.size:
+                continue
+            if not np.any(values != 0.0):
+                # Said rather than dropped. A field of zeros is usually a
+                # decision (`unbalanced ssh` is set to zero in the layer) and
+                # occasionally a mistake, and a missing row reads as neither.
+                print(f"  {name:<34}{'zero everywhere':>40}")
+                continue
+            # Land is zero in these and would drag every percentile down.
+            values = values[values != 0.0]
+            print(f"  {name:<34}{np.median(values):>10.4f}"
+                  f"{np.percentile(values, 10):>10.4f}"
+                  f"{np.percentile(values, 90):>10.4f}{values.max():>10.4f}")
 
 
 def read_increment(outdir):

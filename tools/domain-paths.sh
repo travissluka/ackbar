@@ -27,8 +27,29 @@ domain_paths() {
 import re, sys, yaml
 
 layer, root, static = sys.argv[1:4]
-declared = yaml.safe_load(open(layer)).get("vars") or {}
 builtin = {"ackbar_root": root, "static_root": static}
+
+
+def vars_of(path, seen=()):
+    """A layer's vars with everything it inherits merged underneath it.
+
+    The same rule `ackbar.config.merge_layers` applies and for the same reason:
+    a domain layer states its slug and its resolution and leaves the paths built
+    from those to `domain/common/<family>.yaml`. Reading the layer alone finds
+    a `vars` block with two entries in it and none of the four this needs.
+    """
+    if path in seen:
+        sys.exit(f"domain-paths: {path} inherits itself")
+    document = yaml.safe_load(open(path)) or {}
+    merged = {}
+    for parent in document.get("inherit") or ():
+        merged.update(vars_of(f"{root}/config/layers/{parent}.yaml", seen + (path,)))
+    merged.update(document.get("vars") or {})
+    return merged
+
+
+declared = vars_of(layer)
+
 
 def resolve(name, seen=()):
     if name in seen:

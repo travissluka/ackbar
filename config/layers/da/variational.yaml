@@ -9,10 +9,18 @@
 # geometry from the model layer, the background from the previous cycle's
 # restarts, the window from the cycle, the observers from `observations`.
 #
-# **The standard deviations below are defaults, not a tuned ocean.** They are
-# known to run against the pinned SOCA and are not known to be right for
-# anywhere. `SOCAParametricOceanStdDev` is the block to look at before believing
-# a result, and `docs/background-error.md` says what it takes.
+# **The standard deviations below are two stated decisions and a set of
+# defaults.** The decisions are that the mixed layer temperature error comes
+# from the GODAS field rather than one number for the whole domain, and that
+# unbalanced sea surface height error is zero so that height moves only when
+# water does. Everything else is `SOCAParametricOceanStdDev`'s own default and
+# is not known to be right for anywhere. That block is the thing to read before
+# believing a result, and `docs/background-error.md` says what it takes.
+#
+# `tools/soca-dirac.sh <domain> --full` applies exactly what is written here,
+# standard deviations and balance included, to a handful of point sources and
+# reports what came out. It is the cheapest check that a change to this file did
+# what it was meant to.
 #
 # What to reach for first, in order: `ninner` if the minimization is not
 # converging or is spending wall clock after it has, the standard deviations if
@@ -125,23 +133,67 @@ solver:
       rescale_bkgerr: 1.0
       efold_z: 2500.0         # [m]
 
-    # The standard deviations, and the part of this file that wants a decision
-    # before any result is believed. Every value is a default: the SST error is
-    # a flat 1.0 K because the GODAS field it would otherwise read is not
-    # staged, and unbalanced salinity and ssh take the block's own defaults,
-    # which put 0.1 m of unbalanced SSH error everywhere. None of it decides
-    # whether the analysis runs, all of it decides what the analysis does.
+    # The standard deviations. `ParametricOceanStdDev.cc` builds the temperature
+    # one from the background's own vertical gradient,
+    #
+    #     stddev   = clamp(dz * |dT/dz|, localMin, max)
+    #     localMin = min + (sst - min) * exp(-depth / efold)
+    #
+    # which is the right shape through a thermocline and is **zero inside a
+    # mixed layer**, where dT/dz is zero by definition. So `sst` below is not a
+    # cosmetic floor: it is the entire mixed layer temperature error, and it is
+    # what every SST observation is weighed against.
+    #
+    # `min`, `max`, `dz` and `efold` are the block's defaults (0.1 K, 2.0 K,
+    # 20 m, 500 m), which are also what hat10 states explicitly.
     - saber block name: SOCAParametricOceanStdDev
       temperature:
+        # The GODAS field, remapped onto this domain's cell centres by
+        # `tools/sst-bgerr.py`. It replaces a flat 1.0 K that was a placeholder
+        # for want of the file, and that was about two and a half times what
+        # this field says the Gulf is: 0.20 to 0.92 K, low in the western basin
+        # interior and on Campeche Bank, high along the Loop Current and the
+        # Florida Current.
+        #
+        # A full filename and not a stem. The diffusion block above takes stems
+        # because saber appends `.nc` to those; `readNcAndInterp` does not.
         sst:
-          fixed value: 1.0
+          filepath: $(domain_static)/sst_bgerr.nc
+          variable: sst_bgerr
+
+      # The block's own defaults: 0.01 to 0.25 psu, shaped by the mixed layer.
       unbalanced salinity: {}
-      unbalanced ssh: {}
+
+      # **Zero, so that every sea surface height increment arrives through the
+      # balance operator below**, out of the temperature and salinity the
+      # analysis actually corrected. The block's default is 0.1 m everywhere,
+      # and that is an *unbalanced* height increment: it moves the free surface
+      # without moving any water, and the model spends the first hours of the
+      # forecast reconciling the two. hat10 sets this to zero for the same
+      # reason. It is also what makes the ssh column of a dirac test through
+      # this file meaningful, since a response there is then entirely balance.
+      unbalanced ssh:
+        min: 0.0
+        max: 0.0
 
     # The balance operator, which is what makes an increment in temperature
-    # imply one in salinity and in sea surface height rather than three
-    # independent analyses of the same water. `kst` is left at the operator's
-    # defaults.
+    # imply one in sea surface height rather than two independent analyses of
+    # the same water. `ksshts` is the T and S to height jacobian and it is on.
+    #
+    # **`kst`, the temperature to salinity jacobian, is absent and that means
+    # off, not defaulted.** `soca_balance_mod.F90` initialises the jacobian to
+    # zero and fills it only `if ( f_conf%has("kst") )`, and the four keys
+    # inside are all `get_or_die`, so there is no default to fall back to: an
+    # analysis through this file puts no salinity anywhere it saw only
+    # temperature. `tools/soca-dirac.sh gom_25km --full` reports exactly 0.0000
+    # psu against a 1.5 degC temperature response, which is that.
+    #
+    # Left off for now rather than guessed at, because the four numbers are a
+    # local water mass statement (`dsdtmax`, `dsdzmin`, `dtdzmin`, `nlayers`)
+    # and the Gulf's subtropical underwater maximum sits above its own
+    # temperature inversion in places, where a T to S regression has the wrong
+    # sign. hat10 carries them commented out for what is probably the same
+    # reason. It matters most where the network has temperature and no salinity.
     #
     # `input variables` and `output variables` belong here and are absent on
     # purpose: both are the analysis variables, which are already stated once
