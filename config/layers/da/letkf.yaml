@@ -78,36 +78,39 @@ solver:
   # Written as 500000 rather than 500e3, which PyYAML reads as the string
   # '500e3' while eckit reads it as a float. See ackbar.config.lint.
   ensemble distribution: {name: Halo, halo size: 500000}
+
+  # **Every observer, not a list of them.** `ackbar/soca.py:_observers` attaches
+  # this to each observer the filter is given, exactly as it attaches the
+  # distribution above, and for the same reason plus one: it belongs to all of
+  # them, and a merged configuration can only say that by naming them one at a
+  # time. This was an `observations:` list with a stanza per platform, which
+  # left any platform not named here with no localization at all and invented a
+  # phantom observer for every platform named here that the experiment did not
+  # carry. An observer may still override it by stating its own
+  # `obs localizations`.
+  #
+  #
+  # Localization is added per observer. Each element names only the observer it
+  # addresses; nothing else about the observer is restated.
+  #
+  # `rossby mult` is the localization radius as a multiple of the first
+  # baroclinic Rossby radius, and it decides how far an observation is allowed to
+  # reach. At 1.0, on a domain that barely resolves one radius, the filter sees so
+  # few observations per analysis point that the update is rank starved before the
+  # ensemble size is even reached. 1.5 trades some spurious long-range correlation
+  # for a better conditioned local problem, which is the right side of that trade
+  # at these resolutions.
+  #
+  # It interacts with the halo above: `halo size` has to exceed the largest
+  # localization radius anywhere on the domain or the filter solves with
+  # observations it cannot see. 500 km against 1.5 x 45 km leaves an enormous
+  # margin in the Gulf and much less of one near the equator, where the first
+  # baroclinic radius grows past 200 km. A global domain needs the halo revisited
+  # alongside this number.
+  ensemble localization:
+  - localization method: Rossby
+    rossby mult: 1.5
+    min grid mult: 1.0
 vars:
   obs_land_mask_min: 0.5
 
-# Localization is added per observer. Each element names only the observer it
-# addresses; nothing else about the observer is restated.
-#
-# `rossby mult` is the localization radius as a multiple of the first
-# baroclinic Rossby radius, and it decides how far an observation is allowed to
-# reach. At 1.0, on a domain that barely resolves one radius, the filter sees so
-# few observations per analysis point that the update is rank starved before the
-# ensemble size is even reached. 1.5 trades some spurious long-range correlation
-# for a better conditioned local problem, which is the right side of that trade
-# at these resolutions.
-#
-# It interacts with the halo above: `halo size` has to exceed the largest
-# localization radius anywhere on the domain or the filter solves with
-# observations it cannot see. 500 km against 1.5 x 45 km leaves an enormous
-# margin in the Gulf and much less of one near the equator, where the first
-# baroclinic radius grows past 200 km. A global domain needs the halo revisited
-# alongside this number.
-observations:
-- obs space:
-    name: adt_3a
-  obs localizations:
-  - localization method: Rossby
-    rossby mult: 1.5
-    min grid mult: 1.0
-- obs space:
-    name: sst_noaa19
-  obs localizations:
-  - localization method: Rossby
-    rossby mult: 1.5
-    min grid mult: 1.0

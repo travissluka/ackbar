@@ -76,13 +76,28 @@ class TestLetkfLayerAddressesOneObserverAtATime:
         names = [o["obs space"]["name"] for o in config["observations"]]
         assert names == ["adt_3a", "sst_noaa19"]
 
-    def test_letkf_adds_localization_without_restating_the_observer(self, letkf):
+    def test_the_observer_layers_survive_the_solver_overlay(self, letkf):
         _, config = letkf
         adt = observer(config, "adt_3a")
-        assert adt["obs localizations"][0]["localization method"] == "Rossby"
-        # everything the obs layer supplied survived the overlay
         assert adt["obs operator"]["name"] == "ADT"
         assert adt["obs space"]["simulated variables"] == ["absoluteDynamicTopography"]
+
+    def test_localization_belongs_to_the_solver_and_not_to_a_named_observer(self, letkf):
+        """The one place the keyed merge was the wrong tool.
+
+        `da/letkf` used to state `obs localizations` per platform, which is what
+        the keyed merge is for and which fails here in both directions at once:
+        a platform the layer had not heard of got no localization, and a
+        platform the layer named that the experiment did not carry became an
+        observer. The OSSE hit both. It is one value under `solver` now, and
+        `soca._observers` attaches it to every observer the filter is given.
+        """
+        _, config = letkf
+        assert config["solver"]["ensemble localization"] == [
+            {"localization method": "Rossby", "rossby mult": 1.5,
+             "min grid mult": 1.0}]
+        for name in ("adt_3a", "sst_noaa19"):
+            assert "obs localizations" not in observer(config, name)
 
     def test_each_observer_keeps_its_own_filter_chain(self, letkf):
         _, config = letkf

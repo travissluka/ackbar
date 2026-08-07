@@ -650,18 +650,44 @@ def hofx4d_config(config, cycle, observers, *, initial, states, tstep, begin,
     }, templates=templates)
 
 
-def _observers(observers, distribution):
-    """The observer bodies, with the distribution this application needs.
+def _observers(observers, distribution, localization=None):
+    """The observer bodies, with what this application needs added to each.
 
     Set here rather than substituted into the observer layers. See
     `GLOBAL_DISTRIBUTION` for why: a hybrid cycle reads the same observers
     through two applications that need different answers, so it cannot be one
     value in the merged configuration.
+
+    *localization* is the observation-space localization an ensemble filter
+    applies, and it is here for the same reason and one more. Being per
+    application is the same reason. The other is that it belongs to **every**
+    observer, and the only way to say that in a merged configuration is to name
+    them one at a time: the layers merge on `obs space.name`, so a `da/letkf`
+    that spelled its localization out per platform did two things at once. It
+    left every platform it had not heard of with no localization, and it
+    invented an observer for every platform it named that the experiment did
+    not carry.
+
+    Which is what happened. The three filter layers named `adt_3a` and
+    `sst_noaa19`, so the OSSE's seven real platforms went into a twenty member
+    LETKF with no localization at all, and two phantom observers appeared whose
+    only trace was an unreadable output file in the cycle summary. The second
+    failure is visible if you look; the first is not visible in any output the
+    run produces, and it is the one that matters, because an unlocalized sample
+    covariance of twenty members has spurious correlations between every pair of
+    points in the domain.
+
+    An observer that states its own `obs localizations` keeps it. Nothing does
+    today. The one that will is a platform whose footprint argues for a
+    different radius than the domain's Rossby scale, which is a statement about
+    the platform and belongs in its layer.
     """
     bodies = []
     for record in observers:
         body = dict(record["config"])
         body["obs space"] = dict(body["obs space"], distribution=dict(distribution))
+        if localization is not None and "obs localizations" not in body:
+            body["obs localizations"] = [dict(entry) for entry in localization]
         bodies.append(body)
     return bodies
 
@@ -839,7 +865,8 @@ def letkf_config(config, cycle, observers, *, backgrounds, members,
         "GEOMETRY": _geometry(model),
         "MEMBER_BACKGROUNDS": states,
         "OBSERVERS": _observers(observers,
-                                _require(solver, "ensemble distribution")),
+                                _require(solver, "ensemble distribution"),
+                                _require(solver, "ensemble localization")),
         "LOCAL_ENSEMBLE_DA": _require(solver, "local ensemble DA"),
         "ANALYSIS_OUTPUT": _written(ANALYSIS, type=ENSEMBLE_TYPE, date=date),
         "INCREMENT_OUTPUT": _written(INCREMENT, date=date),

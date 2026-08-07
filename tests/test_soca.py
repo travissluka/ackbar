@@ -578,6 +578,10 @@ LETKF = {
     "local ensemble DA": {"solver": "Deterministic LETKF",
                           "inflation": {"rtps": 0.5}},
     "ensemble distribution": {"name": "Halo", "halo size": 500000},
+    # Attached to every observer by `soca._observers`, which is why it is one
+    # entry here and not one per platform. See its docstring.
+    "ensemble localization": [{"localization method": "Rossby",
+                               "rossby mult": 1.5, "min grid mult": 1.0}],
 }
 
 
@@ -724,9 +728,18 @@ def test_the_shipped_eakf_layers_change_the_solver_and_nothing_structural():
     space = document["observations"]["observers"][0]["obs space"]
     assert space["distribution"] == {"name": "RoundRobin"}
 
-    localizations = merged["observations"][0]["obs localizations"]
-    assert [entry["localization method"] for entry in localizations] == \
+    # Gaspari-Cohn, and on the observer in the document rather than only in the
+    # merged config: the layer states it once under `solver` and
+    # `soca._observers` attaches it to each observer, so this is the assertion
+    # that the substitution actually reached the application.
+    assert merged["solver"]["ensemble localization"] == [
+        {"localization method": "Horizontal Gaspari-Cohn", "lengthscale": 100000}]
+    assert [entry["localization method"] for entry in space_localizations(document)] == \
         ["Horizontal Gaspari-Cohn"]
+
+
+def space_localizations(document):
+    return document["observations"]["observers"][0]["obs localizations"]
 
 
 def test_the_two_ensemble_solvers_differ_only_where_they_have_to():
@@ -741,7 +754,8 @@ def test_the_two_ensemble_solvers_differ_only_where_they_have_to():
 
     differ = {key for key in set(letkf["solver"]) | set(eakf["solver"])
               if letkf["solver"].get(key) != eakf["solver"].get(key)}
-    assert differ == {"local ensemble DA", "ensemble distribution"}
+    assert differ == {"local ensemble DA", "ensemble distribution",
+                      "ensemble localization"}
     assert letkf["solver"]["analysis variables"] == \
         eakf["solver"]["analysis variables"]
     assert letkf["solver"]["background variables"] == \

@@ -287,6 +287,24 @@ properties:
         properties:
           name: { type: string }
 
+      # The observation-space localization the filter applies, attached to every
+      # observer by ackbar/soca.py. Here rather than in the observer layers for
+      # the same reason as the distribution above, and one more: it belongs to
+      # all of them, and a merged configuration can only say that by naming each
+      # one. A per-platform list left any platform it did not name unlocalized
+      # and invented an observer for every platform it named that the experiment
+      # did not carry. An observer that states its own `obs localizations`
+      # overrides this.
+      ensemble localization:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          additionalProperties: true
+          required: [localization method]
+          properties:
+            localization method: { type: string }
+
     allOf:
       # A variational experiment with no B and no minimizer is not an
       # under-specified experiment, it is a different experiment: the
@@ -341,6 +359,7 @@ properties:
           - background variables
           - local ensemble DA
           - ensemble distribution
+          - ensemble localization
 
   ensemble:
     type: object

@@ -6,13 +6,31 @@
 # feeds the next cycle. If `aftercorr` is wrong anywhere, this experiment pends
 # forever instead of finishing.
 #
-# No observation layers are inherited. `da/letkf` still names the two observers
-# it localizes, which is enough to enable `stage.obs` and `post.obs` without
-# needing an observation archive on disk.
+# Two observer layers, so that `stage.obs` and `post.obs` are in the graph:
+# they are part of what makes this the shape with the most edges. No archive
+# has to exist on disk, because nothing here reads one.
+#
+# They used to be absent and the graph had them anyway: `da/letkf` named the
+# observers it localized, the layers merge on `obs space.name`, and naming one
+# created it. That is fixed (`soca._observers`), so what was implicit is stated.
+#
+# Both altimeters, and not one of each kind, only because an SST layer names
+# `$(ackbar_root)` for its operator alias file and the harness that resolves
+# this config supplies `scratch_root` and `output_root` and nothing else. Which
+# platforms these are is not something any test here asserts.
 inherit:
   - domain/stub
   - model/stub
   - da/letkf
+  - obs/adt_3a
+  - obs/adt_j2
+vars:
+  # Where the observer layers look, and it deliberately does not exist. The
+  # stub solver reads no observations; what this experiment tests is the shape
+  # of the graph, and `stage.obs` drops a window whose file is missing, which
+  # is every window here.
+  obs_dir: /nonexistent/obs
+
 experiment:
   name: stub_letkf
   description: tier 2 workflow test, no science

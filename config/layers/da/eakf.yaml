@@ -58,35 +58,38 @@ solver:
     name: RoundRobin
     halo size: $remove
 
-# Gaspari-Cohn instead of Rossby, and not by preference. SOCA's own `eakf.yml`
-# carries the note
-#
-#     NOTE: Rossby localization is not yet working for EAKF. You're stuck with
-#     GC99 until that is sorted out!
-#
-# so this is a limitation being worked around and should be revisited whenever
-# the bundle is moved forward. An experiment that inherited `da/letkf`'s Rossby
-# localization and switched only the solver is the failure this exists to
-# prevent, and it is not one that announces itself.
-#
-# `lengthscale` is a hard cutoff, not an e-folding scale: `ObsHorLocGC99.h`
-# computes `gc99(distance / lengthscale)` and returns zero for
-# `distance >= lengthscale`, so it is also the search radius. 100 km, against
-# the roughly 67 km the Rossby method lands on in the deep Gulf, where the first
-# baroclinic radius is about 45 km and `rossby mult` is 1.5. One fixed number
-# has to serve the whole domain, so it is wider than Rossby over the shelf,
-# where the radius collapses, and comparable in the basin. It is the one value
-# in this file that is a choice rather than a transcription, and it is not
-# calibrated: what would calibrate it is a spread-skill comparison against the
-# LETKF on the same cycles, which is an experiment and not a default.
-observations:
-- obs space:
-    name: adt_3a
-  obs localizations:
+  # **Every observer, not a list of them.** `ackbar/soca.py:_observers` attaches
+  # this to each observer the filter is given, exactly as it attaches the
+  # distribution above, and for the same reason plus one: it belongs to all of
+  # them, and a merged configuration can only say that by naming them one at a
+  # time. This was an `observations:` list with a stanza per platform, which
+  # left any platform not named here with no localization at all and invented a
+  # phantom observer for every platform named here that the experiment did not
+  # carry. An observer may still override it by stating its own
+  # `obs localizations`.
+  #
+  # Gaspari-Cohn instead of Rossby, and not by preference. SOCA's own `eakf.yml`
+  # carries the note
+  #
+  #     NOTE: Rossby localization is not yet working for EAKF. You're stuck with
+  #     GC99 until that is sorted out!
+  #
+  # so this is a limitation being worked around and should be revisited whenever
+  # the bundle is moved forward. An experiment that inherited `da/letkf`'s Rossby
+  # localization and switched only the solver is the failure this exists to
+  # prevent, and it is not one that announces itself.
+  #
+  # `lengthscale` is a hard cutoff, not an e-folding scale: `ObsHorLocGC99.h`
+  # computes `gc99(distance / lengthscale)` and returns zero for
+  # `distance >= lengthscale`, so it is also the search radius. 100 km, against
+  # the roughly 67 km the Rossby method lands on in the deep Gulf, where the first
+  # baroclinic radius is about 45 km and `rossby mult` is 1.5. One fixed number
+  # has to serve the whole domain, so it is wider than Rossby over the shelf,
+  # where the radius collapses, and comparable in the basin. It is the one value
+  # in this file that is a choice rather than a transcription, and it is not
+  # calibrated: what would calibrate it is a spread-skill comparison against the
+  # LETKF on the same cycles, which is an experiment and not a default.
+  ensemble localization:
   - localization method: Horizontal Gaspari-Cohn
     lengthscale: 100000
-- obs space:
-    name: sst_noaa19
-  obs localizations:
-  - localization method: Horizontal Gaspari-Cohn
-    lengthscale: 100000
+

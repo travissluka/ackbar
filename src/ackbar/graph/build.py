@@ -326,7 +326,8 @@ def _check_ensemble_source(config):
     # `da.ens` is an ensemble filter, so it needs what any ensemble filter
     # needs. The schema asks for these when the *solver* is an LETKF and cannot
     # ask for them here, where what calls for one is a value in another subtree.
-    missing = [key for key in ("local ensemble DA", "ensemble distribution")
+    missing = [key for key in ("local ensemble DA", "ensemble distribution",
+                               "ensemble localization")
                if not config["solver"].get(key)]
     if missing:
         raise GraphError(
