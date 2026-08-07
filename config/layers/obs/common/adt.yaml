@@ -20,10 +20,10 @@
 #                          cycle and the two need different answers. What an
 #                          experiment chooses is the halo size, under
 #                          `solver.ensemble distribution`.
-#   the land mask          `$(obs_land_mask_min)`, set by the da layer: 0.9
-#                          variational, 0.5 LETKF.
-#   the localization       added by `da/letkf` and `da/eakf`, which is also
-#                          where the radius is chosen.
+#   the localization       `$localization` below is this family's, and only an
+#                          ensemble filter reads it. A solver layer that states
+#                          `solver.ensemble localization` overrides every
+#                          observer's own; nothing but `da/eakf` does.
 #
 # What an experiment usually does change is the error, the QC thresholds and the
 # thinning. All of it is UFO's configuration, not ACKBAR's, and is passed
@@ -35,9 +35,32 @@
 # synthetic archive that is what `PLATFORMS` wrote there and drew the noise
 # with. `docs/observing-system.md` says where it comes from.
 
+vars:
+  # Multiples of the local Rossby radius. The default is what `da/letkf` used to
+  # apply to every observer of every kind.
+  adt_localization_scale: 1.5
+
 observation bodies:
 
   adt:
+
+    # Observation-space localization, for the ensemble filters. Here rather than
+    # in a da layer because the radius a filter should trust is a property of
+    # what was measured and how far it is representative, which is a statement
+    # about the platform family.
+    #
+    # `$localization` and not `obs localizations`: the same observer body is read
+    # by a variational solve and by hofx, neither of which localizes, and
+    # `ackbar/soca.py` renders this to UFO's key only for the applications that
+    # do. The sigil is the one `$remove` and `$inherit` wear.
+    #
+    # The scale is a var so that an experiment can move it without restating the
+    # block, which is what an ensemble smaller than this one needs: fewer members
+    # means more sampling noise at range and a tighter radius.
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(adt_localization_scale)
+      min grid mult: 1.0
 
     # Everything in `obs space` that is not this platform's identity. What a
     # platform layer is left holding is its name and the two paths that name
@@ -60,7 +83,7 @@ observation bodies:
     - filter: Domain Check
       where:
       - variable: {name: GeoVaLs/sea_area_fraction}
-        minvalue: $(obs_land_mask_min)
+        minvalue: 0.9
     - filter: Domain Check
       where:
       - variable: {name: GeoVaLs/sea_surface_temperature}

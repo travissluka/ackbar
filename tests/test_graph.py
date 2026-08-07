@@ -20,6 +20,7 @@ from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph import GraphError, build_graph, member_set, to_dot, to_text
+from ackbar.observations import LOCALIZATION
 from ackbar.graph.build import extended_leads, extended_slots
 
 REPO = Path(__file__).resolve().parents[1]
@@ -268,6 +269,34 @@ class TestConfigurationDrivesTheTaskSet:
         del config["solver"]["local ensemble DA"]
         with pytest.raises(GraphError, match="local ensemble DA"):
             build_graph(config)
+
+    def test_a_filter_maintained_ensemble_needs_its_observers_localized(self, keys):
+        """The one failure in this file that produces no bad-looking output.
+
+        An unlocalized sample covariance of twenty members correlates every pair
+        of points in the domain, so an observation on one side of the Gulf moves
+        the analysis on the other, and the result still looks like a field. The
+        check is here rather than in the schema because either subtree can
+        satisfy it: `solver.ensemble localization` covers every observer at once,
+        or each observer carries its own.
+        """
+        config = load("hybrid_om1deg", keys)
+        assert not config["solver"].get("ensemble localization"), \
+            "the fixture localizes per observer; this test would prove nothing"
+        for entry in config["observations"]:
+            del entry[LOCALIZATION]
+        with pytest.raises(GraphError, match="would go into it unlocalized"):
+            build_graph(config)
+
+    def test_a_solver_localization_covers_observers_that_state_none(self, keys):
+        # The `da/eakf` case: one statement about every observer at once.
+        config = load("hybrid_om1deg", keys)
+        for entry in config["observations"]:
+            del entry[LOCALIZATION]
+        config["solver"]["ensemble localization"] = [
+            {"localization method": "Horizontal Gaspari-Cohn",
+             "lengthscale": 100000}]
+        build_graph(config)
 
     def test_four_d_changes_the_configuration_and_not_the_graph(self, keys):
         # The window type moves the arithmetic, not the task set: the overshoot

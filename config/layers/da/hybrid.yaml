@@ -118,13 +118,12 @@ solver:
   # different mechanism from the model-space localization of the covariance above,
   # which is why both exist and neither implies the other.
   #
-  # They have to stay equal to each other. `osse-letkf` and `osse-hybrid` differ
-  # by their covariance and are meant to differ by nothing else, so a filter that
-  # localizes differently between them makes the pair uninterpretable.
-  ensemble localization:
-  - localization method: Rossby
-    rossby mult: 1.5
-    min grid mult: 1.0
+  # This used to be stated here and in `da/letkf`, with a note that the two had
+  # to stay equal: `osse-letkf` and `osse-hybrid` differ by their covariance and
+  # are meant to differ by nothing else, so a filter that localized differently
+  # between them made the pair uninterpretable. Both are gone and the observer
+  # bodies hold it, so the two now read the same numbers by construction rather
+  # than by a comment asking someone to keep them in step.
 
 ensemble:
   # What updates the members. `letkf` runs a filter beside the deterministic

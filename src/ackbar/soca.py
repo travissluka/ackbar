@@ -52,6 +52,7 @@ from .duration import ISO_INSTANT
 from .graph.tasks import SOCA_BIN
 from .mom6sis2 import (OVERRIDE, SOCA_OVERRIDE, ModelError, keep_traces,
                        link_override)
+from .observations import LOCALIZATION
 
 #: The document templates, in the checkout. `create` freezes a copy into the
 #: experiment's own `cfg/soca/`, and that is the copy a job reads; this is the
@@ -694,7 +695,7 @@ def hofx4d_config(config, cycle, observers, *, initial, states, tstep, begin,
     }, templates=templates)
 
 
-def _observers(observers, distribution, localization=None):
+def _observers(observers, distribution, localization=None, *, localize=False):
     """The observer bodies, with what this application needs added to each.
 
     Set here rather than substituted into the observer layers. See
@@ -702,17 +703,19 @@ def _observers(observers, distribution, localization=None):
     through two applications that need different answers, so it cannot be one
     value in the merged configuration.
 
-    *localization* is the observation-space localization an ensemble filter
-    applies, and it is here for the same reason and one more. Being per
-    application is the same reason. The other is that it belongs to **every**
-    observer, and the only way to say that in a merged configuration is to name
-    them one at a time: the layers merge on `obs space.name`, so a `da/letkf`
-    that spelled its localization out per platform did two things at once. It
-    left every platform it had not heard of with no localization, and it
-    invented an observer for every platform it named that the experiment did
-    not carry.
+    Observation-space localization is the same shape of problem twice over.
 
-    Which is what happened. The three filter layers named `adt_3a` and
+    **It cannot be in the observer body under UFO's own key.** The body an
+    ensemble filter reads is the body a variational solve and a hofx read, and
+    neither of those localizes. So a platform states it under
+    `$localization`, ACKBAR's key, and this renders it to `obs localizations`
+    only for an application that asked (*localize*) and drops it otherwise.
+
+    **It cannot be spelled out per platform in a solver layer.** The layers
+    merge on `obs space.name`, so a `da/letkf` naming platforms did two things at
+    once: it left every platform it had not heard of with no localization, and it
+    invented an observer for every platform it named that the experiment did not
+    carry. Which is what happened. The three filter layers named `adt_3a` and
     `sst_noaa19`, so the OSSE's seven real platforms went into a twenty member
     LETKF with no localization at all, and two phantom observers appeared whose
     only trace was an unreadable output file in the cycle summary. The second
@@ -721,17 +724,27 @@ def _observers(observers, distribution, localization=None):
     covariance of twenty members has spurious correlations between every pair of
     points in the domain.
 
-    An observer that states its own `obs localizations` keeps it. Nothing does
-    today. The one that will is a platform whose footprint argues for a
-    different radius than the domain's Rossby scale, which is a statement about
-    the platform and belongs in its layer.
+    Three sources, most specific first:
+
+    1. an observer's literal `obs localizations`, which nothing sets and which is
+       the escape hatch if UFO ever grows an option this does not model;
+    2. *localization*, from `solver.ensemble localization`, which is a solver
+       layer making one statement about every observer at once. `da/eakf` is the
+       only layer that does, because Gaspari-Cohn at a fixed length is a property
+       of how that filter was configured rather than of any platform;
+    3. the observer's own `$localization`, which is where it normally lives, in
+       `obs/common/*.yaml`, because the distance an observation stays
+       representative over is a property of what measured it.
     """
     bodies = []
     for record in observers:
         body = dict(record["config"])
+        own = body.pop(LOCALIZATION, None)
         body["obs space"] = dict(body["obs space"], distribution=dict(distribution))
-        if localization is not None and "obs localizations" not in body:
-            body["obs localizations"] = [dict(entry) for entry in localization]
+        if localize and "obs localizations" not in body:
+            chosen = localization if localization is not None else own
+            if chosen is not None:
+                body["obs localizations"] = [dict(entry) for entry in chosen]
         bodies.append(body)
     return bodies
 
@@ -910,7 +923,8 @@ def letkf_config(config, cycle, observers, *, backgrounds, members,
         "MEMBER_BACKGROUNDS": states,
         "OBSERVERS": _observers(observers,
                                 _require(solver, "ensemble distribution"),
-                                _require(solver, "ensemble localization")),
+                                solver.get("ensemble localization"),
+                                localize=True),
         "LOCAL_ENSEMBLE_DA": _require(solver, "local ensemble DA"),
         "ANALYSIS_OUTPUT": _written(ANALYSIS, type=ENSEMBLE_TYPE, date=date),
         "INCREMENT_OUTPUT": _written(INCREMENT, date=date),

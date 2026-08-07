@@ -37,10 +37,13 @@ properties:
   vars:
     # Experiment-time substitution values, referenced as $(name). Free form by
     # nature: a layer introduces the variables it needs. What forced it to
-    # exist is the observer layers, where the land mask threshold varies by DA
-    # mode and sits inside a filter chain. Filter chains have no merge key, so
-    # the varying part has to be a substituted value rather than a merged one,
-    # and that is exactly why substitution runs after the merge.
+    # exist is the observer layers, whose filter chains and localization blocks
+    # hold values an experiment must be able to move without restating the
+    # block around them. Filter chains and localization lists have no merge key,
+    # so they replace wholesale, and the only way to reach one value inside one
+    # is to make it a substituted symbol. That is why substitution runs after
+    # the merge: `$(adt_localization_scale)` is declared in `obs/common/adt.yaml`
+    # and an experiment with a smaller ensemble overrides it there.
     type: object
     additionalProperties: true
 
@@ -379,7 +382,11 @@ properties:
           - background variables
           - local ensemble DA
           - ensemble distribution
-          - ensemble localization
+          # Not `ensemble localization`. It is optional here because the
+          # observer bodies carry it: localization is a property of what was
+          # measured, so it lives with the platform. A solver layer setting it
+          # is making one statement about every observer at once, which only
+          # `da/eakf` does. See `_observers` in `ackbar/soca.py`.
 
   ensemble:
     type: object
@@ -452,6 +459,18 @@ properties:
         # layer's own `inherit:`, at a different scope: that one is a list of
         # layer names at the top of a document ACKBAR owns outright.
         $inherit: { type: string }
+        # This observer's observation-space localization, read only by an
+        # ensemble filter and dropped for every other application. ACKBAR's, not
+        # UFO's, hence the sigil: the same body is handed to a variational solve
+        # and to hofx, and UFO's own `obs localizations` sitting there would
+        # reach an application that does not localize.
+        $localization:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: true
+            required: [localization method]
         obs space:
           type: object
           required: [name]

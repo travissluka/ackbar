@@ -82,22 +82,50 @@ class TestLetkfLayerAddressesOneObserverAtATime:
         assert adt["obs operator"]["name"] == "ADT"
         assert adt["obs space"]["simulated variables"] == ["absoluteDynamicTopography"]
 
-    def test_localization_belongs_to_the_solver_and_not_to_a_named_observer(self, letkf):
+    def test_localization_belongs_to_the_observer_and_not_to_a_named_platform(self, letkf):
         """The one place the keyed merge was the wrong tool.
 
         `da/letkf` used to state `obs localizations` per platform, which is what
         the keyed merge is for and which fails here in both directions at once:
         a platform the layer had not heard of got no localization, and a
         platform the layer named that the experiment did not carry became an
-        observer. The OSSE hit both. It is one value under `solver` now, and
-        `soca._observers` attaches it to every observer the filter is given.
+        observer. The OSSE hit both.
+
+        It lives on the observer now, but under ACKBAR's `$localization` rather
+        than UFO's key, because a platform states it once and the same body is
+        then read by a variational solve and by hofx, neither of which
+        localizes. `soca._observers` renders it for the filters and drops it for
+        everything else, which is the half a layer cannot do for itself.
         """
         _, config = letkf
-        assert config["solver"]["ensemble localization"] == [
-            {"localization method": "Rossby", "rossby mult": 1.5,
-             "min grid mult": 1.0}]
         for name in ("adt_3a", "sst_noaa19"):
-            assert "obs localizations" not in observer(config, name)
+            body = observer(config, name)
+            # The merged config, before substitution, so the scale is still the
+            # symbol an experiment overrides. `TestResolvedPort` pins the number.
+            assert body["$localization"] == [
+                {"localization method": "Rossby",
+                 "rossby mult": "$(adt_localization_scale)"
+                                if name.startswith("adt") else
+                                "$(sst_localization_scale)",
+                 "min grid mult": 1.0}]
+            # Never UFO's key in the merged config: that would reach every
+            # application, including the ones that do not localize.
+            assert "obs localizations" not in body
+
+    def test_no_solver_layer_states_a_localization_except_the_one_that_means_to(self):
+        """`solver.ensemble localization` overrides every observer at once.
+
+        `da/eakf` is the only layer entitled to it, Gaspari-Cohn at a fixed
+        length being a property of how that filter was configured rather than of
+        anything that was measured. `da/letkf` and `da/hybrid` used to set it
+        too, with a comment asking whoever edited one to keep the other in step;
+        both now read the observer bodies, so they agree by construction.
+        """
+        stating = {path.relative_to(LAYERS).with_suffix("").as_posix()
+                   for path in sorted(LAYERS.rglob("*.yaml"))
+                   if "ensemble localization" in (yaml.safe_load(path.read_text())
+                                                  or {}).get("solver", {})}
+        assert stating == {"da/eakf"}
 
     def test_each_observer_keeps_its_own_filter_chain(self, letkf):
         """Two chains, of different lengths, one per observer.
@@ -135,20 +163,30 @@ class TestValuesThatUsedToBeYamlAnchors:
         assert "distribution" not in observer(config, "adt_3a")["obs space"]
         assert "obs_distribution" not in config["vars"]
 
-    def test_land_mask_threshold_differs_by_solver(self, keys):
-        def land_mask(experiment):
-            layers = resolve_layers(EXPERIMENTS / experiment, LAYERS)
-            return merge_layers(layers, keys)["vars"]["obs_land_mask_min"]
+    def test_the_land_mask_does_not_differ_by_solver(self, keys):
+        """It used to, and that made every solver comparison invalid.
 
-        assert land_mask("letkf_om1deg.yaml") == 0.5
+        0.5 under the filter against 0.9 under the variational solver, so the
+        filter saw coastal observations the variational analysis discarded, and
+        two experiments compared across that difference were not comparing their
+        solvers. `da/letkf.yaml` carried a comment saying exactly that. It is one
+        number in the observer bodies now, so there is nothing to keep in step.
+        """
+        def land_mask(experiment):
+            config = merge_layers(
+                resolve_layers(EXPERIMENTS / experiment, LAYERS), keys)
+            chain = config["observations"][0]["obs filters"][0]
+            return chain["where"][0]["minvalue"]
+
+        assert land_mask("letkf_om1deg.yaml") == 0.9
         assert land_mask("var_om1deg.yaml") == 0.9
 
-    def test_the_observer_references_the_threshold_rather_than_carrying_it(self, letkf):
-        # Filter chains replace wholesale, so the varying part has to be
-        # substituted, not merged. This is why substitution runs after merge.
-        _, config = letkf
-        mask = observer(config, "adt_3a")["obs filters"][0]
-        assert mask["where"][0]["minvalue"] == "$(obs_land_mask_min)"
+    def test_no_layer_still_declares_the_old_land_mask_symbol(self):
+        # A leftover `obs_land_mask_min` would resolve and be silently unused,
+        # which reads like a knob and is not one.
+        for path in sorted(LAYERS.rglob("*.yaml")):
+            declared = (yaml.safe_load(path.read_text()) or {}).get("vars") or {}
+            assert "obs_land_mask_min" not in declared, path
 
 
 class TestBlame:
@@ -202,11 +240,18 @@ class TestResolvedPort:
         _, config = letkf
         return resolve(config, SITE)
 
-    def test_the_land_mask_threshold_becomes_a_number(self, resolved):
+    def test_the_land_mask_threshold_is_a_number(self, resolved):
         mask = observer(resolved, "adt_3a")["obs filters"][0]
         value = mask["where"][0]["minvalue"]
-        assert value == 0.5
+        assert value == 0.9
         assert isinstance(value, float), "a string here is rejected by UFO"
+
+    def test_the_localization_scale_becomes_a_number(self, resolved):
+        # The knob an experiment moves for a smaller ensemble. Substituted, so
+        # the same check applies: a string here is rejected by UFO.
+        scale = observer(resolved, "adt_3a")["$localization"][0]["rossby mult"]
+        assert scale == 1.5
+        assert isinstance(scale, float)
 
     def test_the_distribution_is_not_in_the_resolved_observer_at_all(self, resolved):
         # One mapping, not a name and a separate options bag: ioda reads a

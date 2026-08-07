@@ -7,9 +7,23 @@
 # the solver layer and to `ackbar/soca.py`, and why the platform layers are
 # thin.
 
+vars:
+  # Multiples of the local Rossby radius. Separate from the altimeters' because
+  # localization is a property of what was measured; a swath radiometer and an
+  # along-track altimeter are not representative over the same distance, and
+  # this is the knob that says so.
+  sst_localization_scale: 1.5
+
 observation bodies:
 
   sst:
+
+    # See `obs/common/adt.yaml` for what this is and why it is not spelled
+    # `obs localizations`.
+    $localization:
+    - localization method: Rossby
+      rossby mult: $(sst_localization_scale)
+      min grid mult: 1.0
 
     # Everything in `obs space` that is not this platform's identity. What a
     # platform layer is left holding is its name and the two paths that name
@@ -37,7 +51,7 @@ observation bodies:
     - filter: Domain Check
       where:
       - variable: {name: GeoVaLs/sea_area_fraction}
-        minvalue: $(obs_land_mask_min)
+        minvalue: 0.9
     - filter: Bounds Check
       minvalue: -2.0
       maxvalue: 36.0

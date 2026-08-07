@@ -8,9 +8,13 @@
 # write back, the solver's own knobs, and the localization per observer. See
 # `docs/analysis.md`.
 #
-# Note the land mask below: 0.5 here against 0.9 for the variational solver, so
-# the filter sees coastal observations the variational analysis discards. Two
-# experiments compared across that difference are not comparing their solvers.
+# No land mask and no localization here any more, and both left for the same
+# reason. The mask used to be 0.5 here against 0.9 for the variational solver,
+# so the filter saw coastal observations the variational analysis discarded, and
+# two experiments compared across that difference were not comparing their
+# solvers. It is one value in the observer bodies now. The localization went the
+# same way: it is a property of what a platform measured, so it lives with the
+# platform, in `obs/common/*.yaml`.
 solver:
   name: letkf
   covariance: ensemble
@@ -107,10 +111,4 @@ solver:
   # margin in the Gulf and much less of one near the equator, where the first
   # baroclinic radius grows past 200 km. A global domain needs the halo revisited
   # alongside this number.
-  ensemble localization:
-  - localization method: Rossby
-    rossby mult: 1.5
-    min grid mult: 1.0
-vars:
-  obs_land_mask_min: 0.5
 

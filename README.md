@@ -30,8 +30,8 @@ host** below before running anything.
 | Solver | `da/none` (free run), `da/variational`, `da/letkf`, `da/eakf` |
 | Covariance | `da/variational` alone is static; `+ da/hybrid` adds an ensemble term; `+ da/envar` makes it fully ensemble |
 | Window | `solver.window.type`: `3d`, `fgat`, `4d` |
-| Forecast model | `model/mom6sis2`, `model/persistence`, `model/stub` |
-| Domain | `domain/om_1deg`, `domain/gom_{25,12,8,4}km`, `domain/stub` |
+| Forecast model | `model/mom6sis2`, `model/persistence` |
+| Domain | `domain/om_1deg`, `domain/gom_{25,12,8,4}km` |
 | Observers | one layer per platform under `config/layers/obs/`; list as many as you fly |
 
 The named DA methods fall out of the first three rather than from a mode flag: 3DVar is
@@ -92,8 +92,8 @@ tools/slurm/smoke-test.sh                                        # the scheduler
 ACKBAR_TIER3=1 .venv/bin/python -m pytest -q -m tier3            # the lot, ~15 min
 ```
 
-Tier 2 is the first thing that submits to Slurm, and runs the stub experiment end to end. Tier
-3 also needs both builds and the per-domain offline products below.
+Tier 2 is the first thing that submits to Slurm, and exercises the whole graph without needing
+either build. Tier 3 also needs both builds and the per-domain offline products below.
 
 ## Defining an experiment
 
@@ -135,6 +135,7 @@ exactly one thing.
 
 Layers live under `config/layers/<kind>/<name>.yaml` and are **deep-merged in the order
 listed**: a later layer wins over an earlier one, and the experiment file wins over all of them.
+([`config/README.md`](config/README.md) says what else is under `config/` and who reads it.)
 Lists replace wholesale, except where the schema declares an identifying key (`observations`
 merges on `obs space.name`, so a layer can reach one observer without restating the others).
 
@@ -157,9 +158,10 @@ altimeter; `da/hybrid` inherits `da/variational`. A `<kind>/common/` directory h
 ever inherited, never listed, none of them a complete anything on its own.
 
 A `$` prefix marks a key ACKBAR reads and JEDI never sees, which matters because most of an
-observer is verbatim UFO configuration. There are three: `$remove` deletes an inherited key or
-list element, `$inherit` names a shared observer body, and `$required: true` on an observer
-makes a missing input file fail the cycle rather than drop the observer.
+observer is verbatim UFO configuration. `$remove` deletes an inherited key or list element,
+`$inherit` names a shared observer body, `$required: true` makes a missing input file fail the
+cycle rather than drop the observer, and `$localization` is the observation-space localization
+an ensemble filter applies, which is rendered for the filters and dropped for everything else.
 
 Configuration resolves in a fixed order: **merge, then substitute, then validate.** Three
 substitution syntaxes, each naming who fills it and when:

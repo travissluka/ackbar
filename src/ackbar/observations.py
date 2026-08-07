@@ -38,11 +38,23 @@ from .config.jobtime import render, symbols
 #: uses that word for its own purpose.
 REQUIRED = "$required"
 
-#: ACKBAR's own keys inside an observer, which are ACKBAR's to read and not
-#: JEDI's to receive. Removed before the config reaches an application, because
-#: a key UFO does not know is a key UFO may reject, and being rejected for a
-#: value that was never meant to leave here is a bad way to lose a cycle.
+#: ACKBAR's own keys inside an observer's `obs space`, which are ACKBAR's to
+#: read and not JEDI's to receive. Removed before the config reaches an
+#: application, because a key UFO does not know is a key UFO may reject, and
+#: being rejected for a value that was never meant to leave here is a bad way to
+#: lose a cycle. `LOCALIZATION` is not among them: it sits at the top of an
+#: observer rather than inside `obs space`, and `soca._observers` consumes it.
 OWN_KEYS = (REQUIRED,)
+
+#: An observer's own observation-space localization, which only an ensemble
+#: filter reads. ACKBAR's key rather than UFO's `obs localizations`, because the
+#: same observer body is handed to applications that do not localize, and a key
+#: UFO does not expect there is a key UFO may reject.
+#:
+#: Here rather than in `soca.py`, which is what renders it, because it is also
+#: what `graph.build` looks for when it asks whether a cycle running an ensemble
+#: filter has localized anything, and `graph` cannot import `soca`.
+LOCALIZATION = "$localization"
 
 
 class ObservationError(Exception):

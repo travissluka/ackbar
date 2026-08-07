@@ -10,6 +10,7 @@ from ..config.jobtime import (FOUR_D, cycle_length, cycle_time,
                               forecast_overshoot, slot_length, window_length,
                               window_type)
 from ..duration import format_duration, parse_duration
+from ..observations import LOCALIZATION
 from .model import AFTERCORR, Graph, GraphError, Node
 from .tasks import (
     CROSS_CYCLE,
@@ -326,14 +327,46 @@ def _check_ensemble_source(config):
     # `da.ens` is an ensemble filter, so it needs what any ensemble filter
     # needs. The schema asks for these when the *solver* is an LETKF and cannot
     # ask for them here, where what calls for one is a value in another subtree.
-    missing = [key for key in ("local ensemble DA", "ensemble distribution",
-                               "ensemble localization")
+    missing = [key for key in ("local ensemble DA", "ensemble distribution")
                if not config["solver"].get(key)]
     if missing:
         raise GraphError(
             f"ensemble.source is 'letkf', so this cycle runs an ensemble "
             f"filter beside the variational analysis, and solver states no "
             f"{' and no '.join(missing)}. Inherit a layer that configures one."
+        )
+    _check_localized(config)
+
+
+def _check_localized(config):
+    """Every observer an ensemble filter reads is localized by something.
+
+    The failure this exists for produces no error and no odd-looking output: an
+    unlocalized sample covariance of twenty members has spurious correlations
+    between every pair of points in the domain, so an observation on one side of
+    the Gulf moves the analysis on the other, and the field it produces looks
+    like a field. Only a comparison against something else shows it.
+
+    Two sources satisfy it, and the reason this is not a schema rule is that
+    they live in different subtrees. `solver.ensemble localization` is one
+    statement about every observer at once, which is `da/eakf`. Otherwise each
+    observer carries its own `$localization`, from `obs/common/*.yaml`, because
+    the distance an observation stays representative over is a property of what
+    measured it. See `_observers` in `ackbar/soca.py`, which renders whichever
+    applies.
+    """
+    if config["solver"].get("ensemble localization"):
+        return
+    bare = [(entry.get("obs space") or {}).get("name", "<unnamed>")
+            for entry in config.get("observations") or ()
+            if not entry.get(LOCALIZATION)]
+    if bare:
+        raise GraphError(
+            f"ensemble.source is 'letkf', so this cycle runs an ensemble "
+            f"filter, and {len(bare)} observer(s) would go into it unlocalized: "
+            f"{', '.join(bare)}. Give each a {LOCALIZATION!r}, normally by "
+            f"inheriting the platform's layer under obs/common/, or state one "
+            f"solver.ensemble localization to cover every observer at once."
         )
 
 

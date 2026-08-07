@@ -9,8 +9,6 @@
 solver:
   name: none
 
-# The observer layers reference this, so it needs an answer even with no
-# solver to set it. The obs distribution is not here and is not in any layer:
-# see GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
-vars:
-  obs_land_mask_min: 0.9
+# Nothing else here. A free run still carries observers, but everything they
+# need they state themselves; the obs distribution is not in any layer at all,
+# for which see GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
