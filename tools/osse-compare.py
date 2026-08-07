@@ -99,32 +99,58 @@ def read(experiment):
     return {key: sorted(value) for key, value in series.items()}
 
 
-def omb(entries, skip):
+def omb(entries, skip, only=None):
     """The O-B rms of each cycle after the first *skip*, as (times, values).
 
     A cycle whose observer was dropped, or whose summary carries no `omb`, is
     absent from both rather than zero. A zero reads as a perfect fit and would
     pull a mean down instead of leaving a hole in a line.
+
+    *only* restricts to a set of times. Every mean this file reports is taken
+    over the cycles **all** the experiments have, and that is not a nicety: the
+    free run's departures grow as it drifts, so averaging one experiment over
+    forty-five cycles and another over the thirteen it has finished scores the
+    shorter one against a period the longer one has not reached. It looks like
+    a result. Passing `--skip` alone would leave that hole open on any run that
+    is still going, which is exactly when this gets read.
     """
     times, values = [], []
     for when, stats in entries[skip:]:
         value = stats.get("omb", {}).get("rms")
-        if value is not None:
+        if value is not None and (only is None or when in only):
             times.append(when)
             values.append(float(value))
     return times, np.array(values)
 
 
+def common(runs, key, skip):
+    """The cycles every experiment has for this platform. See `omb`."""
+    shared = None
+    for series in runs.values():
+        entries = series.get(key)
+        if not entries:
+            return set()
+        mine = set(omb(entries, skip)[0])
+        shared = mine if shared is None else (shared & mine)
+    return shared or set()
+
+
 def summarise(runs, platforms, skip):
-    """The number the comparison comes down to: mean O-B rms, per platform."""
+    """The number the comparison comes down to: mean O-B rms, per platform.
+
+    Over the cycles every experiment has, so that a run still in progress is
+    compared against the same period as a finished one. See `omb`.
+    """
     table = {}
-    for platform, variable in platforms:
+    for key in platforms:
+        platform, variable = key
+        shared = common(runs, key, skip)
         row = {}
         for name, series in runs.items():
-            entries = series.get((platform, variable))
+            entries = series.get(key)
             if not entries:
                 continue
-            _, values = omb(entries, skip)
+            _, values = omb(entries, skip, shared)
             if values.size:
                 row[name] = {"omb_rms": float(values.mean()),
                              "cycles": int(values.size)}
@@ -184,11 +210,12 @@ def skill(runs, platforms, skip, out):
         for key in platforms:
             base = runs[baseline].get(key)
             theirs = runs[name].get(key)
-            if not base or not theirs:
+            shared = common(runs, key, skip)
+            if not base or not theirs or not shared:
                 gain.append(np.nan)
                 continue
-            b = omb(base, skip)[1].mean()
-            t = omb(theirs, skip)[1].mean()
+            b = omb(base, skip, shared)[1].mean()
+            t = omb(theirs, skip, shared)[1].mean()
             gain.append(100.0 * (b - t) / b if b else np.nan)
         axis.bar(at + index * width - 0.4 + width / 2, gain, width,
                  color=colour, label=name)
@@ -212,7 +239,8 @@ def skill(runs, platforms, skip, out):
 def report(table, order):
     """The comparison as text, for a terminal and for pasting into a message."""
     baseline = order[0]
-    lines = [f"{'platform':<28}" + "".join(f"{name:>18}" for name in order)]
+    width = max([28] + [len(key) + 2 for key in table])
+    lines = [f"{'platform':<{width}}" + "".join(f"{name:>18}" for name in order)]
     for key, row in sorted(table.items()):
         cells = ""
         for name in order:
@@ -226,7 +254,10 @@ def report(table, order):
                 gain = (100.0 * (base - entry["omb_rms"]) / base
                         if base else float("nan"))
                 cells += f"{entry['omb_rms']:>11.4f}{gain:>+6.1f}%"
-        lines.append(f"{key:<28}" + cells)
+        lines.append(f"{key:<{width}}" + cells)
+    spans = {entry["cycles"] for row in table.values() for entry in row.values()}
+    if spans:
+        lines.append(f"\n{min(spans)} cycle(s), shared by every experiment.")
     return "\n".join(lines)
 
 
