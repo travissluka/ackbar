@@ -86,8 +86,17 @@ def run(tool, *args):
 
 @pytest.fixture(scope="module")
 def calibrated():
-    """The three files an analysis on this domain reads."""
-    run("soca-diffusion.sh")
+    """The three files an analysis on this domain reads.
+
+    The restart is named rather than left to the tool's discovery, and that is
+    not a preference. Discovery refuses when the domain has more than one staged
+    initial condition, which is correct of it and is the *normal* state of a
+    domain anything real has been run on: the OSSE alone stages a synoptic cold
+    start and a time-lagged control beside the one this experiment uses. A test
+    that depended on there being exactly one was a test of the static root's
+    contents, which every other experiment on the machine is entitled to change.
+    """
+    run("soca-diffusion.sh", str(restart()))
     return Path(os.environ["ACKBAR_STATIC_ROOT"], "static", DOMAIN, "diffusion")
 
 
