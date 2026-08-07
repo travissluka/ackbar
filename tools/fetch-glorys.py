@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """Build a domain's initial condition and open boundary conditions from GLORYS.
 
-    .venv-data/bin/python tools/fetch-glorys.py ic  <domain> <date>
-    .venv-data/bin/python tools/fetch-glorys.py obc <domain> <start> <end>
+    env -u PYTHONPATH .venv-data/bin/python tools/fetch-glorys.py ic  <domain> <date>
+    env -u PYTHONPATH .venv-data/bin/python tools/fetch-glorys.py obc <domain> <start> <end>
 
 Writes `ic.nc` and `obc.nc` into `$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/`,
 which is where `TEMP_SALT_Z_INIT_FILE` and `OBC_SEGMENT_00N_DATA` look.
 
-**Run this with `.venv-data/bin/python`, not `.venv/bin/python`.** The
-Copernicus toolbox needs a `typing_extensions` newer than the one spack-stack
-puts on `PYTHONPATH`, and the project venv inherits that. `.venv-data` is built
-with `env -u PYTHONPATH` for exactly this reason.
+**`.venv-data/bin/python`, not `.venv/bin/python`, and with `PYTHONPATH`
+unset.** The Copernicus toolbox needs a `typing_extensions` newer than the one
+spack-stack puts on `PYTHONPATH`, and the project venv inherits that.
+`.venv-data` is built with `env -u PYTHONPATH` for exactly that reason, and the
+same has to hold when it is *run*: a virtual environment does not shadow
+`PYTHONPATH`, so naming the interpreter is not by itself enough once
+`site/activate.sh` has been sourced. And it has been, because that is where
+`ACKBAR_STATIC_ROOT` comes from. Hence the `env -u` above.
+
+Without it the failure is an `ImportError` on `typing_extensions.Sentinel`,
+raised from inside pydantic several frames below anything recognisable, after
+the argument parsing has succeeded and before anything is downloaded.
 
 Needs `copernicusmarine login` to have been run once; it leaves credentials in
 `~/.copernicusmarine/`.
