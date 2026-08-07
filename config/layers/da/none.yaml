@@ -1,16 +1,16 @@
-# No analysis. A free run, and the OSSE truth run.
+# No analysis. A free run, an OSSE nature run, and the null every skill number
+# is measured against.
 #
-# `noda` was a mode in v2, which conflated two independent properties: does the
-# run produce an analysis, and does it evaluate observations. This layer answers
-# only the first. Observations may still be configured, and are then evaluated
-# by a standalone hofx task producing the same ombg diagnostics a DA run gets
-# from the analysis application itself.
+# This says only that no analysis is produced. Observations may still be
+# configured, and are then evaluated by a standalone `hofx` task producing the
+# same `ombg` diagnostics a DA run gets from the analysis application itself, so
+# a free run is directly comparable in observation space to the experiments it
+# is the baseline for.
 solver:
   name: none
 
-# The land mask threshold was a YAML anchor in soca-science that only the
-# solver files defined, so it still needs an answer with no solver. The
-# distribution is not here and is not anywhere in a layer: see
-# GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
+# The observer layers reference this, so it needs an answer even with no
+# solver to set it. The obs distribution is not here and is not in any layer:
+# see GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
 vars:
   obs_land_mask_min: 0.9

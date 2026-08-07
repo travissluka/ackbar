@@ -20,8 +20,8 @@
 # and `MLD` differ, not because someone remembered to write a second copy. Add a
 # `domains:` override the first time a domain genuinely needs one.
 #
-# Source: soca-science v2, `configs/soca/saber_init/soca_diffusion_scales_*.yaml`
-# and `tools/calc_scales.py`. The horizontal numbers below are v2's unchanged.
+# These are the numbers `tools/soca-diffusion.sh` reads. Changing one means
+# recalibrating the domain and rebuilding every B that was written from it.
 
 # ------------------------------------------------------------------------------
 # Horizontal, in metres. One entry per output file, and the name is the file:
@@ -52,11 +52,10 @@ horizontal:
   # integrates the whole column, so a single altimeter track informs a wider
   # patch than a single Argo profile at the same place does.
   #
-  # 1.5 rather than soca-science v2's 2.0. It is also the cheap end of the
-  # choice: the explicit horizontal scheme's iteration count goes as the square
-  # of the scale measured in grid cells, and this is the group that sets the
-  # price, so 1.5 costs a little over half what 2.0 does. The floor and the
-  # ceiling are still v2's.
+  # 1.5 is also the cheap end of the choice: the explicit horizontal scheme's
+  # iteration count goes as the square of the scale measured in grid cells, and
+  # this is the group that sets the price, so 1.5 costs a little over half what
+  # 2.0 does.
   hz_ssh:
     rossby mult: 1.5
     min grid mult: 2.0
@@ -74,8 +73,8 @@ horizontal:
   # provide, and the symptom is an ensemble component that appears not to be
   # contributing rather than anything that looks like a mistake.
   #
-  # soca-science v2's numbers unchanged: twice the Rossby radius, floored at two
-  # grid cells, ceilinged where `hz_ssh` is. Read by the `localization` block in
+  # Twice the Rossby radius, floored at two grid cells, ceilinged where
+  # `hz_ssh` is. Read by the `localization` block in
   # `config/layers/da/hybrid.yaml` and by nothing else.
   loc_hz:
     rossby mult: 2.0
@@ -99,16 +98,14 @@ horizontal:
 vertical:
   min: 1.5
 
-  # There is deliberately no `max`. soca-science v2 had one, at 10 levels, and
-  # it was a cost control rather than a statement about the ocean: the explicit
-  # scheme's iteration count grows with the square of the scale in levels, so an
-  # 80 level mixed layer in a 75 level column would have priced the whole
-  # domain. Implicit removes that, so the ceiling has nothing left to protect
-  # and a deep mixed layer gets the vertical correlation it actually has.
+  # There is deliberately no `max`. A ceiling here would be a cost control
+  # rather than a statement about the ocean, and with the implicit scheme there
+  # is no cost to control: its iteration count is a number of tridiagonal solves
+  # down each column and does not depend on the scale at all. The explicit
+  # scheme grows with the square of the scale in levels, so an 80 level mixed
+  # layer in a 75 level column would price the whole domain; implicit removes
+  # that, and a deep mixed layer gets the vertical correlation it actually has.
   #
-  # Implicit rather than explicit is the one place this departs from v2. The
-  # count below is a number of tridiagonal solves down each column and does not
-  # depend on the scale at all, which is what makes dropping the ceiling free.
   # Two is saber's minimum; it must be even.
   #
   # This number has to match `solver.background error` in
@@ -124,10 +121,10 @@ vertical:
 # is the whole cost of the calibration: the rest is one pass over the grid.
 #
 # The SOCA test configuration uses 1000 and says in a comment that the real
-# world wants 1e4; v2 used 20000. The normalization error falls as
-# 1/sqrt(iterations), so this buys accuracy slowly, and an under-normalized B
-# shows up as an analysis whose increment amplitude is wrong by a percent or
-# two rather than as anything that looks like a failure.
+# world wants 1e4. The normalization error falls as 1/sqrt(iterations), so this
+# buys accuracy slowly, and an under-normalized B shows up as an analysis whose
+# increment amplitude is wrong by a percent or two rather than as anything that
+# looks like a failure.
 #
 # This is the number for science. `tools/soca-diffusion.sh --iterations N`
 # overrides it downwards to prove the stage runs at all, and the tests use that;

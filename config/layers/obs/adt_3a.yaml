@@ -1,41 +1,27 @@
-# Ported from soca-science configs/soca/obs/adt_3a.yaml.
+# Absolute dynamic topography from Sentinel-3A, along track.
 #
-# What changed in the port, and why:
+# An observer layer is one platform. Adding it to an experiment's `inherit:`
+# list is the whole of turning that platform on, and the layers merge on
+# `obs space.name`, so a solver layer can change one observer's localization
+# without restating the rest of it.
 #
-#   *obs_distribution / *obs_distribution_opt  ->  removed entirely
-#       These were YAML anchors defined in the *solver* file, so the same
-#       observer got RoundRobin under 3DVar and Halo under LETKF. That is
-#       layering by DA mode, done through anchors, and it works right up until
-#       a cycle contains two applications: a hybrid reads these same observers
-#       through a variational solve and an ensemble filter, and they need
-#       different answers. v2 patched around that with `sed` markers keyed on
-#       whether the LETKF was running solo or inside a `3dhyb`.
+# Three things about this file are *not* here, on purpose, and each is
+# somewhere a platform cannot know the answer:
 #
-#       So it is not a property of the platform, and it is not really one of
-#       the experiment either: it is a property of the application reading the
-#       file. `ackbar/soca.py` sets it, an observer says nothing about it, and
-#       what an experiment states is the one part it does choose, the halo
-#       size, under `solver.ensemble distribution`.
+#   the obs distribution   set by `ackbar/soca.py` per application, because a
+#                          hybrid reads these same observations through a
+#                          variational solve and an ensemble filter in one
+#                          cycle and the two need different answers. What an
+#                          experiment chooses is the halo size, under
+#                          `solver.ensemble distribution`.
+#   the land mask          `$(obs_land_mask_min)`, set by the da layer: 0.9
+#                          variational, 0.5 LETKF.
+#   the localization       added by `da/letkf` and `da/eakf`, which is also
+#                          where the radius is chosen.
 #
-#       (ioda reads a distribution's parameters directly under `distribution`
-#       rather than under an `options` key. soca-science's spelling was for an
-#       older ioda, and the Halo distribution finds no `halo size` there and
-#       refuses to construct.)
-#
-#   *obs_land_mask  ->  an ordinary filter with $(obs_land_mask_min)
-#       Same story: the threshold was 0.9 under 3DVar and 0.5 under LETKF.
-#       Filter chains have no natural merge key (there are two BlackList
-#       filters below), so they replace wholesale, and the varying part is a
-#       substituted value rather than a merged one.
-#
-#   !IF_APP_letkf obs localizations  ->  removed
-#       Now supplied by da/letkf. Note that the original guarded this block
-#       with !IF_APP_letkf while sst_noaa19 used !IF_letkf, so one of the two
-#       never fired. That bug is only possible because the mechanism was sed.
-#
-#   __SEED__  ->  {{seed}}
-#       Job-time, and must derive from experiment, cycle and member so that a
-#       heal reproduces the original ensemble.
+# What an experiment usually does change here is the error, the QC thresholds
+# and the thinning. All of it is UFO's configuration, not ACKBAR's, and is
+# passed through verbatim.
 
 observations:
 - obs space:

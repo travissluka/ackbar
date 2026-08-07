@@ -1,5 +1,7 @@
-# Ported from soca-science configs/soca/obs/sst_noaa19.yaml.
-# See obs/adt_3a.yaml for what the port changes and why.
+# Sea surface temperature from AVHRR on NOAA-19, swath.
+#
+# See `obs/adt_3a.yaml` for what an observer layer states and what it
+# deliberately leaves to the solver layer and to `ackbar/soca.py`.
 
 observations:
 - obs space:

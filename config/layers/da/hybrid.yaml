@@ -41,8 +41,8 @@ solver:
     # Localization is what makes a small ensemble usable at all: without it a
     # 20 member sample covariance has spurious correlations between every pair
     # of points in the domain, and an observation in the Loop Current moves
-    # water on the Campeche Bank. The scales are v2's, which are about twice the
-    # Rossby radius, and they are larger than the correlation scales on purpose:
+    # water on the Campeche Bank. The scales are about twice the Rossby radius,
+    # and they are larger than the correlation scales on purpose:
     # localizing tighter than the true correlation length throws away the signal
     # the ensemble is there to provide.
     #

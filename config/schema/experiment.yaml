@@ -36,12 +36,11 @@ properties:
 
   vars:
     # Experiment-time substitution values, referenced as $(name). Free form by
-    # nature: a layer introduces the variables it needs, and the port of the
-    # soca-science observer configs is what forced this to exist. Those files
-    # varied obs distribution and the land mask threshold by DA mode through
-    # YAML anchors redefined in each solver file. Filter chains have no merge
-    # key, so the varying part has to be a substituted value rather than a
-    # merged one, and that is exactly why substitution runs after the merge.
+    # nature: a layer introduces the variables it needs. What forced it to
+    # exist is the observer layers, where the land mask threshold varies by DA
+    # mode and sits inside a filter chain. Filter chains have no merge key, so
+    # the varying part has to be a substituted value rather than a merged one,
+    # and that is exactly why substitution runs after the merge.
     type: object
     additionalProperties: true
 
@@ -101,7 +100,7 @@ properties:
   # pinned `rst` and the compressed `ana/`, `bkg/` products do not, and they are
   # the two that grow fastest.
   #
-  # A duration, not v2's `SAVE_RST_REGEX="^......01.."`. A regex over a date
+  # A duration rather than a pattern matched against the date. A pattern
   # changes meaning when the date format does and cannot express "every three
   # days" at all; a duration divides. Cycle n is pinned when its analysis time
   # is an exact multiple of it after `cycle.start`, so cycle 1 is always pinned
@@ -213,8 +212,9 @@ properties:
       # that list is what gets read out of the restart set and interpolated for
       # the observers, and the background needs fields the analysis does not
       # touch (cell thickness, mixed layer depth, depth) because the background
-      # error blocks read them. Conflating the two is what soca-science did
-      # through `__DA_VARIABLES__` and then patched around.
+      # error blocks read them. Conflating the two gives an analysis that
+      # either cannot build its background error or writes back fields it never
+      # solved for.
       analysis variables:
         type: array
         items: { type: string }
@@ -274,9 +274,9 @@ properties:
         type: object
         additionalProperties: true
       # How the filter spreads observations across ranks. Not in the observer
-      # layers, unlike soca-science, and not `vars`: a hybrid cycle reads the
-      # same observers through two applications that need different answers, so
-      # it cannot be one substituted value. ACKBAR sets the variational side to
+      # layers, and not in `vars`: a hybrid cycle reads the same observers
+      # through two applications that need different answers, so it cannot be
+      # one substituted value. ACKBAR sets the variational side to
       # round robin itself; what an experiment chooses is the halo, which has to
       # be at least the largest localization radius any observer uses. See
       # GLOBAL_DISTRIBUTION in ackbar/soca.py.
@@ -350,13 +350,12 @@ properties:
       size: { type: integer, minimum: 1 }
       # Whether a deterministic control runs alongside the ensemble. It is
       # mem000 and it is inside the same member array, not a parallel concept:
-      # v2's ana/{ctrl,ens} split is what made every ensemble loop carry a
-      # special case. With a control the index set is 0..size, without it
-      # 1..size.
+      # Splitting the control out into its own concept is what makes every
+      # ensemble loop carry a special case. With a control the index set is
+      # 0..size, without it 1..size.
       control: { type: boolean }
       # What maintains the ensemble from one cycle to the next, which is
-      # ACKBAR's name for v2's `DA_PERTURBATION_MODEL`. A property of the
-      # ensemble rather than of the solver: an LETKF's members are maintained by
+      # A property of the ensemble rather than of the solver: an LETKF's members are maintained by
       # its own analysis, and a hybrid's by something the hybrid does not
       # otherwise contain.
       #

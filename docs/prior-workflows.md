@@ -240,3 +240,78 @@ structure only.
    `soca_domom6_action.py` as the basis for analysis-to-restart.
 6. **Drop on sight:** R2D2, the regional hack, the `MODEL_SCRIPT` and `MACHINE`
    indirection layers (one machine, one model here), and the 3D-to-4D symlink farm.
+
+## Where v2's configuration ended up
+
+The observer configs, the background error settings and the diffusion scales were ported from
+v2 rather than reinvented. The configuration files themselves say what they are and what to
+change; this is the provenance, kept here so that the question "why is this number this
+number" has an answer without putting archaeology in front of every reader of a config file.
+
+### The port of an observer config
+
+`configs/soca/obs/*.yaml` became `config/layers/obs/*.yaml`. Four things changed, and each was
+a case of a value living somewhere it could not be correct:
+
+| v2 | ACKBAR | Why |
+|---|---|---|
+| `*obs_distribution`, `*obs_distribution_opt` | removed | YAML anchors defined in the *solver* file, so the same observer got RoundRobin under 3DVar and Halo under LETKF. That breaks the moment a cycle contains two applications, which a hybrid does; v2 patched around it with `sed` markers keyed on whether the LETKF was running solo or inside a `3dhyb`. It is a property of the application, so `ackbar/soca.py` sets it. |
+| `*obs_land_mask` | a filter with `$(obs_land_mask_min)` | Same story: 0.9 under 3DVar, 0.5 under LETKF. Filter chains have no natural merge key, so they replace wholesale and the varying part has to be substituted rather than merged. |
+| `!IF_APP_letkf obs localizations` | supplied by `da/letkf` | The original guarded this block with `!IF_APP_letkf` while `sst_noaa19` used `!IF_letkf`, so one of the two never fired. That bug is only possible because the mechanism was `sed`. |
+| `__SEED__` | `{{seed}}` | Job time, and derived from experiment, cycle and member so that a heal reproduces the original ensemble. |
+
+One spelling change is not cosmetic: ioda reads a distribution's parameters directly under
+`distribution` rather than under an `options` key. v2's spelling was for an older ioda, and
+against the pinned one the Halo distribution finds no `halo size` there and refuses to
+construct.
+
+### The background error
+
+Two sources, used for different things. The pinned bundle's `soca/test/testinput/3dvar.yml`
+supplies the *schema*, which blocks exist and where they sit, because it is CI-verified against
+this exact SOCA and v2's config is not. v2 supplies the *science* where the two agree.
+
+They do not agree everywhere, and the largest gap is the standard deviations. v2's came from
+`BkgErrGODAS`, a linear variable change that no longer exists in SOCA: there is no `godas`
+anywhere in the source tree and `LinearVariableChange/` holds only `Balance` and
+`LinearModel2GeoVaLs`. Its replacement, the saber outer block `SOCAParametricOceanStdDev`, is
+not a rename. v2 tuned `t_min`/`t_max`/`t_dz`/`t_efold` and `s_min`/`s_max`; the parametric
+block takes an SST error field, defaults for unbalanced salinity and ssh, and a per-variable
+minimum or fraction of background. Carrying v2's tuning across is a science decision rather
+than a transcription, so what is in `config/layers/da/variational.yaml` is the bundle's own
+defaults. They are known to run and are not known to be right.
+
+Two settings there are deliberate departures rather than inheritance:
+
+- **`ocean_depth_min: 0`** against the bundle example's 1000. v2 had already started moving:
+  `soca_3dhyb.yaml` and `soca_4dhyb.yaml` set 0 while the older `soca_3dvar.yaml` kept 1000.
+  The reason is in the config file, and it is that the parameter deletes the background error
+  rather than tapering it.
+- **`ksshts.nlayers: 2`**, which is v2's rather than the bundle example's 10. The example is a
+  25 level toy and v2 is a real configuration.
+- **`ninner: 20`** against v2's 50, and `gradient norm reduction: 1.0e-10` against its 1e-3.
+  v2's solves stopped on the target; ACKBAR's stop on the count.
+
+The vertical correlation scales are calibrated once here rather than every cycle as v2 did.
+Per-cycle is a measured improvement to make later; what makes it optional is that the mixed
+layer moves slowly compared to a DA cycle.
+
+### The diffusion scales
+
+`config/static/diffusion.yaml` is v2's `configs/soca/saber_init/soca_diffusion_scales_*.yaml`
+and `tools/calc_scales.py`, with the horizontal numbers unchanged. Three departures:
+
+- **`hz_ssh` rossby mult 1.5** rather than 2.0. The floor and the ceiling are still v2's.
+- **No vertical `max`.** v2 capped it at 10 levels, which was a cost control rather than a
+  statement about the ocean: the explicit scheme's iteration count grows with the square of the
+  scale in levels. The implicit scheme removes the cost, so the ceiling has nothing left to
+  protect.
+- **Implicit rather than explicit** in the vertical, which is what makes the above free.
+
+### The filter
+
+`rtps: 0.95` in `config/layers/da/letkf.yaml` is v2's. `rossby mult: 1.5` is not: v2 used 1.0,
+and the reason for widening it is in the config file. The bundle's LETKF example switches
+`rtps`, `rtpp` and `mult` on at once because it is a unit test exercising three code paths, and
+inheriting that would give an ensemble whose spread is set by three interacting knobs none of
+which can be attributed afterwards.

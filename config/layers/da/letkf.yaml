@@ -1,10 +1,16 @@
-# LETKF solver. The land mask differs from variational, which in soca-science
-# was expressed by redefining &obs_land_mask in soca_letkf.yaml.
+# The LETKF solver, and the base every ensemble-filter experiment inherits
+# from. `da/eakf` swaps the solver for the sequential one; a hybrid adds
+# `da/hybrid` and runs this filter beside a variational analysis.
 #
 # The whole `soca_letkf.x` document is built by `ackbar/soca.py`, the same way
 # the variational one is. What is here is the part nothing else implies: which
 # variables the ensemble carries, which of them the analysis is allowed to
-# write back, and the solver's own knobs. See `docs/analysis.md`.
+# write back, the solver's own knobs, and the localization per observer. See
+# `docs/analysis.md`.
+#
+# Note the land mask below: 0.5 here against 0.9 for the variational solver, so
+# the filter sees coastal observations the variational analysis discards. Two
+# experiments compared across that difference are not comparing their solvers.
 solver:
   name: letkf
   covariance: ensemble
@@ -36,9 +42,8 @@ solver:
   - sea_surface_height_above_geoid
   - sea_water_cell_thickness
 
-  # Deterministic LETKF, which is the square-root filter and the one both
-  # sources use; the stochastic alternative would need an observation
-  # perturbation seed and is a different experiment.
+  # Deterministic LETKF, the square-root filter. The stochastic alternative
+  # would need an observation perturbation seed and is a different experiment.
   #
   # One inflation mechanism, not three. SOCA offers `rtps`, which relaxes the
   # posterior *spread* back towards the prior's, `rtpp`, which relaxes the
@@ -47,8 +52,8 @@ solver:
   # three code paths, and inheriting that gives an ensemble whose spread is set
   # by three interacting knobs none of which can be attributed afterwards.
   #
-  # `rtps: 0.95` is soca-science's, and it is deliberately strong. Nothing on
-  # these domains maintains spread from outside: the atmosphere is a
+  # `rtps: 0.95` is deliberately strong. Nothing on these domains maintains
+  # spread from outside: the atmosphere is a
   # climatology, the open boundary is frozen, and the ensemble is time-lagged
   # rather than continuously perturbed, so every source of spread is the filter
   # relaxing what its own analysis removed. An LETKF here collapses without this
@@ -70,8 +75,8 @@ solver:
   # distributions, so one substituted value cannot serve both. See
   # GLOBAL_DISTRIBUTION in `ackbar/soca.py`.
   #
-  # Written as 500000 rather than soca-science's 500e3, which PyYAML reads as
-  # the string '500e3' while eckit reads it as a float. See ackbar.config.lint.
+  # Written as 500000 rather than 500e3, which PyYAML reads as the string
+  # '500e3' while eckit reads it as a float. See ackbar.config.lint.
   ensemble distribution: {name: Halo, halo size: 500000}
 vars:
   obs_land_mask_min: 0.5
@@ -79,14 +84,13 @@ vars:
 # Localization is added per observer. Each element names only the observer it
 # addresses; nothing else about the observer is restated.
 #
-# `rossby mult: 1.5` rather than soca-science's 1.0, which is a deliberate
-# departure and the one place this layer does not follow it. The localization
-# radius is what decides how far an observation is allowed to reach, and at one
-# Rossby radius on a domain that barely resolves one the filter sees so few
-# observations per analysis point that the update is rank starved before the
-# ensemble size is even reached. Widening it trades some spurious long-range
-# correlation for a better conditioned local problem, which is the right side of
-# that trade at these resolutions.
+# `rossby mult` is the localization radius as a multiple of the first
+# baroclinic Rossby radius, and it decides how far an observation is allowed to
+# reach. At 1.0, on a domain that barely resolves one radius, the filter sees so
+# few observations per analysis point that the update is rank starved before the
+# ensemble size is even reached. 1.5 trades some spurious long-range correlation
+# for a better conditioned local problem, which is the right side of that trade
+# at these resolutions.
 #
 # It interacts with the halo above: `halo size` has to exceed the largest
 # localization radius anywhere on the domain or the filter solves with

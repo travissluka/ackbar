@@ -1,28 +1,23 @@
-# Variational solver. Carries the values that soca-science smuggled through the
-# YAML anchors defined at the top of soca_3dvar.yaml, and the background error
-# description, which is the one part of the analysis document ACKBAR cannot
-# derive from something the experiment already states.
+# The variational solver: 3DVar as it stands, and the base every other
+# variational experiment inherits from. An EnVar adds `da/envar`, a hybrid adds
+# `da/hybrid`, and FGAT or 4DEnVar change `solver.window.type`. Nothing else
+# about this file changes with any of them.
 #
-# Two sources, and they are used for different things on purpose:
+# It carries the background error and the minimizer, which are the only two
+# parts of the analysis document ACKBAR cannot derive from something the
+# experiment already states. Everything else soca_var.x reads is built: the
+# geometry from the model layer, the background from the previous cycle's
+# restarts, the window from the cycle, the observers from `observations`.
 #
-#   the pinned bundle    `pkg/jedi/soca/test/testinput/3dvar.yml` supplies the
-#                        *schema*: which blocks exist, what they are called,
-#                        where they sit. It is CI-verified against this exact
-#                        SOCA, which soca-science's config is not.
-#   soca-science v2      `configs/soca/soca_3dvar.yaml` supplies the *science*
-#                        where the two agree on a parameter.
+# **The standard deviations below are defaults, not a tuned ocean.** They are
+# known to run against the pinned SOCA and are not known to be right for
+# anywhere. `SOCAParametricOceanStdDev` is the block to look at before believing
+# a result, and `docs/background-error.md` says what it takes.
 #
-# They do not agree everywhere. v2's background error standard deviations came
-# from `BkgErrGODAS`, a linear variable change that no longer exists in SOCA:
-# there is no `godas` anywhere in the source tree and `LinearVariableChange/`
-# holds only `Balance` and `LinearModel2GeoVaLs`. Its replacement is the saber
-# outer block `SOCAParametricOceanStdDev`, which is not a rename. v2 tuned
-# t_min/t_max/t_dz/t_efold and s_min/s_max; the parametric block takes an SST
-# error field, defaults for unbalanced salinity and ssh, and a per-variable
-# min or fraction of background. Carrying v2's tuning across is a science
-# decision rather than a transcription, so what is here is the bundle's own
-# defaults, which are known to run against this SOCA and are not known to be
-# the right numbers for an ocean anyone cares about.
+# What to reach for first, in order: `ninner` if the minimization is not
+# converging or is spending wall clock after it has, the standard deviations if
+# the increment is the wrong size, and the diffusion lengths, which are not here
+# because they are calibrated offline per domain.
 
 solver:
   name: variational
@@ -62,16 +57,16 @@ solver:
     # the gridspec is. Until it has run, `ackbar validate` step 3 names them as
     # missing, which is the intended failure: a B calibrated on a different grid
     # than the model integrates on is what this arrangement exists to make
-    # impossible. The lengths those files encode are in `config/static/diffusion.yaml`,
-    # which nothing here reads, for the same reason nothing here restates the
-    # gridgen configuration.
+    # impossible. The lengths those files encode are in
+    # `config/static/diffusion.yaml`, which nothing here reads, for the same
+    # reason nothing here restates the gridgen configuration.
     #
     # `filepath` is a stem rather than a filename. saber appends `.nc`.
     #
     # The vertical scales are calibrated once, against the mixed layer of one
-    # restart, rather than recalibrated every cycle as v2 did. Per-cycle is the
-    # measured improvement to make later; what makes it optional rather than
-    # required is that MLD moves slowly compared to a DA cycle.
+    # restart, rather than recalibrated every cycle. Per-cycle is the measured
+    # improvement to make later; what makes it optional is that MLD moves slowly
+    # compared to a DA cycle.
     saber central block:
       saber block name: diffusion
       read:
@@ -107,36 +102,35 @@ solver:
     # Taper the background error with depth, so the analysis does not push the
     # same amplitude into the abyss that it does into the thermocline.
     #
-    # `ocean_depth_min: 0`, against v2's and the bundle's 1000. It is not a
-    # taper and the name is misleading: `BkgErrFilt.cc` reads
+    # **`ocean_depth_min` is a cutoff, not a taper, and the name is
+    # misleading.** `BkgErrFilt.cc` reads
     #
     #     if (depth <= oceanDepthMin) continue;
     #
-    # which leaves the multiplier at zero, so the background error is not
-    # reduced in shallow water, it is **deleted**. At 1000 m that removes the
-    # entire continental shelf: on the Gulf domains it is the Louisiana-Texas
-    # shelf, the West Florida shelf and Campeche Bank, which is most of the
-    # domain's area and exactly where the SST observations are densest. Those
-    # observations are then read, evaluated, and multiplied by an error of zero.
+    # which leaves the multiplier at zero, so in water shallower than this the
+    # background error is not reduced, it is **deleted**. At the 1000 m the
+    # bundle's example uses, that removes the entire continental shelf: on the
+    # Gulf domains the Louisiana-Texas shelf, the West Florida shelf and
+    # Campeche Bank, which is most of the domain's area and exactly where the
+    # SST observations are densest. Those observations are then read, evaluated,
+    # and multiplied by an error of zero. Hence 0 here.
     #
-    # v2 had already moved: `soca_3dhyb.yaml` and `soca_4dhyb.yaml` set 0, while
-    # the older `soca_3dvar.yaml` and the hat10 regional copy of it kept 1000.
-    # What it was for is real, that an ssh increment over a shelf is not
-    # meaningful, and a hard cutoff on total depth is a blunt way to say so.
+    # What the cutoff was for is real, an ssh increment over a shelf is not
+    # meaningful, and a hard threshold on total depth is a blunt way to say so.
     # Something better belongs here eventually and belongs per variable.
     #
-    # `efold_z` is the part that is a taper, and it is unchanged.
+    # `efold_z` is the part that is a taper.
     - saber block name: SOCABkgErrFilt
       ocean_depth_min: 0      # [m]
       rescale_bkgerr: 1.0
       efold_z: 2500.0         # [m]
 
-    # The standard deviations. Every value below is a bundle default: the SST
-    # error field is left at its `fixed value: 1.0` fallback because the GODAS
-    # file it would otherwise read is not staged, and unbalanced salinity and
-    # ssh take the block's own defaults. This is the part of the file that
-    # wants a decision before any result is believed, not the part that decides
-    # whether the analysis runs.
+    # The standard deviations, and the part of this file that wants a decision
+    # before any result is believed. Every value is a default: the SST error is
+    # a flat 1.0 K because the GODAS field it would otherwise read is not
+    # staged, and unbalanced salinity and ssh take the block's own defaults,
+    # which put 0.1 m of unbalanced SSH error everywhere. None of it decides
+    # whether the analysis runs, all of it decides what the analysis does.
     - saber block name: SOCAParametricOceanStdDev
       temperature:
         sst:
@@ -146,10 +140,8 @@ solver:
 
     # The balance operator, which is what makes an increment in temperature
     # imply one in salinity and in sea surface height rather than three
-    # independent analyses of the same water. `ksshts.nlayers` is v2's 2 rather
-    # than the bundle example's 10: the example is a 25 level toy and v2 is a
-    # real configuration. `kst` is left at the operator's defaults, commented
-    # out in v2 as well.
+    # independent analyses of the same water. `kst` is left at the operator's
+    # defaults.
     #
     # `input variables` and `output variables` belong here and are absent on
     # purpose: both are the analysis variables, which are already stated once
@@ -164,11 +156,9 @@ solver:
           nlayers: 2
 
   variational:
-    # RPCG in both sources. The iteration count and the reduction target are the
-    # two knobs to turn first if the minimization is either not converging or
-    # spending wall clock after it has, and neither is soca-science's: it ran 50
-    # iterations against a reduction of 1e-3, so its solves stopped on the target
-    # and ours stop on the count. See `ninner` below.
+    # The iteration count and the reduction target are the two knobs to turn
+    # first if the minimization is either not converging or spending wall clock
+    # after it has. As set, every solve stops on the count; see `ninner` below.
     minimizer:
       algorithm: RPCG
     iterations:
