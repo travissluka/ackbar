@@ -1,10 +1,9 @@
 """Shared observer bodies, and the pass that expands them.
 
-`observations` merges keyed on `obs space.name`, which is what lets a `da/letkf`
-layer change one observer's localization without restating the other
-twenty-four. It also means a layer reaches an observer only by naming it, so a
-layer holding the *common* half of a platform, with no platform of its own, has
-nothing to merge into. That is the gap this closes.
+`observations` merges keyed on `obs space.name`, so a layer can reach one
+observer without restating the rest. It also means a layer reaches an observer
+only by naming it, so a layer holding the *common* half of a platform, with no
+platform of its own, has nothing to merge into. That is the gap this closes.
 
 A family layer declares one body under a name:
 

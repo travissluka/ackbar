@@ -9,23 +9,35 @@ The point is comparison. Experiments are defined as a short stack of configurati
 two of them differ only in the thing being compared, and every experiment records the code that
 produced it.
 
+## Requirements
+
+- **Slurm.** It owns the dependency graph: jobs carry `--dependency` edges and are then left
+  alone. There is no daemon and no second state database, and there is no non-Slurm path. See
+  [`docs/slurm.md`](docs/slurm.md), which also installs a single-node Slurm if you need one.
+- **spack-stack**, for the compilers and the JEDI dependency chain.
+- **JCSDA-internal access**, with a GitHub SSH key. The JEDI half of this (`oops`, `saber`,
+  `ioda`, `ufo`, `vader`, `soca`) is private, so without it you can run the workflow's own tests
+  and nothing else.
+- Python 3.9 or newer.
+
+Only one machine currently has a site file. If you are not on it, read **Setting up on a new
+host** below before running anything.
+
 ## What you can run
 
-An experiment picks one value from each axis. Everything else follows.
-
-| Axis | Values |
+| | |
 |---|---|
-| Solver | `none` (free run), `variational`, `letkf` |
-| Covariance | `static`, `ensemble`, `hybrid` |
-| Window | `3d`, `fgat`, `4d` |
-| Ensemble solver | LETKF, EAKF |
-| Forecast model | `mom6sis2`, `persistence`, `stub` |
-| Domain | `om_1deg`, `gom_25km`, `gom_12km`, `gom_8km`, `gom_4km` |
-| Observers | `sst_noaa19`, `adt_3a` |
+| Solver | `da/none` (free run), `da/variational`, `da/letkf`, `da/eakf` |
+| Covariance | `da/variational` alone is static; `+ da/hybrid` adds an ensemble term; `+ da/envar` makes it fully ensemble |
+| Window | `solver.window.type`: `3d`, `fgat`, `4d` |
+| Forecast model | `model/mom6sis2`, `model/persistence`, `model/stub` |
+| Domain | `domain/om_1deg`, `domain/gom_{25,12,8,4}km`, `domain/stub` |
+| Observers | one layer per platform under `config/layers/obs/`; list as many as you fly |
 
-The named DA methods fall out of the first three: 3DVar is variational + static + `3d`, 3DEnVar
-swaps the covariance, FGAT and 4DEnVar swap the window, a hybrid weights two covariances and
-recentres the ensemble on the deterministic analysis each cycle. There is no mode flag.
+The named DA methods fall out of the first three rather than from a mode flag: 3DVar is
+variational with the static B in a `3d` window, 3DEnVar swaps the covariance, FGAT and 4DEnVar
+swap the window, and a hybrid weights two covariances and recentres the ensemble on the
+deterministic analysis each cycle.
 
 Alongside the analysis, an experiment can run extended forecasts on a cadence, evaluate
 observations against them, and reduce both to compressed per-cycle products that survive after
@@ -33,48 +45,55 @@ the model output is reaped.
 
 ## Installing
 
-Submodules need **full history**, not a shallow clone, so that pinned commits stay fetchable
-once upstream branches move on.
+The site file comes first: `build-model.sh` and `build-jedi.sh` both source it, so on a machine
+without one they fail before compiling anything.
 
 ```bash
 git clone https://github.com/travissluka/ackbar.git
 cd ackbar
-git submodule update --init pkg/mom6sis2
+
+# Full history, not a shallow clone, so pinned commits stay fetchable once
+# upstream branches move on. The nested MOM6 and JEDI sets are in docs/.
+git submodule update --init --recursive pkg/mom6sis2 pkg/jedi
 
 python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
+
+cp site/rancor.sh site/$(hostname -s).sh   # then edit it: see the next section
+source site/activate.sh
 
 ./build-model.sh     # MOM6-SIS2
 ./build-jedi.sh      # the JEDI bundle
 ```
 
-Everything machine-specific (where spack-stack lives, which filesystems hold scratch and
-output, partition and account, queue limits) is confined to `site/<hostname>.sh`. Porting ackbar
-to a new machine is writing one of those, modelled on `site/rancor.sh`. Every command below
-needs it loaded first:
+`source site/activate.sh` exports the `ACKBAR_*` environment and nothing else. It does **not**
+activate the venv, so commands below are spelled `.venv/bin/ackbar`; put `.venv/bin` on your
+`PATH` if you would rather not.
+
+[`docs/model-build.md`](docs/model-build.md) covers the nested submodules and the input data
+wiring.
+
+## Setting up on a new host
+
+One file per machine under `site/`, and the only place a machine-specific path may appear.
+`ACKBAR_SCRATCH_ROOT` and `ACKBAR_OUTPUT_ROOT` are the two required variables; roughly a dozen
+others cover the launcher, the queue limits, the spack-stack environment and the data roots.
+**[`site/README.md`](site/README.md) is the reference**: what each one does, and the four traps
+that surface as a job behaving oddly rather than as a command that says no.
+
+Work up in this order; each step needs strictly more of the machine than the last, so stop at
+the first that fails.
 
 ```bash
-source site/activate.sh
+.venv/bin/python -m pytest -q                                    # no site, no Slurm, no JEDI
+.venv/bin/ackbar validate tests/experiments/stub_letkf.yaml --offline
+tools/slurm/smoke-test.sh                                        # the scheduler behaviour relied on
+.venv/bin/python -m pytest -q -m tier2                           # real Slurm, no JEDI, ~3 min
+ACKBAR_TIER3=1 .venv/bin/python -m pytest -q -m tier3            # the lot, ~15 min
 ```
 
-**Slurm is required.** It owns the dependency graph: jobs are submitted with `--dependency`
-edges and left alone. There is no daemon and no second state database.
-
-See [`docs/model-build.md`](docs/model-build.md) for the nested submodules, the input data
-wiring, and the build itself.
-
-## Your first experiment
-
-```bash
-source site/activate.sh
-ackbar create tests/experiments/stub_letkf.yaml   # validate, freeze, emit
-ackbar start  stub_letkf                          # submit cycle 1
-ackbar status stub_letkf                          # watch it
-```
-
-That one uses the stub model, so it needs no MOM6, no JEDI and no input data, and it finishes
-in a couple of minutes. `tests/experiments/tier3_gom.yaml` is the smallest complete example
-with the real model, and `experiments/` holds the science runs.
+Tier 2 is the first thing that submits to Slurm, and runs the stub experiment end to end. Tier
+3 also needs both builds and the per-domain offline products below.
 
 ## Defining an experiment
 
@@ -86,11 +105,15 @@ inherit:
   - domain/gom_25km       # grid, bathymetry, forcing, per-task resources
   - model/mom6sis2        # the forecast model
   - da/variational        # the solver, and its background error
-  - obs/sst_noaa19        # one layer per observer
-  - obs/adt_3a
+  - obs/adt_j2            # one layer per platform
+  - obs/sst_metopb
 
 experiment:
   name: gom-3dvar
+
+vars:
+  # Layers interpolate this; every observer layer needs it.
+  obs_dir: $(static_root)/obs/gom12-osse-2015/2015
 
 cycle:
   start: '2015-01-05T00:00:00Z'   # must equal the initial condition's valid time
@@ -101,136 +124,116 @@ model:
   initial_condition: $(static_root)/ic/gom_25km/spinup/20150105T00
 ```
 
-Layers live under `config/layers/<kind>/<name>.yaml` and are deep-merged in the order listed,
-so a later layer overrides an earlier one and the experiment file overrides all of them. Lists
-merge by an identifying key where the schema declares one (`observations` merges on
-`obs space.name`, so a `da/letkf` layer can change one observer's localization without
-restating the others) and otherwise replace wholesale.
+An ensemble solver additionally needs an `ensemble:` block (`size`, `control`, `source`), and a
+`fgat` or `4d` window needs `solver.window.type` and `forecast.slots`. The authority on every
+key is [`config/schema/experiment.yaml`](config/schema/experiment.yaml), which is commented.
+
+### How layers combine
+
+This is the mechanism worth understanding, because it is what lets two experiments differ by
+exactly one thing.
+
+Layers live under `config/layers/<kind>/<name>.yaml` and are **deep-merged in the order
+listed**: a later layer wins over an earlier one, and the experiment file wins over all of them.
+Lists replace wholesale, except where the schema declares an identifying key (`observations`
+merges on `obs space.name`, so a layer can reach one observer without restating the others).
+
+```yaml
+# domain/common/gom.yaml           # domain/gom_4km.yaml, which inherits it
+domain:                            domain:
+  resources:                         resources:
+    forecast:                          forecast:
+      ntasks: 8                          time: '04:00:00'
+      time: '00:20:00'                   mem: 32G
+      mem: 8G
+
+# merged: time and mem take the 4 km values, ntasks: 8 survives from the base,
+# and every other task's resources come through untouched
+```
+
+A layer may inherit too, meaning something narrower than an experiment's list: not "build a
+stack" but "I am a kind of that". `obs/adt_j2` inherits `obs/common/adt` because Jason-2 is an
+altimeter; `da/hybrid` inherits `da/variational`. A `<kind>/common/` directory holds layers only
+ever inherited, never listed, none of them a complete anything on its own.
 
 A `$` prefix marks a key ACKBAR reads and JEDI never sees, which matters because most of an
 observer is verbatim UFO configuration. There are three: `$remove` deletes an inherited key or
 list element, `$inherit` names a shared observer body, and `$required: true` on an observer
 makes a missing input file fail the cycle rather than drop the observer.
 
-A layer may inherit too, and it means something narrower than an experiment's list: not "build
-a stack" but "I am a kind of that". `obs/adt_j2` inherits `obs/common/adt` because Jason-2 is an
-altimeter, `domain/gom_4km` inherits `domain/common/gom`, and `da/hybrid` inherits
-`da/variational` because a hybrid is a variational solve with an ensemble term. An experiment
-still lists what it flies and how it solves; it does not list the bases. A `<kind>/common/`
-directory holds layers that are only ever inherited, never listed, and none of them is a
-complete anything on its own.
-
-Observers get one extra step, because the keyed merge reaches an observer only by naming it, so
-a layer holding the common half of a platform family has nothing to merge into. Such a layer
-declares it under `observation bodies:` and a platform writes `$inherit: <body>` inside its
-observer. The body merges *under* the observer, so the platform wins.
-
-Configuration resolves in a fixed order: **merge, then substitute, then validate.** Merging last
-would stop a layer overriding a value another layer interpolated; validating before substitution
-would check `$(ntasks)` rather than the integer it stands for.
-
-Three substitution syntaxes, and each names who fills it and when:
+Configuration resolves in a fixed order: **merge, then substitute, then validate.** Three
+substitution syntaxes, each naming who fills it and when:
 
 | Syntax | Filled | By what |
 |---|---|---|
 | `$(lowercase)` | once, at `create` | the layer stack's `vars`, and the site |
 | `{{lowercase}}` | per job | a closed set that `ackbar config symbols` prints |
-| `$(UPPERCASE)` | per task | `ackbar/soca.py`, into a `config/soca/` document template |
+| `$(UPPERCASE)` | per task | `src/ackbar/soca.py`, into a `config/soca/` document template |
 
 Inspect any of it before running anything:
 
 ```bash
-ackbar validate       experiments/gom-3dvar.yaml            # six checks, says which ran
-ackbar validate       experiments/gom-3dvar.yaml --offline  # skip the three that touch disk
-ackbar config resolve experiments/gom-3dvar.yaml --cycle 2 --member 3
-ackbar config why     experiments/gom-3dvar.yaml 'vars.obs_land_mask_min'   # which layer set it
-ackbar config symbols
-ackbar graph          experiments/gom-3dvar.yaml --cycle 2
-ackbar graph --dot    experiments/gom-3dvar.yaml --cycle 1 | dot -Tpng -o graph.png
+.venv/bin/ackbar validate       experiments/gom-3dvar.yaml            # six checks, says which ran
+.venv/bin/ackbar validate       experiments/gom-3dvar.yaml --offline  # skip the three touching disk
+.venv/bin/ackbar config resolve experiments/gom-3dvar.yaml --cycle 2 --member 3
+.venv/bin/ackbar config why     experiments/gom-3dvar.yaml 'vars.obs_land_mask_min'
+.venv/bin/ackbar graph --dot    experiments/gom-3dvar.yaml --cycle 1 | dot -Tpng -o graph.png
 ```
-
-`validate` runs before every `create`, so a bad path fails in seconds rather than eight hours
-into a run.
 
 ### The pieces an experiment does not build
 
 **Experiments never generate their own inputs.** Initial conditions, the static background
-error, observations and forcing are produced by separate offline stages and consumed read-only,
-so nothing is generated on the fly during cycle one. Per domain, once:
+error, observations and forcing are offline products consumed read-only, so nothing is generated
+on the fly during cycle one. On a new machine `$ACKBAR_STATIC_ROOT` is empty and all of these
+must run first. Per domain, once:
 
 ```bash
 tools/soca-gridspec.sh  gom_25km      # SOCA's geometry. Also after a bundle bump
 tools/soca-diffusion.sh gom_25km      # correlation lengths for the static B, and localization
 tools/soca-dirac.sh     gom_25km      # check that calibration with a dirac through B
 tools/coldstart-ic.sh   gom_25km 2015-01-04T12 12 hycom-smoke   # a first restart set
-tools/ensemble-ic.sh    ...           # one restart set per ensemble member
-tools/obs-archive-osse.py ...         # a synthetic observation archive covering a domain
+tools/ensemble-ic.sh    gom_25km 20                             # one restart set per member
+tools/obs-archive-osse.py --domain gom_25km ...                 # a synthetic archive
 ```
 
-`create` materializes the initial condition into the experiment's own cycle-0 restart location
-as symlinks, which is what makes cycle 1 an ordinary cycle: `forecast(1)` finds its background
-exactly where `forecast(50)` does, and nothing in the graph, the model, or healing carries a
-notion of a first cycle.
+They depend on each other in that order: the diffusion stage reads the gridspec, and ensemble
+initial conditions are drawn from the B the diffusion stage built. See
+[`docs/domains.md`](docs/domains.md) and [`docs/background-error.md`](docs/background-error.md).
 
 ## Running an experiment
 
 An experiment is created once and then addressed by name. Creation validates it, freezes the
-merged config and the layer files verbatim, records the ackbar commit that produced it, and
-emits a batch script for every node of every cycle. After that nothing reads the layer tree
-again, so editing a layer cannot change a run already in flight.
+resolved config with the commit that produced it, and emits every cycle's job scripts, after
+which nothing reads the layer tree again: editing a layer cannot change a run already in flight.
 
 ```bash
-ackbar create experiments/gom-3dvar.yaml
-ackbar start  gom-3dvar
-ackbar start  gom-3dvar --dry-run     # show the edges, submit nothing
-ackbar pause  gom-3dvar               # stop at the next cycle boundary
-ackbar resume gom-3dvar               # clear the halt flag and re-arm
-ackbar cancel gom-3dvar               # cancel everything still queued
+.venv/bin/ackbar create experiments/gom-3dvar.yaml
+.venv/bin/ackbar start  gom-3dvar
+.venv/bin/ackbar start  gom-3dvar --dry-run     # show the edges, submit nothing
+.venv/bin/ackbar pause  gom-3dvar               # stop at the next cycle boundary
+.venv/bin/ackbar resume gom-3dvar               # clear the halt flag and re-arm
+.venv/bin/ackbar cancel gom-3dvar               # cancel everything still queued
 ```
 
-There is no daemon. Cycle *n*'s graph contains a job that submits cycle *n+1*, gated `afterok`
-on that cycle's forecast, so a failed cycle stops the chain rather than producing cycles of
-garbage off a bad background. Cycles overlap: the only real cross-cycle dependency is
-`forecast(n) -> analysis(n+1)`, so post-processing, statistics, extended forecasts and
-verification run alongside the following cycle. Ensemble members are job array elements rather
-than a serial loop, so a cycle's wallclock does not grow with the ensemble.
-
-`ackbar run` and `ackbar submit` are what those job scripts call. Neither is meant to be typed.
+There is no daemon: cycle *n*'s graph contains a job that submits cycle *n+1*, gated `afterok`,
+so a failed cycle stops the chain rather than producing cycles of garbage off a bad background.
+`ackbar run` and `ackbar submit` are what the job scripts call; neither is meant to be typed.
 
 ## Watching it, and fixing it
 
-Three commands cover a failure, and none of them needs `squeue` or `scancel` by hand.
-
 ```bash
-ackbar status  gom-3dvar            # a grid of tasks by cycle, and what is broken
-ackbar status  gom-3dvar --verbose  # which job id was cycle 7's writeback
-ackbar heal    gom-3dvar --dry-run  # the blast radius and what would be cancelled
-ackbar heal    gom-3dvar            # cancel the stranded closure, resubmit it
-ackbar harvest gom-3dvar --cycle 7  # pull sacct into stats/7.json
+.venv/bin/ackbar status  gom-3dvar            # a grid of tasks by cycle, and what is broken
+.venv/bin/ackbar status  gom-3dvar --verbose  # which job id was cycle 7's writeback
+.venv/bin/ackbar heal    gom-3dvar --dry-run  # the blast radius and what would be cancelled
+.venv/bin/ackbar heal    gom-3dvar            # cancel the stranded closure, resubmit it
+.venv/bin/ackbar harvest gom-3dvar --cycle 7  # pull sacct into that cycle's stats.json
 ```
 
-`status` is read-only and holds nothing: closing it does nothing, because a view that has to
-stay open for the workflow to advance is a view that stalls the experiment when an ssh session
-drops. It joins four sources and needs all four. The ledger knows which job id was cycle 7's
-writeback. `sacct` knows the outcome, and is all that is left once a job leaves the queue.
-`squeue` knows the *reason*, which exists only while a job is queued and is the only place
-`DependencyNeverSatisfied` is ever visible. The sentinel on disk outlives all three, because
-`sacct` rows purge on a site retention and an experiment has to stay answerable after that.
-
-`heal` identifies the failure, takes the transitive closure of its dependents from the
-regenerated graph, **cancels every job in that closure that is still queued**, and resubmits
-with fresh state-aware edges. The cancel is the step that is easy to skip and cannot be:
-unsatisfiable dependents pend rather than die, so they are still holding job ids and claimed
-working directories, and a successful replacement upstream does not release them. Whole nodes
-are resubmitted rather than the failed members alone, so an `aftercorr` edge is never rebuilt
-between arrays whose index sets disagree; members that already succeeded skip on their
-sentinels in about a second.
-
-A heal does not fix the cause. A genuine nonzero exit resubmitted unchanged fails the same way,
-and `heal` says so and resubmits anyway rather than refusing.
-
-Per-stage CPU and memory are harvested into the experiment directory, because HPCs kill jobs
-for reasons unrelated to the science and the next thing anyone asks is what it was using.
+`status` is read-only and holds nothing, so closing it does nothing. `heal` cancels the
+transitive closure of a failure's dependents and resubmits it with fresh edges; members that
+already succeeded skip on their sentinels in about a second. A heal does not fix the cause, and
+a genuine nonzero exit resubmitted unchanged fails the same way. Both are detailed in
+[`docs/design.md`](docs/design.md).
 
 ## What an experiment produces
 
@@ -240,7 +243,7 @@ reaps it on the schedule the experiment sets.
 
 ```
 <output_root>/<experiment>/
-  cfg/                                   frozen config, layers and job scripts
+  cfg/                                   resolved config, provenance, job scripts
   ana/20150105T000000Z/mem000.nc         the analysis, compressed
   bkg/20150105T000000Z/mem000.nc         the background, compressed
   obs_out/20150105T000000Z/              departures, and a per-cycle summary
@@ -254,14 +257,9 @@ reaps it on the schedule the experiment sets.
 
 Directories are named by the date a state is valid at, not by cycle number, so `ana/<T>` and
 `bkg/<T>` are two readings of the same instant and an increment is a subtraction between two
-files with the same name. Cycle numbers survive in the interface, where a scheduler dependency
-needs them.
-
-The kept products are float32 quantized to five significant digits and deflated, about a ninth
-of the restart set they came from, which is what makes it affordable to keep every cycle of
-every member of every experiment.
-
-Two keys decide what survives:
+files of the same name. Kept products are float32, quantized to five significant digits and
+deflated, which is what makes keeping every cycle of every member affordable. Two keys decide
+what survives:
 
 ```yaml
 cleanup:
@@ -269,58 +267,24 @@ cleanup:
   keep_every: P5D    # pin a restart set this often, so a variant can branch from mid-run
 ```
 
-`keep_cycles: 1` is the tightest correct answer, since cycle *n*'s forecast reads cycle *n-1*'s
-restarts and nothing reads further back. `keep_every` is what makes a long experiment
-branchable: `model.initial_condition` can name another experiment's `run/<date>/rst/mem000`.
+`keep_cycles: 1` is the tightest correct answer: cycle *n*'s forecast reads cycle *n-1*'s
+restarts and nothing reads further back. `keep_every` is what makes a long run branchable, since
+`model.initial_condition` can name another experiment's `run/<date>/rst/mem000`.
 
-## Documentation
+## Where to read next
 
-| Document | Contents |
-|---|---|
-| [`docs/design.md`](docs/design.md) | How the workflow is meant to work. Execution model, configuration layering, DA mode decomposition, task graph, offline stages. |
-| [`docs/analysis.md`](docs/analysis.md) | The analysis and writeback tasks: what each solver is handed, what comes back, how it reaches a restart, and what a missing ensemble member does. |
-| [`docs/background-error.md`](docs/background-error.md) | The static B: what is calibrated offline, how, and how to check it with a dirac. |
-| [`docs/domains.md`](docs/domains.md) | What each domain is, what a day of it costs, how one is added, and what is wrong with each. |
-| [`docs/osse.md`](docs/osse.md) | The Gulf of Mexico OSSE: nature run, synthetic observations, the experiment matrix, verification. |
-| [`docs/model-build.md`](docs/model-build.md) | Building MOM6-SIS2: repository ownership, branch choice, the submodule recipe and its traps, smoke test. |
-| [`docs/model-data.md`](docs/model-data.md) | The `.datasets` mechanism and the MOM6-examples input data inventory. |
-| [`docs/slurm.md`](docs/slurm.md) | The single-node Slurm used to develop against a real scheduler, and the two dependency profiles the workflow is tested under. |
-| [`docs/testing.md`](docs/testing.md) | The test tiers, what each is for, and how to run them. |
-| [`docs/build-order.md`](docs/build-order.md) | What gets built in what order and what each phase is tested against. |
-| [`docs/prior-workflows.md`](docs/prior-workflows.md) | The two prior attempts, what is inherited from them, and the mistakes this design exists to avoid. |
+[`docs/design.md`](docs/design.md) is the reference for how the workflow works and why: the
+execution model, configuration layering, the task graph, healing, and the offline stages.
+[`docs/domains.md`](docs/domains.md) says what each domain is and what a day of it costs.
+[`docs/testing.md`](docs/testing.md) explains the test tiers.
+[`docs/osse.md`](docs/osse.md) is a worked end-to-end study, and
+[`docs/model-build.md`](docs/model-build.md) is where to go when a build fails.
+`ackbar --help` and `ackbar <command> --help` are current by construction.
 
-## Layout
-
-```
-build-model.sh     build MOM6-SIS2
-build-jedi.sh      build the JEDI bundle
-config/layers/     configuration layers experiments inherit from
-config/layers/*/common/   layers only ever inherited by other layers, never listed
-config/model/      files a model needs that are ackbar's rather than the case's
-config/obs/        files the observers need, shared across observer layers
-config/schema/     ackbar's own schema, which also declares how lists merge
-config/soca/       one JEDI document template per SOCA application
-config/static/     parameters for the offline per-domain stages
-docs/              design and reference documentation
-experiments/       science experiments
-pkg/jedi/          the JEDI bundle: CMakeLists plus one submodule per repo
-pkg/mom6sis2/      submodule: NOAA-GFDL/MOM6-examples, branch dev/gfdl
-site/              one file per machine, the only place machine paths may appear
-src/ackbar/        the workflow itself
-tests/             the test suite and its experiment fixtures
-tools/             the offline stages, and the domain import
-tools/local/       personal plotting and monitoring; not in the repository
-```
-
-A template under `config/soca/` holds the *shape* of a JEDI document and holds a value only
-when nothing in Python reads it. Anything Python also reads stays a slot, because two spellings
-of a filename field is a writeback that opens a name nothing wrote.
+`tools/local/` is not in the repository. It holds personal plotting and monitoring, and the
+docs occasionally reference it.
 
 ## Name
 
-For Admiral Ackbar. Mon Calamari are an aquatic species, and he commands a fleet, which is the
-right image for a system whose defining feature is that ensemble members sail independently.
-
-The lineage is genuine: the original bash workflow already carried
-`# "It's a trap!!" -Admiral Ackbar` above its abort handler, as a joke about the bash `trap`
-builtin.
+Admiral Ackbar commanded the fleet at Endor and is remembered for one line about a trap. A
+workflow for detecting when your experiment is one seemed close enough.

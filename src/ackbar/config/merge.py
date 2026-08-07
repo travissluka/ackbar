@@ -4,10 +4,14 @@ Layers are merged in order, later wins. Dicts recurse. Lists either replace
 wholesale or merge element by element against a declared key, depending on
 whether the schema annotates that list path with ``x-ackbar-merge-key``.
 
-The keyed case exists for ``observations``: a ``da/letkf`` layer must be able to
-change one observer's localization without restating all 25 of them. Lists with
-no natural key (``variables``, saber blocks, filter chains) replace wholesale,
-because merging them elementwise by position is never what anyone meant.
+The keyed case exists for ``observations``: a layer must be able to reach one
+observer without restating the other twenty-four. (The example this used to give
+was a ``da/letkf`` layer setting one observer's localization. That is now the
+anti-pattern and ``da/letkf.yaml`` says why: naming platforms there left every
+platform not named with no localization at all, and invented a phantom observer
+for every one named that the experiment did not carry.) Lists with no natural
+key (``variables``, saber blocks, filter chains) replace wholesale, because
+merging them elementwise by position is never what anyone meant.
 """
 
 from copy import deepcopy

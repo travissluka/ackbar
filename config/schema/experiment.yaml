@@ -426,8 +426,12 @@ properties:
         enum: [fail_cycle, run_degraded, replace_from_mean]
 
   observations:
-    # The list that makes the whole keyed-merge machinery necessary: a da/letkf
-    # layer changes one observer's localization without restating the others.
+    # The list the keyed-merge machinery exists for. The example it used to give
+    # was a `da/letkf` layer setting one observer's localization, which is now
+    # the anti-pattern: naming platforms there left every platform not named
+    # with no localization and invented a phantom observer for every one named
+    # that the experiment did not carry. See `da/letkf.yaml`. The machinery is
+    # still what lets a layer reach one observer without restating the rest.
     type: array
     x-ackbar-merge-key: obs space.name
     items:
