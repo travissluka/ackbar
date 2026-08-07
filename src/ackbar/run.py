@@ -995,11 +995,19 @@ def _b_vt(config, site, paths, cycle, task):
     is worth keeping is the operator, and what makes the operator explicable is
     the *background*, which is already on disk under this cycle's `rst`.
     """
-    background = analysis_background(paths, cycle) / restart_stamp(config)
+    # The ocean restart, not `restart_stamp`. That names the sentinel whose
+    # presence means a member's restart set is whole, which is `coupler.res`,
+    # and this reads `h`, `Temp` and `Salt` out of the file itself.
+    ocean = (config["model"].get("restart") or {}).get("ocn")
+    if not ocean:
+        raise TaskError(
+            f"{cycle}.{task}: model.restart.ocn is not set, so there is no "
+            f"ocean restart to calibrate the vertical correlation against.")
+    background = analysis_background(paths, cycle) / ocean
     if not background.exists():
         raise TaskError(
             f"{cycle}.{task}: {background} does not exist, so there is no "
-            f"background to calibrate the vertical B against.")
+            f"background to calibrate the vertical correlation against.")
 
     run = paths.scratch(cycle, task)
     run.mkdir(parents=True, exist_ok=True)
