@@ -44,6 +44,26 @@ properties:
     type: object
     additionalProperties: true
 
+  observation bodies:
+    # The half of an observer that a family of platforms has in common, by name.
+    #
+    # `observations` merges keyed on `obs space.name`, so a layer reaches an
+    # observer only by naming it, and a layer holding a body with no platform of
+    # its own has nothing to merge into. A platform layer points at one of these
+    # with `$inherit:` and inherits the layer that declares it;
+    # `ackbar/config/bodies.py` merges the body under the observer and drops the
+    # key, so what reaches UFO is a complete observer either way.
+    #
+    # Free form below the name, because the value is a partial observer and an
+    # observer is UFO's config, not ACKBAR's.
+    #
+    # This key survives into the frozen config. That is deliberate: the frozen
+    # config is the record of what the experiment was built from, and a key it
+    # was written with going missing would make that record disagree with the
+    # layers frozen beside it.
+    type: object
+    additionalProperties: { type: object }
+
   domain:
     type: object
     required: [name]
@@ -416,13 +436,25 @@ properties:
       # Everything below an observer is UFO's, not ACKBAR's.
       additionalProperties: true
       properties:
+        # ACKBAR's, not UFO's, and gone before UFO sees the observer: the name
+        # of a shared body under `observation bodies`, merged in by
+        # `ackbar/config/bodies.py`. Validated there rather than here, because
+        # the useful error is "no body named that is declared, here is what is"
+        # and a schema can only say the value is a string.
+        #
+        # The sigil is what `$remove` wears and means the same thing: everything
+        # else inside an observer is UFO's to read, and a bare `inherit:` here
+        # would read like one more thing SOCA acts on. The same word as a
+        # layer's own `inherit:`, at a different scope: that one is a list of
+        # layer names at the top of a document ACKBAR owns outright.
+        $inherit: { type: string }
         obs space:
           type: object
           required: [name]
           additionalProperties: true
           properties:
             name: { type: string }
-            required: { type: boolean }
+            $required: { type: boolean }
 
   forecast:
     type: object

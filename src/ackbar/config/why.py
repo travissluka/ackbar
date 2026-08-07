@@ -59,7 +59,13 @@ def why(layers, dotted, merge_keys=None):
     history = []
     previous = MISSING
     for n in range(1, len(layers) + 1):
-        value = lookup(merge_layers(layers[:n], merge_keys), parts)
+        # `strict=False` because this truncates the layer list on purpose, so a
+        # platform layer is reached before the family layer it points at, and
+        # refusing that would make `why` fail on exactly the configs it exists
+        # to explain. The expansion itself is `merge_layers`'s, so a value an
+        # observer got from a shared body is attributed to the layer that
+        # declared the body rather than reported as unset.
+        value = lookup(merge_layers(layers[:n], merge_keys, strict=False), parts)
         if not _same(value, previous):
             history.append((layers[n - 1].name, value))
             previous = value

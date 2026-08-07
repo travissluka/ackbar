@@ -1,7 +1,17 @@
 # Sea surface temperature from AVHRR on NOAA-19, swath.
 #
-# See `obs/adt_3a.yaml` for what an observer layer states and what it
-# deliberately leaves to the solver layer and to `ackbar/soca.py`.
+# Flown by the tier 3 and 1 degree global test experiments, not by the Gulf
+# OSSE: NOAA-19's orbit had drifted to a 14:30 crossing by 2015, within an
+# hour of Suomi-NPP, and two platforms seeing the same ocean at the same
+# time of day are one platform and a duplicate count.
+#
+# The whole observer is the `sst` body in `obs/common/sst.yaml`,
+# which this layer inherits. What is here is this platform's identity: its
+# name, and the two paths that name follows into the archive and out to
+# `obs_out/`. Anything restated here would override the body.
+
+inherit:
+  - obs/common/sst
 
 observations:
 - obs space:
@@ -14,29 +24,4 @@ observations:
       engine:
         type: H5File
         obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).sst_noaa19.{{window_begin:%Y%m%d%H}}.nc4
-    simulated variables: [seaSurfaceTemperature]
-    io pool:
-      max pool size: 1
-    obs perturbations seed: '{{seed}}'
-  obs operator:
-    name: Identity
-    # Absolute, so `ackbar validate` stats it before anything is submitted. The
-    # relative name the JEDI examples use resolves against the run directory,
-    # where the only thing that can notice its absence is the job that fails.
-    observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
-  obs error:
-    covariance model: diagonal
-  obs filters:
-  - filter: Domain Check
-    where:
-    - variable: {name: GeoVaLs/sea_area_fraction}
-      minvalue: $(obs_land_mask_min)
-  - filter: Bounds Check
-    minvalue: -2.0
-    maxvalue: 36.0
-  - filter: Background Check
-    threshold: 5.0
-  - filter: Domain Check
-    where:
-    - variable: {name: ObsError/seaSurfaceTemperature}
-      minvalue: 0.001
+  $inherit: sst

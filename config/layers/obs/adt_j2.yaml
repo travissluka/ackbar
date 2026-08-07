@@ -1,14 +1,15 @@
 # Absolute dynamic topography from Jason-2, along track.
 #
-# The reference orbit: 66 degrees, ten day repeat, 315 km between
-# tracks. Coarse in space and dense in time, and the diagonal one.
+# The reference orbit: 66 degrees, ten day repeat, 315 km between tracks.
+# Coarse in space and dense in time, and the diagonal one.
 #
-# See `obs/adt_3a.yaml` for what an observer layer states and what it
-# deliberately leaves to the solver layer and to `ackbar/soca.py`. The
-# observation error is not here: `covariance model: diagonal` with nothing
-# assigned reads `ObsError/<variable>` out of the file, and for a synthetic
-# archive that is what `PLATFORMS` in `tools/obs-archive-osse.py` wrote there
-# and drew the noise with. `docs/observing-system.md` says where it comes from.
+# The whole observer is the `adt` body in `obs/common/adt.yaml`,
+# which this layer inherits. What is here is this platform's identity: its
+# name, and the two paths that name follows into the archive and out to
+# `obs_out/`. Anything restated here would override the body.
+
+inherit:
+  - obs/common/adt
 
 observations:
 - obs space:
@@ -26,57 +27,4 @@ observations:
       engine:
         type: H5File
         obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).adt_j2.{{window_begin:%Y%m%d%H}}.nc4
-    simulated variables: [absoluteDynamicTopography]
-    io pool:
-      max pool size: 1
-    obs perturbations seed: '{{seed}}'
-  obs operator:
-    name: ADT
-  obs error:
-    covariance model: diagonal
-  obs filters:
-  - filter: Domain Check
-    where:
-    - variable: {name: GeoVaLs/sea_area_fraction}
-      minvalue: $(obs_land_mask_min)
-  - filter: Domain Check
-    where:
-    - variable: {name: GeoVaLs/sea_surface_temperature}
-      minvalue: 5.0
-  - filter: Background Check
-    # **Effectively off, and that is what an OSSE wants.** A background check
-    # rejects observations the background cannot plausibly be that far from,
-    # which is a statement about gross error: a mispositioned buoy, a failed
-    # retrieval, a decimal point. A synthetic archive has none. Every value here
-    # is the truth plus Gaussian noise of the declared size, so everything the
-    # check removes is signal, and the largest departures are along the Loop
-    # Current front, which is the signal this experiment exists to correct.
-    #
-    # It biases the comparison as well as weakening the analysis, and in the
-    # direction that is hardest to notice. `post.obs` computes O-B over the
-    # observations that passed QC, so a tighter background is censored less than
-    # a looser one: the free run's worst departures get thrown away before they
-    # reach the statistic, and the assimilating run is scored against a
-    # flattered baseline. `obs/adt_3a.yaml` keeps 0.2 m, being pinned to the
-    # tier 3 archive.
-    #
-    # 10 m rather than removing the filter, so that a diverging model is still
-    # caught. Gulf sea level moves by a metre in a hurricane and by thousands
-    # when MOM6 has blown up, and those two are worth telling apart.
-    absolute threshold: 10.0
-  - filter: BlackList
-    where:
-    - variable: {name: MetaData/latitude}
-      minvalue: -65
-      maxvalue: -30
-    - variable: {name: MetaData/longitude}
-      minvalue: -125
-      maxvalue: -90
-  - filter: BlackList
-    where:
-    - variable: {name: MetaData/latitude}
-      minvalue: -65
-      maxvalue: -30
-    - variable: {name: MetaData/longitude}
-      minvalue: 60
-      maxvalue: 110
+  $inherit: adt

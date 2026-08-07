@@ -31,6 +31,7 @@ from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
 from .duration import DurationError, parse_duration, parse_instant
 from .graph import GraphError, build_graph, job_time_context, member_set
+from .observations import REQUIRED as OBS_REQUIRED
 
 #: The steps, in the order they run. Reported individually so that "what was
 #: actually checked" is visible rather than implied by an exit code.
@@ -225,7 +226,7 @@ def _take_observation_inputs(rendered, observations):
         if not path:
             continue
         record = observations.setdefault(
-            space.get("name", ""), {"required": bool(space.get("required")),
+            space.get("name", ""), {"required": bool(space.get(OBS_REQUIRED)),
                                     "paths": set()},
         )
         record["paths"].add(path)

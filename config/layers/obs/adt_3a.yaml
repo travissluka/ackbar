@@ -1,36 +1,19 @@
 # Absolute dynamic topography from Sentinel-3A, along track.
 #
-# An observer layer is one platform. Adding it to an experiment's `inherit:`
-# list is the whole of turning that platform on, and the layers merge on
-# `obs space.name`, so a solver layer can change one observer's localization
-# without restating the rest of it.
+# Flown by the tier 3 and 1 degree global test experiments, not by the Gulf
+# OSSE, which flies the other four.
 #
-# Three things about this file are *not* here, on purpose, and each is
-# somewhere a platform cannot know the answer:
-#
-#   the obs distribution   set by `ackbar/soca.py` per application, because a
-#                          hybrid reads these same observations through a
-#                          variational solve and an ensemble filter in one
-#                          cycle and the two need different answers. What an
-#                          experiment chooses is the halo size, under
-#                          `solver.ensemble distribution`.
-#   the land mask          `$(obs_land_mask_min)`, set by the da layer: 0.9
-#                          variational, 0.5 LETKF.
-#   the localization       added by `da/letkf` and `da/eakf`, which is also
-#                          where the radius is chosen.
-#
-# What an experiment usually does change here is the error, the QC thresholds
-# and the thinning. All of it is UFO's configuration, not ACKBAR's, and is
-# passed through verbatim.
+# The whole observer is the `adt` body in `obs/common/adt.yaml`,
+# which this layer inherits. What is here is this platform's identity: its
+# name, and the two paths that name follows into the archive and out to
+# `obs_out/`. Anything restated here would override the body.
+
+inherit:
+  - obs/common/adt
 
 observations:
 - obs space:
     name: adt_3a
-    # The archive is keyed by date, because an archive has no cycle numbers: it
-    # is built once and read by experiments that number their cycles
-    # differently. The experiment's own output is keyed by cycle number, like
-    # every other directory it writes, so cleanup and the harvest address it the
-    # same way they address restarts. See the header of `ackbar/paths.py`.
     obsdatain:
       engine:
         type: H5File
@@ -39,38 +22,4 @@ observations:
       engine:
         type: H5File
         obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).adt_3a.{{window_begin:%Y%m%d%H}}.nc4
-    simulated variables: [absoluteDynamicTopography]
-    io pool:
-      max pool size: 1
-    obs perturbations seed: '{{seed}}'
-  obs operator:
-    name: ADT
-  obs error:
-    covariance model: diagonal
-  obs filters:
-  - filter: Domain Check
-    where:
-    - variable: {name: GeoVaLs/sea_area_fraction}
-      minvalue: $(obs_land_mask_min)
-  - filter: Domain Check
-    where:
-    - variable: {name: GeoVaLs/sea_surface_temperature}
-      minvalue: 5.0
-  - filter: Background Check
-    absolute threshold: 0.2
-  - filter: BlackList
-    where:
-    - variable: {name: MetaData/latitude}
-      minvalue: -65
-      maxvalue: -30
-    - variable: {name: MetaData/longitude}
-      minvalue: -125
-      maxvalue: -90
-  - filter: BlackList
-    where:
-    - variable: {name: MetaData/latitude}
-      minvalue: -65
-      maxvalue: -30
-    - variable: {name: MetaData/longitude}
-      minvalue: 60
-      maxvalue: 110
+  $inherit: adt

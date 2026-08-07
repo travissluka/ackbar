@@ -91,10 +91,10 @@ def test_ackbars_own_keys_do_not_reach_jedi(env):
     bad trade for a line of config.
     """
     config, _, _ = env
-    config["observations"][0]["obs space"]["required"] = True
+    config["observations"][0]["obs space"]["$required"] = True
     record = observations.observers(config, 1)[0]
     assert record["required"] is True
-    assert "required" not in record["config"]["obs space"]
+    assert "$required" not in record["config"]["obs space"]
 
 
 # --- the record --------------------------------------------------------------
@@ -122,7 +122,7 @@ def test_the_list_records_which_file_each_observer_read(env):
 
 def test_a_required_observer_with_no_file_fails_the_cycle(env):
     config, paths, archive = env
-    config["observations"][0]["obs space"]["required"] = True
+    config["observations"][0]["obs space"]["$required"] = True
     stage_archive(archive, 1, names=("sst.nc4",))
     with pytest.raises(observations.ObservationError, match="adt_3a"):
         observations.realize(config, paths, 1)

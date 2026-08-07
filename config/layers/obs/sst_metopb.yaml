@@ -1,18 +1,24 @@
 # Sea surface temperature from AVHRR on Metop-B, swath.
 #
-# Mid-morning orbit: 09:30 local descending, so it sees the Gulf
-# before the afternoon platforms and before the diurnal warm layer.
+# Mid-morning orbit: 09:30 local descending, so it sees the Gulf before the
+# afternoon platform and before the diurnal warm layer.
 #
-# See `obs/adt_3a.yaml` for what an observer layer states and what it
-# deliberately leaves to the solver layer and to `ackbar/soca.py`. The
-# observation error is not here: `covariance model: diagonal` with nothing
-# assigned reads `ObsError/<variable>` out of the file, and for a synthetic
-# archive that is what `PLATFORMS` in `tools/obs-archive-osse.py` wrote there
-# and drew the noise with. `docs/observing-system.md` says where it comes from.
+# The whole observer is the `sst` body in `obs/common/sst.yaml`,
+# which this layer inherits. What is here is this platform's identity: its
+# name, and the two paths that name follows into the archive and out to
+# `obs_out/`. Anything restated here would override the body.
+
+inherit:
+  - obs/common/sst
 
 observations:
 - obs space:
     name: sst_metopb
+    # The archive is keyed by date, because an archive has no cycle numbers: it
+    # is built once and read by experiments that number their cycles
+    # differently. The experiment's own output is keyed by cycle number, like
+    # every other directory it writes, so cleanup and the harvest address it the
+    # same way they address restarts. See the header of `ackbar/paths.py`.
     obsdatain:
       engine:
         type: H5File
@@ -21,35 +27,4 @@ observations:
       engine:
         type: H5File
         obsfile: $(obs_out_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/$(experiment).sst_metopb.{{window_begin:%Y%m%d%H}}.nc4
-    simulated variables: [seaSurfaceTemperature]
-    io pool:
-      max pool size: 1
-    obs perturbations seed: '{{seed}}'
-  obs operator:
-    name: Identity
-    # Absolute, so `ackbar validate` stats it before anything is submitted. The
-    # relative name the JEDI examples use resolves against the run directory,
-    # where the only thing that can notice its absence is the job that fails.
-    observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
-  obs error:
-    covariance model: diagonal
-  obs filters:
-  - filter: Domain Check
-    where:
-    - variable: {name: GeoVaLs/sea_area_fraction}
-      minvalue: $(obs_land_mask_min)
-  - filter: Bounds Check
-    minvalue: -2.0
-    maxvalue: 36.0
-  - filter: Background Check
-    # In units of the observation error, so 5.0 was 2.5 K. Effectively off for
-    # the same reasons `obs/adt_j2.yaml` sets 10 m: a synthetic archive holds no
-    # gross error for this to catch, everything it removes is signal, and
-    # censoring the free run's departures harder than the analysis run's scores
-    # the comparison against a flattered baseline. 100 sigma is 50 K, which no
-    # ocean reaches and a diverged model passes.
-    threshold: 100.0
-  - filter: Domain Check
-    where:
-    - variable: {name: ObsError/seaSurfaceTemperature}
-      minvalue: 0.001
+  $inherit: sst

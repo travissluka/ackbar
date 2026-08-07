@@ -1,0 +1,94 @@
+# What every along-track altimeter has in common. Not a platform, which is what
+# `obs/common/` means: nothing in here is inheritable by an experiment, because
+# nothing in here turns an observer on. It has no `observations` list at all.
+# The five platform layers beside it inherit this one, and an experiment goes on
+# listing the platforms it flies exactly as it did before.
+#
+# The altimeters differ in their orbit and in nothing else. The orbit is not in
+# any of these files: it lives in `PLATFORMS` in
+# `tools/obs-archive-osse.py`, which is what sampled the archive. By the time an
+# experiment reads the result, the difference between Jason-2 and CryoSat-2 is
+# which dots are in which file. Five layers holding the same seventy lines said
+# the opposite, and the copies had begun to drift.
+#
+# Three things about an observer are *not* here, on purpose, and each is
+# somewhere a platform cannot know the answer:
+#
+#   the obs distribution   set by `ackbar/soca.py` per application, because a
+#                          hybrid reads these same observations through a
+#                          variational solve and an ensemble filter in one
+#                          cycle and the two need different answers. What an
+#                          experiment chooses is the halo size, under
+#                          `solver.ensemble distribution`.
+#   the land mask          `$(obs_land_mask_min)`, set by the da layer: 0.9
+#                          variational, 0.5 LETKF.
+#   the localization       added by `da/letkf` and `da/eakf`, which is also
+#                          where the radius is chosen.
+#
+# What an experiment usually does change is the error, the QC thresholds and the
+# thinning. All of it is UFO's configuration, not ACKBAR's, and is passed
+# through verbatim. A platform layer that restates any of it overrides this,
+# because the body merges *under* the observer.
+#
+# The observation error is not here either: `covariance model: diagonal` with
+# nothing assigned reads `ObsError/<variable>` out of the file, and for a
+# synthetic archive that is what `PLATFORMS` wrote there and drew the noise
+# with. `docs/observing-system.md` says where it comes from.
+
+observation bodies:
+
+  adt:
+
+    # Everything in `obs space` that is not this platform's identity. What a
+    # platform layer is left holding is its name and the two paths that name
+    # follows into the archive and out to `obs_out/`.
+    obs space:
+      simulated variables: [absoluteDynamicTopography]
+      # One writer per observer. These files are small and one rank writing a
+      # small file is faster than the aggregation that avoids it.
+      io pool:
+        max pool size: 1
+      # Per experiment, cycle and member, so a healed member draws the same
+      # perturbation the abandoned one did. `ackbar/config/jobtime.py` derives
+      # it; nothing here may invent one.
+      obs perturbations seed: '{{seed}}'
+    obs operator:
+      name: ADT
+    obs error:
+      covariance model: diagonal
+    obs filters:
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: $(obs_land_mask_min)
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_surface_temperature}
+        minvalue: 5.0
+    - filter: Background Check
+      # **Effectively off, and that is what an OSSE wants.** A background check
+      # rejects observations the background cannot plausibly be that far from,
+      # which is a statement about gross error: a mispositioned buoy, a failed
+      # retrieval, a decimal point. A synthetic archive has none. Every value
+      # here is the truth plus Gaussian noise of the declared size, so
+      # everything the check removes is signal, and the largest departures are
+      # along the Loop Current front, which is the signal this experiment exists
+      # to correct.
+      #
+      # It biases the comparison as well as weakening the analysis, and in the
+      # direction that is hardest to notice. `post.obs` computes O-B over the
+      # observations that passed QC, so a tighter background is censored less
+      # than a looser one: the free run's worst departures get thrown away
+      # before they reach the statistic, and the assimilating run is scored
+      # against a flattered baseline.
+      #
+      # 10 m rather than removing the filter, so that a diverging model is still
+      # caught. Gulf sea level moves by a metre in a hurricane and by thousands
+      # when MOM6 has blown up, and those two are worth telling apart.
+      absolute threshold: 10.0
+    # Two BlackList filters used to follow, boxing out the Drake Passage and
+    # the southern Indian Ocean. They came from the global configuration these
+    # layers were derived from. Every experiment that flies an altimeter here is
+    # either a Gulf domain, where those boxes are thousands of kilometres off
+    # the grid and cannot fire, or a 1 degree test that runs no science, so they
+    # are gone rather than carried by one platform.

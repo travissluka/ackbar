@@ -1,0 +1,57 @@
+# What every swath radiometer has in common. Not a platform, which is what
+# `obs/common/` means: nothing in here is inheritable by an experiment, because
+# nothing in here turns an observer on. The platform layers beside it inherit
+# this one, and an experiment goes on listing the platforms it flies.
+#
+# See `obs/common/adt.yaml` for what an observer body states, what it leaves to
+# the solver layer and to `ackbar/soca.py`, and why the platform layers are
+# thin.
+
+observation bodies:
+
+  sst:
+
+    # Everything in `obs space` that is not this platform's identity. What a
+    # platform layer is left holding is its name and the two paths that name
+    # follows into the archive and out to `obs_out/`.
+    obs space:
+      simulated variables: [seaSurfaceTemperature]
+      # One writer per observer. These files are small and one rank writing a
+      # small file is faster than the aggregation that avoids it.
+      io pool:
+        max pool size: 1
+      # Per experiment, cycle and member, so a healed member draws the same
+      # perturbation the abandoned one did. `ackbar/config/jobtime.py` derives
+      # it; nothing here may invent one.
+      obs perturbations seed: '{{seed}}'
+    obs operator:
+      name: Identity
+      # Absolute, so `ackbar validate` stats it before anything is submitted.
+      # The relative name the JEDI examples use resolves against the run
+      # directory, where the only thing that can notice its absence is the job
+      # that fails.
+      observation alias file: $(ackbar_root)/config/obs/obsop_name_map.yml
+    obs error:
+      covariance model: diagonal
+    obs filters:
+    - filter: Domain Check
+      where:
+      - variable: {name: GeoVaLs/sea_area_fraction}
+        minvalue: $(obs_land_mask_min)
+    - filter: Bounds Check
+      minvalue: -2.0
+      maxvalue: 36.0
+    - filter: Background Check
+      # In units of the observation error, so 5.0 was 2.5 K. Effectively off
+      # for the same reasons `obs/common/adt.yaml` sets 10 m: a synthetic
+      # archive holds no gross error for this to catch, everything it removes
+      # is signal, and censoring the free run's departures harder than the
+      # analysis run's scores the comparison against a flattered baseline.
+      # 100 sigma is 50 K, which no ocean reaches and a diverged model passes.
+      threshold: 100.0
+    # An observation whose declared error is zero would be assimilated with
+    # infinite weight.
+    - filter: Domain Check
+      where:
+      - variable: {name: ObsError/seaSurfaceTemperature}
+        minvalue: 0.001

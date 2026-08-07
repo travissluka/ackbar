@@ -14,10 +14,16 @@
 # observers it localized, the layers merge on `obs space.name`, and naming one
 # created it. That is fixed (`soca._observers`), so what was implicit is stated.
 #
-# Both altimeters, and not one of each kind, only because an SST layer names
+# Altimeters only, and not one of each kind, only because an SST layer names
 # `$(ackbar_root)` for its operator alias file and the harness that resolves
 # this config supplies `scratch_root` and `output_root` and nothing else. Which
 # platforms these are is not something any test here asserts.
+#
+# One standalone layer and one that inherits, which is the other reason to leave
+# this pair alone: `obs/adt_3a` carries its whole observer, and `obs/adt_j2`
+# carries a name and pulls its body from `obs/adt`. So the tier 2 graph is built
+# over both forms of observer layer, and a change that broke the inheriting one
+# shows up here rather than in a science run.
 inherit:
   - domain/stub
   - model/stub

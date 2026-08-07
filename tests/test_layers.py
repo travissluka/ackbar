@@ -80,12 +80,71 @@ def test_inheriting_the_same_layer_twice_is_an_error(tree):
         resolve_layers(path, root)
 
 
-def test_a_layer_may_not_declare_its_own_inheritance(tree):
+def test_a_layer_may_declare_its_own_inheritance(tree):
+    """And what it inherits lands before it, so the layer still wins."""
     root, tmp = tree
     (root / "da" / "hybrid.yaml").write_text("inherit: [da/letkf]\nsolver: {name: x}\n")
-    path = experiment(tmp, "inherit: [da/hybrid]\n")
-    with pytest.raises(LayerError, match="may not inherit"):
-        resolve_layers(path, root)
+    layers = resolve_layers(experiment(tmp, "inherit: [da/hybrid]\n"), root)
+    assert [layer.name for layer in layers] == ["da/letkf", "da/hybrid", "exp"]
+    assert merge_layers(layers)["solver"] == {"name": "x"}
+
+
+def test_inherit_is_stripped_from_a_layer_as_well_as_an_experiment(tree):
+    # It is ACKBAR's key at both scopes, and a layer leaking it into the merged
+    # config would put a list of filenames where the schema expects config.
+    root, tmp = tree
+    (root / "da" / "hybrid.yaml").write_text("inherit: [da/letkf]\nsolver: {name: x}\n")
+    config = merge_layers(resolve_layers(experiment(tmp, "inherit: [da/hybrid]\n"), root))
+    assert "inherit" not in config
+
+
+def test_a_layer_reached_twice_through_the_tree_is_loaded_once(tree):
+    """Four altimeters inheriting one body is the case this exists for.
+
+    Deduped rather than refused, unlike a repeat in an experiment's own list:
+    there the repeat is hand-written and always a mistake, here it is the whole
+    point, and the second arrival carries nothing the first did not.
+    """
+    root, tmp = tree
+    for name in ("j2", "saral"):
+        (root / "obs" / f"adt_{name}.yaml").write_text(
+            f"inherit: [obs/adt]\nobservations:\n- obs space: {{name: adt_{name}}}\n"
+        )
+    layers = resolve_layers(experiment(tmp, "inherit: [obs/adt_j2, obs/adt_saral]\n"), root)
+    assert [layer.name for layer in layers] == [
+        "obs/adt", "obs/adt_j2", "obs/adt_saral", "exp",
+    ]
+
+
+def test_a_layer_lands_before_the_layer_that_inherits_it(tree):
+    # Depth first and parents first, so the inheriting layer overrides what it
+    # inherited rather than the other way round.
+    root, tmp = tree
+    (root / "obs" / "adt_j2.yaml").write_text(
+        "inherit: [obs/adt]\n"
+        "observations:\n- obs space: {name: adt}\n  obs operator: {name: Identity}\n"
+    )
+    config = merge_layers(
+        resolve_layers(experiment(tmp, "inherit: [obs/adt_j2]\n"), root), KEYED
+    )
+    assert config["observations"][0]["obs operator"] == {"name": "Identity"}
+
+
+def test_layers_that_inherit_in_a_cycle_are_refused(tree):
+    root, tmp = tree
+    (root / "da" / "a.yaml").write_text("inherit: [da/b]\n")
+    (root / "da" / "b.yaml").write_text("inherit: [da/a]\n")
+    with pytest.raises(LayerError, match="cycle"):
+        resolve_layers(experiment(tmp, "inherit: [da/a]\n"), root)
+
+
+def test_a_layer_missing_from_a_parents_list_names_who_wanted_it(tree):
+    # The experiment does not mention `obs/nope`, so without this the error
+    # names a file nothing in front of the reader asked for.
+    root, tmp = tree
+    (root / "obs" / "adt_j2.yaml").write_text("inherit: [obs/nope]\n")
+    with pytest.raises(LayerError, match="inherited by 'obs/adt_j2'"):
+        resolve_layers(experiment(tmp, "inherit: [obs/adt_j2]\n"), root)
 
 
 def test_inherit_must_be_a_list(tree):

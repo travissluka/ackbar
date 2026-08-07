@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from . import harvest, heal, ledger, run, slurm, state
+from .config.bodies import BodyError
 from .config.jobtime import SYMBOLS, render, symbols
 from .config.layers import LayerError, merge_layers, resolve_layers
 from .config.merge import MergeError
@@ -41,7 +42,9 @@ def _resolved(args, substitute=True):
     The order is merge, then substitute, then validate. Merging last would stop
     a layer from overriding a value another layer interpolated, and validating
     before substitution would check `$(ntasks)` rather than the integer it
-    stands for.
+    stands for. Expanding an observer's shared body happens inside
+    `merge_layers`, for the same reason the first two are in this order: a body
+    has to be overridable by a later layer, so both are still one document then.
     """
     schema = load_schema(args.schema)
     keys = merge_keys(schema)
@@ -526,9 +529,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (LayerError, MergeError, ResolveError, SiteError, GraphError,
-            DurationError, CreateError, SubmitError, slurm.SlurmError,
-            run.TaskError, heal.HealError) as error:
+    except (LayerError, MergeError, BodyError, ResolveError, SiteError,
+            GraphError, DurationError, CreateError, SubmitError,
+            slurm.SlurmError, run.TaskError, heal.HealError) as error:
         print(f"ackbar: {error}", file=sys.stderr)
         return 2
 

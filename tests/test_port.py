@@ -100,8 +100,16 @@ class TestLetkfLayerAddressesOneObserverAtATime:
             assert "obs localizations" not in observer(config, name)
 
     def test_each_observer_keeps_its_own_filter_chain(self, letkf):
+        """Two chains, of different lengths, one per observer.
+
+        The lengths are what they are because each family's body says so, and
+        the point of asserting them is that the two observers do not end up
+        sharing one chain: `obs filters` has no merge key, so a bug that made a
+        keyed list replace instead of merge would leave both observers holding
+        whichever chain was merged last, and both counts would be equal.
+        """
         _, config = letkf
-        assert len(observer(config, "adt_3a")["obs filters"]) == 5
+        assert len(observer(config, "adt_3a")["obs filters"]) == 3
         assert len(observer(config, "sst_noaa19")["obs filters"]) == 4
 
 

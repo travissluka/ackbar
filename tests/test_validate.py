@@ -299,7 +299,7 @@ class TestStep3InputPaths:
     ):
         # `required` is how an experiment says its own gap is not acceptable, so
         # the check reverts to file by file.
-        staged["observations"][0]["obs space"]["required"] = True
+        staged["observations"][0]["obs space"]["$required"] = True
         stage(full(staged, schema, site=local_site))
         stage_observations(staged, skip=("2018041600",))
         found = full(staged, schema, site=local_site)

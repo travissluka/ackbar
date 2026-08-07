@@ -19,7 +19,7 @@ output it describes. It records every configured observer, whether it ran, and
 what it read: the ones that were dropped are the point, so they are in the file
 rather than absent from it.
 
-`required: true` on an observer inverts the default. Absence then fails the
+`$required: true` on an observer inverts the default. Absence then fails the
 cycle, which is what an experiment says when the platform is the reason the
 experiment exists.
 """
@@ -29,11 +29,20 @@ from pathlib import Path
 
 from .config.jobtime import render, symbols
 
+#: Whether a missing input file fails the cycle. See the module docstring.
+#:
+#: The sigil is the convention `merge.REMOVE` set and `bodies.BODY` follows:
+#: everything else inside an observer is UFO's, so a key of ACKBAR's sitting
+#: among `obs operator` and `obs filters` says so in its name. It also stops
+#: this reading as JSON Schema's `required` two lines from where the schema
+#: uses that word for its own purpose.
+REQUIRED = "$required"
+
 #: ACKBAR's own keys inside an observer, which are ACKBAR's to read and not
 #: JEDI's to receive. Removed before the config reaches an application, because
 #: a key UFO does not know is a key UFO may reject, and being rejected for a
 #: value that was never meant to leave here is a bad way to lose a cycle.
-OWN_KEYS = ("required",)
+OWN_KEYS = (REQUIRED,)
 
 
 class ObservationError(Exception):
@@ -56,7 +65,7 @@ def observers(config, cycle):
         source = _obsfile(space, "obsdatain")
         records.append({
             "name": name,
-            "required": bool(space.get("required")),
+            "required": bool(space.get(REQUIRED)),
             "input": source,
             "output": _obsfile(space, "obsdataout"),
             "present": bool(source) and _exists(source),
