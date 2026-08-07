@@ -233,13 +233,16 @@ declared and empty (`DEFERRED` in `run.py`), and the OSSE is what forces them.
    source being absent (a real-observation experiment has no truth). It reads
    `bkg/`, `ana/` and `fcst/` and keys off artifact existence rather than job
    state, for the reason given under the graph below.
-5. **Truth promotion.** `tools/promote-truth.sh`: `exp/<name>/run/<date>/rst/` and its
-   slots to `$ACKBAR_STATIC_ROOT/truth/<domain>/<name>/<date>/`. Small.
-6. **`obs-archive-osse.py --truth-run`.** Today its truth is one state plus a
-   fixed Gaussian anomaly, and it says so in its own docstring. The new mode
-   reads the promoted archive and samples the state nearest each observation's
-   time. The existing single-state mode stays, because the smoke archive that
-   tier 3 uses is built with it.
+5. **Truth promotion.** *Done.* `tools/promote-truth.sh` copies
+   `exp/<name>/run/<date>/rst/` and its slots to
+   `$ACKBAR_STATIC_ROOT/truth/<domain>/<name>/<date>/`, keyed by the date each
+   state is *valid* at, which for a restart set is one cycle after the directory
+   holding it. It refuses an experiment whose solver is not `none`.
+6. **`obs-archive-osse.py --truth-run`.** *Done.* Reads the promoted archive and
+   samples the state nearest each observation's own time, refusing rather than
+   clamping an observation outside it. The single-state mode stays, because the
+   smoke archive tier 3 uses is built with it, and the draw order was preserved
+   so that archive still reproduces bit for bit.
 7. **The profile platform**, in the generator and as
    `config/layers/obs/insitu_pfl.yaml`. `config/obs/obsop_name_map.yml` already
    carries `waterTemperature` and `depthBelowWaterSurface`, so the alias side is
@@ -248,7 +251,11 @@ declared and empty (`DEFERRED` in `run.py`), and the OSSE is what forces them.
 8. **`tools/ensemble-ic.py sample`.** The date-sampled, recentred ensemble of
    stage C, with the clipping report. The existing `plan`/`place` verbs stay:
    perturbing one state from static B is a different ensemble and still the
-   right one for a smoke test.
+   right one for a smoke test. The control half of stage C is done:
+   `tools/restamp-ic.sh` promotes a truth state to the IC stage under a
+   different date, which is where the initial error comes from. It is one line
+   of `coupler.res`, and it is necessary because a restart carries its own clock
+   and MOM6 takes the date from there rather than from the namelist.
 9. **The comparison tool.** Reads N experiments' verification output, writes the
    table and the figures.
 

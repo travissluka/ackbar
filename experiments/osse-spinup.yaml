@@ -1,0 +1,48 @@
+# Stage A of the Gulf of Mexico OSSE: the spinup.
+#
+# See docs/osse.md. This is the first of the two free runs and the only one
+# whose length is decided by looking at it rather than in advance: it ends when
+# the currents stop changing character, which is a question about a plot of
+# domain kinetic energy and Loop Current intrusion against cycle rather than a
+# count anyone can write down here. 36 cycles of `P5D` is 180 days and is the
+# expectation, not the instruction. NCAR/CORE climatology has a seasonal cycle,
+# so a flat line is the wrong thing to wait for; what has to go is the trend.
+#
+# Cycled rather than run as one 180 day forecast. A single job that long has one
+# failure mode and no checkpoint, and cycling is the thing being proved anyway:
+# if the restart handoff is going to lose the ocean it should do it here, where
+# nothing downstream is reading the result yet, rather than in the truth run.
+#
+# `P5D` rather than the DA cycle length because nothing samples this run. Only
+# the truth run has to write states at times an experiment's analysis lands on,
+# and five day cycles cost 36 restart handoffs instead of 180.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/none
+
+experiment:
+  name: osse-spinup
+  description: OSSE stage A, gom_25km spinup from the cold start
+
+cycle:
+  # The cold start's valid time, and therefore synoptic, which is the whole
+  # reason it was rebuilt at this hour. Every experiment downstream of this
+  # spinup inherits the hour through the truth run, so this is the one place it
+  # gets chosen. See the README beside the initial condition.
+  start: '2015-01-05T00:00:00Z'
+  length: P5D
+  count: 36
+
+cleanup:
+  # Every eighth cycle, which is a restart set every 40 days. The spinup's whole
+  # product is its last state, but its *length* is not known until the plot is
+  # read, so the pins are what make "it was spun up by cycle 30" an answer that
+  # can be acted on instead of a reason to run it again.
+  keep_cycles: 2
+  keep_every: P40D
+
+model:
+  # The synoptic-hour cold start. Not spun up, which is what this experiment is
+  # for: 12 hours of integration off a single SODA 3.3.1 five-day mean.
+  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T00

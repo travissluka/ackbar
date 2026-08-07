@@ -1,0 +1,44 @@
+# The OSSE's null experiment: a free run over the DA period, with observers.
+#
+# See docs/osse.md, stage E. `da/none`, so nothing is assimilated and the model
+# runs away from the truth at whatever rate it runs away. Every skill number the
+# assimilating experiments produce is measured against this one, and its
+# departures are the only thing that says how much error there was to remove.
+#
+# It carries the observers, which a free run does not need and this one does:
+# with `solver: none` a standalone `hofx` task evaluates each cycle's background
+# against the archive and writes the same `ombg` a DA run gets from its analysis
+# application. That makes the free run and the experiments directly comparable
+# in observation space, without a truth run and without `verify`.
+#
+# **Its initial condition is the truth from a different date**, which is where
+# the error comes from and is the whole reason there is anything to correct. See
+# the README beside it: the fields are a real ocean state and the date on them
+# is an assertion, made by `tools/restamp-ic.sh`.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/none
+  - obs/adt_3a
+  - obs/sst_noaa19
+
+experiment:
+  name: osse-free
+  description: OSSE stage E, the free run the others are scored against
+
+cycle:
+  # Ten days into the truth period, so that the truth archive covers the whole
+  # window of every cycle including the first, whose window opens half a cycle
+  # before its analysis time.
+  start: '2015-07-14T00:00:00Z'
+  length: PT24H
+  count: 21
+
+vars:
+  # Sampled from the promoted truth run at each observation's own time, by
+  # `tools/obs-archive-osse.py --truth-run`. An experiment on real observations
+  # over the same period differs from this one in exactly this line.
+  obs_dir: $(static_root)/obs/gom-osse-2015/2015
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control/20150714T00

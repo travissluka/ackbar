@@ -12,35 +12,49 @@ are scattered over the world ocean and essentially none of them land in the Gulf
 of Mexico. A regional analysis therefore has nothing to assimilate, and it says
 so only by running successfully and producing an increment of zero.
 
-So this generates observations *from the domain*, and it is an OSSE in
-miniature. A truth state is the state given by `--state` plus a known
-perturbation; observations sample the truth at plausible locations and are
-given plausible errors; the perturbation is written out beside the archive so
-that what an analysis recovered can be compared against what was there to
-recover.
+So this generates observations *from the domain*. In both modes below the
+observations sample a truth at plausible locations, with plausible errors, and
+what differs is where the truth comes from.
 
-**The perturbation is the point.** Sampling the state itself and adding noise
-would produce departures that are pure noise, and an analysis fitting noise
-reduces its own cost function exactly as an analysis fitting signal does. With a
-known anomaly in the truth, the increment can be compared against the thing it
-was supposed to find. It is a sum of Gaussian bumps in the domain interior, warm
-and cool, with the sea surface height signal being the steric height of the
-temperature anomaly rather than an independent field, so that the two platforms
-are not asking for contradictory things.
+**`--state`: one state plus a known anomaly.** The truth does not evolve; it is
+valid at every cycle. The anomaly is the point, because sampling a state and
+adding noise would produce departures that are pure noise, and an analysis
+fitting noise reduces its own cost function exactly as one fitting signal does.
+With a known anomaly, the increment can be compared against the thing it was
+supposed to find, and it is written to `truth.nc` beside the archive so that it
+can be. It is a sum of Gaussian bumps in the domain interior, warm and cool,
+with the sea surface height signal being the steric height of the temperature
+anomaly rather than an independent field, so the two platforms are not asking
+for contradictory things.
 
-**What this is not** is an OSSE truth run. The truth here does not evolve: it is
-one state plus a fixed anomaly, valid at every cycle. Observations of it pull a
-cycling experiment towards a state that is not going anywhere, which is a
-perfectly good test of an analysis and is not a statement about a forecast
-system. The real thing is a free run promoted to a truth run, sampled at each
-cycle's own time; see phase 5 in `docs/build-order.md`.
+Observations of a truth that is not going anywhere are a good test of an
+analysis and are not a statement about a forecast system. This mode is what the
+tier 3 archive is built with, and it stays because those tests are pinned to it.
+
+    .venv/bin/python tools/obs-archive-osse.py --domain gom_25km \\
+        --truth-run $ACKBAR_STATIC_ROOT/truth/gom_25km/osse-2015 \\
+        --start 2015-07-14T00:00:00Z --length PT24H --count 21 \\
+        --out $ACKBAR_STATIC_ROOT/obs/gom-osse-2015/2015
+
+`--truth-run` is the real thing: a free run promoted by `tools/promote-truth.sh`,
+sampled at **each observation's own time** rather than at the analysis time.
+That distinction is the reason the truth run writes sub-window states at all.
+An observation an hour before the analysis time compared against the
+analysis-time truth carries an hour of model evolution as an error nobody
+declared, and it is an error that grows with the window, so a 4D experiment
+would be scored against a truth less four-dimensional than itself.
+
+There is no anomaly in this mode and no `truth.nc`: the archive is the truth,
+and what an analysis recovered is compared against it directly by `verify`.
 
 Values, errors and locations are all fiction. Nothing here should be assimilated
 in support of a claim about the ocean.
 """
 
 import argparse
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import netCDF4
@@ -96,6 +110,11 @@ PLATFORMS = {
     },
 }
 
+#: A truth archive's state directories: `20150704T0000`, the instant the state
+#: is valid at. Matched rather than parsed loosely so that a README or a stray
+#: directory beside them is skipped instead of crashing the run.
+_STAMP = re.compile(r"^\d{8}T\d{4}$")
+
 #: A cell is only usable if its whole neighbourhood is ocean. The observers
 #: apply `Domain Check` on `GeoVaLs/sea_area_fraction` at 0.9, which is the
 #: model's land mask interpolated to the observation, so a point one cell from
@@ -109,8 +128,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--domain", required=True,
                         help="names the gridspec under $ACKBAR_STATIC_ROOT/static")
-    parser.add_argument("--state", required=True, type=Path,
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--state", type=Path,
                         help="a restart set or a MOM.res.nc: the truth, before the anomaly")
+    source.add_argument("--truth-run", type=Path,
+                        help="a promoted truth archive, sampled at each observation's own time")
     parser.add_argument("--gridspec", type=Path,
                         help="overrides the path derived from --domain")
     parser.add_argument("--start", required=True,
@@ -126,11 +148,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     grid = read_grid(args.gridspec or gridspec_for(args.domain))
-    state = read_state(args.state)
-    truth, anomaly = perturb(grid, state, args.seed)
-
     args.out.mkdir(parents=True, exist_ok=True)
-    write_truth(args.out / "truth.nc", grid, anomaly, args.seed)
+
+    if args.truth_run:
+        truth = TruthRun(args.truth_run)
+        print(f"obs-archive-osse: {truth}")
+    else:
+        truth = FixedTruth(grid, read_state(args.state), args.seed)
+        write_truth(args.out / "truth.nc", grid, truth.anomaly, args.seed)
 
     start = parse_instant(args.start)
     length = parse_duration(args.length)
@@ -147,14 +172,120 @@ def main(argv=None):
         rng = np.random.default_rng([args.seed, index])
         for platform in args.platforms:
             spec = PLATFORMS[platform]
+            # Draw order is load bearing: locations, then errors, then times,
+            # all off one generator per cycle. The archive's guarantee is that
+            # the same command reproduces the same files, so a change here is a
+            # change to every archive ever built with this tool, including the
+            # committed one tier 3 reads. Sampling happens after all three
+            # rather than between them for exactly that reason.
             lon, lat = locate(grid, spec, rng)
-            values = sample(grid, truth[spec["field"]], lon, lat)
-            noise = rng.normal(0.0, spec["error"], size=values.shape)
+            noise = rng.normal(0.0, spec["error"], size=lon.shape)
+            offsets = rng.uniform(0.0, length.total_seconds(), size=lon.shape)
+
+            when = [begin + timedelta(seconds=float(offset))
+                    for offset in offsets]
+            values = truth.sample(grid, spec["field"], lon, lat, when)
             path = target / f"{platform}.{begin.strftime('%Y%m%d%H')}.nc4"
-            write_obs(path, spec, lon, lat, values + noise,
-                      begin, rng.uniform(0.0, length.total_seconds(), size=lon.shape))
+            write_obs(path, spec, lon, lat, values + noise, begin, offsets)
             print(f"obs-archive-osse: {path} ({lon.size} locations)")
     return 0
+
+
+# --- the two truths ----------------------------------------------------------
+
+class FixedTruth:
+    """One state plus a known anomaly, valid at every time.
+
+    `sample` ignores the times it is given, which is the whole difference from
+    `TruthRun` and is stated here rather than at the call site so that the
+    caller does not have to know which one it holds.
+    """
+
+    def __init__(self, grid, state, seed):
+        self.fields, self.anomaly = perturb(grid, state, seed)
+
+    def sample(self, grid, field, lon, lat, when):
+        return sample(grid, self.fields[field], lon, lat)
+
+
+class TruthRun:
+    """A promoted free run, sampled at the state nearest each observation.
+
+    Nearest rather than interpolated between the two bracketing states, and the
+    reason is the same one behind sampling the nearest *cell*: the interpolation
+    an observation operator does is what is under test, and generating with an
+    interpolation of ACKBAR's own would hide an error in it. What it costs is a
+    representativeness error of at most half the slot cadence, which is declared
+    here and is smaller than the observation errors below at any cadence worth
+    running.
+
+    States are read on demand and one is held, because observations arrive
+    sorted into the two or three states a window spans and reading a restart set
+    per observation would read the same file six hundred times.
+    """
+
+    def __init__(self, root):
+        self.root = Path(root)
+        if not self.root.is_dir():
+            sys.exit(f"obs-archive-osse: {root} is not a directory. It is a "
+                     f"truth archive, written by tools/promote-truth.sh.")
+        self.times = sorted(
+            datetime.strptime(path.name, "%Y%m%dT%H%M").replace(tzinfo=timezone.utc)
+            for path in self.root.iterdir()
+            if path.is_dir() and _STAMP.match(path.name))
+        if not self.times:
+            sys.exit(f"obs-archive-osse: {root} holds no state directories "
+                     f"named like 20150704T0000.")
+        self._cached = (None, None)
+
+    def __str__(self):
+        cadence = "one state"
+        if len(self.times) > 1:
+            gaps = {(b - a).total_seconds()
+                    for a, b in zip(self.times, self.times[1:])}
+            cadence = (f"{len(self.times)} states every "
+                       f"{min(gaps) / 3600:g}h" if len(gaps) == 1 else
+                       f"{len(self.times)} states, irregular")
+        return (f"truth run {self.root.name}: {cadence}, "
+                f"{self.times[0]:%Y-%m-%d %H:%M} to {self.times[-1]:%Y-%m-%d %H:%M}")
+
+    def nearest(self, when):
+        return min(self.times, key=lambda moment: abs(moment - when))
+
+    def state(self, when):
+        if self._cached[0] != when:
+            self._cached = (when,
+                            read_state(self.root / when.strftime("%Y%m%dT%H%M")))
+        return self._cached[1]
+
+    def sample(self, grid, field, lon, lat, when):
+        """Each observation against the truth state nearest its own time.
+
+        An observation outside the archive is refused rather than clamped to
+        the nearest end of it. A clamp would produce a file that looks like
+        every other file and holds a state from a different day, which is
+        exactly the class of error an OSSE cannot detect in its own output.
+        """
+        outside = [t for t in when
+                   if t < self.times[0] or t > self.times[-1]]
+        if outside:
+            sys.exit(
+                f"obs-archive-osse: {len(outside)} observation(s) fall outside "
+                f"the truth archive, the first at {min(outside):%Y-%m-%d %H:%M}. "
+                f"It covers {self.times[0]:%Y-%m-%d %H:%M} to "
+                f"{self.times[-1]:%Y-%m-%d %H:%M}. Move --start, shorten "
+                f"--count, or promote more of the truth run.")
+
+        groups = {}
+        for index, moment in enumerate(when):
+            groups.setdefault(self.nearest(moment), []).append(index)
+
+        values = np.empty(lon.shape)
+        for moment, indices in sorted(groups.items()):
+            picked = np.array(indices)
+            values[picked] = sample(grid, self.state(moment)[field],
+                                    lon[picked], lat[picked])
+        return values
 
 
 # --- the domain and the state ------------------------------------------------
