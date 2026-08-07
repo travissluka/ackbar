@@ -33,6 +33,22 @@ ENABLE_BUGS_BY_DEFAULT = False
 ! MOM_STAMP in ackbar/mom6sis2.py for the name it produces.
 RESTART_CONTROL = 2
 
+! Shear-driven mixing solved at the vorticity points rather than the tracer
+! points, which couples the four cells around each corner and damps the
+! grid-scale checkerboard an analysis increment leaves behind. Live only
+! because MOM_input:660 sets USE_JACKSON_PARAM. soca-science sets this on its
+! own 1 degree configuration for exactly this reason, so this case is the
+! precedent for the Gulf domains rather than the other way round.
+!
+! Not `#override`: MOM_input does not state it, which is also why the master
+! switch above has nothing to say about it.
+!
+! The Gulf domains also moved to a Z* vertical coordinate; this case did not.
+! Its grid is the stock `hycom1_75_800m.nc` hybrid, tuned to reproduce
+! MOM6-examples' own answers globally, and converting it would mean building a
+! 75 level global z* profile to no benefit that this testbed can measure.
+VERTEX_SHEAR = True
+
 ! Set explicitly in MOM_input, so out of the master switch's reach. Line
 ! numbers are where MOM_input states them, as of the current submodule pin.
 #override USE_TRIPOLAR_GEOLONB_BUG = False      ! MOM_input:100

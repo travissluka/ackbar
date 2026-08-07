@@ -9,14 +9,14 @@
 
 NIGLOBAL = 87
 NJGLOBAL = 56
-NK = 36
 DT = 1800.0
 DT_THERM = 3600.0
-ALE_COORDINATE_CONFIG = "HYBRID:hycom1_36.nc,sigma2,dz"
-COORD_CONFIG = "ALE"
-TEMP_SALT_Z_INIT_FILE = ""
-TEMP_Z_INIT_FILE = "ic.nc"
-SALT_Z_INIT_FILE = "ic.nc"
+TEMP_SALT_Z_INIT_FILE = "ic.nc"
+
+! NK, COORD_CONFIG and ALE_COORDINATE_CONFIG are deliberately absent. The
+! vertical grid is shared by every Gulf resolution and is stated once in
+! gom/common/MOM_input, because two resolutions that differ vertically are
+! not comparable. Restating one here without `#override` is a fatal.
 
 ! --- inherited drift --------------------------------------------
 !
@@ -40,7 +40,6 @@ OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN = 3000
 OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT = 3000
 ! SAVE_INITIAL_CONDS is unset here and set in another Gulf domain
 THERMO_SPANS_COUPLING = False
-! VERTEX_SHEAR is unset here and set in another Gulf domain
 WIND_CONFIG = 'zero'
 
 ! --- ackbar ------------------------------------------------------

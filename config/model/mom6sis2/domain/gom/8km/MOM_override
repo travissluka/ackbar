@@ -9,15 +9,19 @@
 
 NIGLOBAL = 271
 NJGLOBAL = 173
-NK = 25
 DT = 900.0
 DT_THERM = 1800.0
-ALE_COORDINATE_CONFIG = "HYBRID:hycom1_25.nc,sigma2,FNC1:2,4000,4.5,.01"
-COORD_CONFIG = "file"
-COORD_FILE = "layer_coord_25.nc"
-TEMP_SALT_Z_INIT_FILE = ""
-TEMP_Z_INIT_FILE = "ic.nc"
-SALT_Z_INIT_FILE = "ic.nc"
+TEMP_SALT_Z_INIT_FILE = "ic.nc"
+
+! NK, COORD_CONFIG and ALE_COORDINATE_CONFIG are deliberately absent. The
+! vertical grid is shared by every Gulf resolution and is stated once in
+! gom/common/MOM_input, because two resolutions that differ vertically are
+! not comparable. Restating one here without `#override` is a fatal.
+!
+! This domain is where that mattered most. It was the only Gulf resolution
+! at 25 layers instead of 36, the only one with COORD_CONFIG = "file", and
+! the only one whose ALE target came from an analytic FNC1 rather than the
+! shared hycom1 file. Nothing about 8 km asked for any of that.
 
 ! --- inherited drift --------------------------------------------
 !
@@ -41,7 +45,6 @@ OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN = 3e3
 OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT = 3e3
 ! SAVE_INITIAL_CONDS is unset here and set in another Gulf domain
 THERMO_SPANS_COUPLING = True
-! VERTEX_SHEAR is unset here and set in another Gulf domain
 WIND_CONFIG = 'zero'
 
 ! --- ackbar ------------------------------------------------------

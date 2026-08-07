@@ -3,6 +3,8 @@ __pycache__/
 *.py[co]
 .venv/
 venv/
+# the data-fetch tools need packages that spack-stack's python shadows
+.venv-data/
 *.egg-info/
 .claude/settings.local.json
 

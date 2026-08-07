@@ -122,7 +122,38 @@ DTFREEZE_DP = -7.75E-08         !   [deg C Pa-1] default = 0.0
 ! === module MOM_tracer_flow_control ===
 
 ! === module MOM_coord_initialization ===
-REGRIDDING_COORDINATE_MODE = "HYCOM1" ! default = "LAYER"
+
+! --- the vertical grid, shared by every Gulf resolution -----------------
+!
+! These three are here rather than in each domain's MOM_override on
+! purpose: the four Gulf resolutions differ horizontally and must not
+! differ vertically, or a result from one of them is not comparable with a
+! result from another. A domain that needs its own vertical grid is a
+! different configuration, not a resolution of this one.
+!
+! Z* rather than HYCOM1, matching soca-science. Under HYCOM1 the layers
+! below the surface are isopycnal targets, so a diagnostic that differences
+! a layer index is differencing two different depths and silently reports
+! drift that is not there. Under Z* a layer index is a depth.
+!
+! Z* also means the resting profile IS the grid, so it cannot be the
+! `hycom1_36.nc` thicknesses that HYCOM1 used: those sum to 1216 m against
+! a domain that reaches 7642 m in the Cayman Basin, and MOM6 fills the
+! shortfall into the bottom layer. Hence a profile built for this domain.
+!
+! FNC1 is dz_min, H_total, power, precision. 2 m at the surface holding
+! through the top 20 m, 20 levels above 100 m, 35 above 1000 m, 526 m at
+! the bottom. H_total is 5500 rather than the 7642 m maximum because z*
+! integrates down from the surface and squeezes the remainder into the
+! bottom layer: spending levels on the 0.1% of cells below 5500 m would
+! take them away from the 92% above 4000 m. The deepest columns get one
+! thick bottom layer, which is where the ocean is quietest and where we
+! have no observations.
+NK = 50
+COORD_CONFIG = "ALE"
+ALE_COORDINATE_CONFIG = "FNC1:2,5500.0,4.0,0.01"
+
+REGRIDDING_COORDINATE_MODE = "Z*"  ! default = "LAYER"
                                 ! Coordinate mode for vertical regridding.
                                 ! Choose among the following possibilities:
                                 !  LAYER - Isopycnal or stacked shallow water layers
@@ -143,6 +174,12 @@ REGRID_COMPRESSIBILITY_FRACTION = 0.01 !   [not defined] default = 0.0
                                 ! When interpolating potential density profiles we can add
                                 ! some artificial compressibility solely to make homogenous
                                 ! regions appear stratified.
+! The next two are inert under Z*. MOM6 reads them only when the coordinate
+! is state dependent, which a fixed one is not, so they constrain nothing
+! today and are kept against a return to HYCOM1. Note that the commented
+! value lists MOM6 logged beneath them have 51 and 50 entries: this
+! configuration was built at 50 levels before somebody cut it to 36, which
+! is where the NK above came back to.
 MAXIMUM_INT_DEPTH_CONFIG = "FNC1:5,8000.0,1.0,.125" ! default = "NONE"
                                 ! Determines how to specify the maximum interface depths.
                                 ! Valid options are:
@@ -404,6 +441,25 @@ HENYEY_IGW_BACKGROUND = True    !   [Boolean] default = False
 USE_JACKSON_PARAM = True        !   [Boolean] default = False
                                 ! If true, use the Jackson-Hallberg-Legg (JPO 2008)
                                 ! shear mixing parameterization.
+VERTEX_SHEAR = True             !   [Boolean] default = False
+                                ! If true, do the calculations of the shear-driven mixing
+                                ! at the cell vertices (i.e., the vorticity points).
+                                !
+                                ! Assimilation, not model physics, is why this is on.
+                                ! Solving the shear mixing at vorticity points rather than
+                                ! tracer points couples the four cells around each corner,
+                                ! which damps the grid-scale checkerboard that an analysis
+                                ! increment otherwise leaves behind and the model then
+                                ! happily carries forward. soca-science sets it for the
+                                ! same reason and says so in its own words: "vertex shear
+                                ! to remove checkerboard patterns that may develop".
+                                !
+                                ! Live only because USE_JACKSON_PARAM is true above.
+                                ! Turning it on also brings VERTEX_SHEAR_OBC_BUG into
+                                ! play, since these domains have open boundaries; it
+                                ! defaults to ENABLE_BUGS_BY_DEFAULT, which every Gulf
+                                ! override sets false, so the boundary masking is correct
+                                ! without stating it here.
 MAX_RINO_IT = 205               !   [nondim] default = 50
                                 ! The maximum number of iterations that may be used to
                                 ! estimate the Richardson number driven mixing.

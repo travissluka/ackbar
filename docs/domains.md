@@ -9,10 +9,10 @@ first-class configuration axis here rather than a flag (see Domains in
 | Domain | Grid | NK | DT | One sim day, 8 PEs | Use |
 |---|---|---|---|---|---|
 | `om_1deg` | 360 x 320 | 75 | 1800 | 178 s | coarse global; graph fixtures only |
-| `gom_25km` | 87 x 56 | 36 | 1800 | 6.3 s | regional plumbing |
-| `gom_12km` | 174 x 111 | 36 | 900 | 30.5 s | regional science |
-| `gom_8km` | 271 x 173 | 25 | 900 | 67 s | eddy resolving |
-| `gom_4km` | 541 x 346 | 36 | 300 | 930 s | submesoscale |
+| `gom_25km` | 87 x 56 | 50 | 1800 | 6.3 s | regional plumbing |
+| `gom_12km` | 174 x 111 | 50 | 900 | 30.5 s | regional science |
+| `gom_8km` | 271 x 173 | 50 | 900 | 67 s | eddy resolving |
+| `gom_4km` | 541 x 346 | 50 | 300 | 930 s | submesoscale |
 | `om4_025` | | | | | global production, not yet built |
 
 Timings are wall clock on rancor, 8 MPI ranks, measured serially with nothing
@@ -51,9 +51,28 @@ as decimals:
 Note that the digits swap between the two conventions: `08deg` is `gom_12km` and
 `012deg` would be `gom_8km`. Do not infer the mapping, read it here.
 
-`gom_8km` is the odd one out vertically: NK = 25 on `hycom1_25.nc`, where the other three use
-36 on `hycom1_36.nc`. That is inherited and real, not drift, so an initial condition or a
-gridspec built for it is not interchangeable with the others.
+All four Gulf domains share one vertical grid, and that is enforced structurally:
+`NK`, `COORD_CONFIG` and `ALE_COORDINATE_CONFIG` live in `gom/common/MOM_input`
+and are absent from every `MOM_override`, so a domain cannot restate one without
+MOM6 taking the duplicate as fatal. Two resolutions that differ vertically are
+not comparable, which is the whole reason the Gulf domains exist as a set.
+
+The grid is 50 levels of Z\*, built by `FNC1:2,5500.0,4.0,0.01`: 2 m layers
+through the top 20 m, 20 levels above 100 m, 35 above 1000 m, 526 m at the
+bottom. Two things about it are worth knowing before reading a profile.
+
+Z\* integrates down from the surface and squeezes the leftovers into the bottom,
+so a shallow column keeps the full surface profile and collapses its deep layers
+to `MIN_THICKNESS`; a 35 m shelf cell still has 2 m top layers. And `H_total` is
+5500 m against a domain that reaches 7642 m in the Cayman Basin, so the deepest
+0.1% of cells carry one very thick bottom layer. That is deliberate: spending
+levels down there would take them from the 92% of the domain above 4000 m.
+
+Z\* rather than the HYCOM1 hybrid these domains used to run, for two reasons.
+`VERTEX_SHEAR` needs a coordinate whose layers mean the same thing everywhere to
+do its job on analysis increments, and under a hybrid coordinate a diagnostic
+that differences a layer index is differencing two different depths and reports
+drift that is not there. Under Z\* a layer index is a depth.
 
 **Use `gom_12km` for anything whose answer matters** unless you need the finer two. The first baroclinic
 Rossby radius in the Gulf is 35 to 45 km. At 12 km the Loop Current resolves and
@@ -142,14 +161,24 @@ first place, so there is now one copy and each domain overrides what makes it it
 Each domain's `MOM_override` therefore has three sections, and the second one is the interesting
 one:
 
-- **the resolution**, the 11 parameters with an actual reason to differ: `NIGLOBAL`, `NJGLOBAL`,
-  `NK`, `DT`, `DT_THERM`, the ALE coordinate and the z-level init files.
-- **inherited drift**, the 15 with no reason to differ. `FRAZIL`, `THERMO_SPANS_COUPLING`,
-  `MAXTRUNC`, `DIABATIC_FIRST`, `VERTEX_SHEAR`, `SAVE_INITIAL_CONDS`, `DAYMAX`,
-  `ENERGYSAVEDAYS`, the OBC nudging timescales, and a few that differ only in spelling (`3e3`
-  against `3000`). These are 2021 hand edits nobody reconciled. They are kept per domain so
-  that the split changed no answers, which means each is a decision waiting to be made:
-  delete the line from all four overrides and set the value once in `gom/common/MOM_input`.
+- **the resolution**, the parameters with an actual reason to differ: `NIGLOBAL`, `NJGLOBAL`,
+  `DT`, `DT_THERM` and the z-level init file. `NK` and the ALE coordinate used to be here and
+  are not any more; see the vertical grid above.
+- **inherited drift**, the ones with no reason to differ. `FRAZIL`, `THERMO_SPANS_COUPLING`,
+  `MAXTRUNC`, `DIABATIC_FIRST`, `SAVE_INITIAL_CONDS`, `DAYMAX`, `ENERGYSAVEDAYS`, the OBC
+  nudging timescales, and a few that differ only in spelling (`3e3` against `3000`). These are
+  2021 hand edits nobody reconciled. They are kept per domain so that the split changed no
+  answers, which means each is a decision waiting to be made: delete the line from all four
+  overrides and set the value once in `gom/common/MOM_input`.
+
+  `VERTEX_SHEAR` was the first one collapsed, and it is the model for the rest. Only `gom_4km`
+  set it, which read as a resolution choice and was not one: it is what stops an analysis
+  increment leaving a grid-scale checkerboard the model then carries forward, and every domain
+  running DA wants it. It now sits in `gom/common/MOM_input` for all four, and in `om_1deg`.
+
+  `BUOY_CONFIG` and `WIND_CONFIG` are listed as drift here and are not drift. soca-science
+  documents both as required by SOCA's MOM6 solo rather than by the coupled forecast, so they
+  are deliberate and belong in the shared base with that reason attached.
 - **ackbar**, the bug-retention flags.
 
 The restructure was checked rather than trusted: every parameter of every domain resolves to the
