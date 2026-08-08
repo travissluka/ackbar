@@ -60,14 +60,23 @@
 # beforehand; the domain's own is the one the control was built from.
 #
 # ---------------------------------------------------------------------------
-# What this does not do
+# Two directories, and only one of them is the product
 #
-# The members are *not* recentred here. Recentring is a separate step because
-# it needs the members and the control in the same restart format, which is
-# only true once this has run, and because it is the one part that changes what
-# the ensemble means rather than what it contains: adding `control - mean` to
-# every member moves the ensemble mean onto the control and leaves every
-# perturbation, and therefore the whole sample covariance, exactly as it was.
+# `lagged<N>/` is the raw sample: N years of ocean, whose mean is a climatology
+# of this date and not the control. `ensemble<N>/` is that sample recentred onto
+# the control, and it is what an experiment names with
+# `ensemble.initial_condition`. The conventional name is the product on purpose;
+# the intermediate is the one that has to be read twice.
+#
+# Recentring is `tools/ensemble-recenter.py`, run at the end of this rather than
+# folded into it, because it is arithmetic over restart files and this is a
+# fetch-and-integrate loop. It adds `control - mean` to every member, which
+# moves the mean onto the control and leaves every perturbation, and therefore
+# the whole sample covariance, exactly as it was.
+#
+# `lagged<N>/` is kept rather than reaped: it is the input recentring runs on,
+# so keeping it makes a re-centre free where rebuilding it costs N downloads.
+# It is derived data and safe to delete once the ensemble is in use.
 set -euo pipefail
 
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -131,7 +140,7 @@ for YEAR in $(seq "$FIRST" "$LAST"); do
 done
 
 cat > "$OUT/README.md" <<EOF
-# Lagged ensemble initial condition
+# Lagged ensemble initial condition (the raw sample)
 
 $MEMBERS members for \`$DOMAIN\`, valid at $TARGET, one per year from $FIRST to
 $LAST. Each is GLORYS12V1 for $MONTHDAY of its own year, asserted to be an
@@ -141,14 +150,23 @@ boundary and forcing, exactly as the control beside this was.
 Each member's \`MOM.res.nc\` records the GLORYS day it came from; the ensemble
 order is year order, so \`mem001\` is $FIRST.
 
-**Not recentred.** The ensemble mean is a $MEMBERS year climatology of $MONTHDAY,
-not the control. Recentring adds \`control - mean\` to every member, which moves
-the mean and leaves every perturbation and the whole sample covariance
-unchanged.
+**Not recentred, and therefore not the one to run.** The mean here is a
+$MEMBERS year climatology of $MONTHDAY, not the control. The product is
+\`../ensemble$MEMBERS\`, which is this sample with \`control - mean\` added to
+every member; that moves the mean onto the control and leaves every
+perturbation, and the whole sample covariance, unchanged.
 
-Rebuild with:
+This directory is kept because recentring runs on it. It is derived data and
+safe to delete once the ensemble beside it is in use.
+
+Rebuild both with:
 
     tools/ensemble-ic-lagged.sh $DOMAIN $CONTROL $FIRST $LAST
 EOF
 
-echo "ensemble-ic-lagged: wrote $MEMBERS member(s) to $OUT"
+echo "ensemble-ic-lagged: recentring onto $(basename "$CONTROL")"
+env -u PYTHONPATH "$ACKBAR_ROOT/.venv-data/bin/python" \
+    "$ACKBAR_ROOT/tools/ensemble-recenter.py" "$OUT" "$CONTROL" \
+    --output "$CONTROL/ensemble$MEMBERS"
+
+echo "ensemble-ic-lagged: name it with  ensemble.initial_condition: $CONTROL/ensemble$MEMBERS"
