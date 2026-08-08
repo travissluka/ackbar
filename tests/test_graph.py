@@ -343,15 +343,14 @@ class TestConfigurationDrivesTheTaskSet:
             build_graph(config)
 
     def test_an_ensemble_filter_has_no_fgat(self, keys):
-        """`fgat` names a method that does not exist for an ensemble filter.
+        """`fgat` names a combination an ensemble filter cannot express.
 
-        FGAT carries the increment from the observation's time to the analysis
-        time with the identity, because it has no tangent linear model. An
-        ensemble filter has one: its increment is `X_b(t) w`, a single weight
-        vector in a basis that evolves with the flow, so the composition is the
-        ensemble's own estimate of the propagator. There is no concession left
-        for FGAT to make, which puts 4D-LETKF with 4D-Ens-Var rather than with
-        FGAT.
+        FGAT is right-time departures against an analysis-time covariance. An
+        ensemble filter's departures and its observation-space perturbations
+        come from one hofx over one set of member states, so three-dimensional
+        states put both at the window's centre and four-dimensional ones put
+        both at their own slots. There is no third loading, so there is nothing
+        between `3d` and `4d` to name.
 
         It has to be refused rather than ignored: `letkf_config` never reads
         `solver.window.type`, so this would otherwise be accepted in full and
@@ -360,7 +359,7 @@ class TestConfigurationDrivesTheTaskSet:
         config = load("letkf_om1deg", keys)
         config["solver"]["window"] = {"type": "fgat"}
         config["forecast"] = {"slots": "PT6H"}
-        with pytest.raises(GraphError, match="ensemble filter always has one"):
+        with pytest.raises(GraphError, match="cannot express"):
             build_graph(config)
 
         # Both of the windows it does have are accepted, which is what says the

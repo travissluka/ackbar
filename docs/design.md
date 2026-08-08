@@ -835,6 +835,32 @@ So v2's modes map as: `3dvar` = variational+static+3d, `3denvar` = variational+e
 the 4d column, `letkf` is the other solver, and **`eda` is not a mode at all**, it is an
 ensemble source.
 
+**The window axis is not square across the two solvers.** `fgat` is variational only, and
+`graph/build.py::_check_ensemble_window` refuses it on an ensemble filter. FGAT *is* the
+combination of right-time departures with an analysis-time covariance, and an ensemble filter
+cannot state that combination: its departures and its observation-space perturbations come from
+one hofx over one set of member states. Three-dimensional states put both at the window's centre,
+which is `3d`; four-dimensional ones put both at their own slots, which is `4d`. There is no
+third loading. A variational solver keeps `fgat` because its trajectory and its B are separate
+objects, so its departures can come off a stepped trajectory while its B stays at the analysis
+time. The asymmetry is what each solver can express, not an omission.
+
+Which makes the cross-solver pairing three rows against two:
+
+| variational | ensemble filter | |
+|---|---|---|
+| `3d` + ensemble | `3d` | exact: same departures, same covariance, two ways of solving |
+| `4d` + ensemble | `4d` | exact: both make the increment `X_b(t) w` in a per-slot basis |
+| `fgat` + ensemble | `4d` | nearest available, not exact |
+
+The last row is the one to state carefully when results are reported. It matches on departure
+timing, which is the axis that has actually moved a number here (see `docs/osse.md` section G,
+where it is the whole of the 3DVar to 3D-FGAT surface temperature result), and differs in whether
+the ensemble covariance is per-slot: `fgat` carries one set of perturbations at the analysis time
+(`member_states` in `ackbar/soca.py`) where `4d` carries one per sub-window
+(`member_trajectories`). Pairing it against `3d` instead would differ in the departure timing,
+which is worse, because that is the axis known to matter.
+
 Two solvers, and the variational one is parameterized. The configuration layers carry the
 parameterization, so there is no mode dispatch in the code.
 

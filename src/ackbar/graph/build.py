@@ -562,13 +562,20 @@ def _check_ensemble_window(config):
     increment. 4D-LETKF therefore sits with 4D-Ens-Var and 4D-Var in what it can
     do, and not with FGAT.
 
-    A degenerate middle *is* constructible: departures at their own times scored
-    against the ensemble perturbations at the *analysis* time, which is the
-    structural analogue of FGAT-Var. It is refused rather than offered because
-    it buys nothing here. FGAT-Var earns its inconsistency by escaping the need
-    for a linear model; the same trade for an ensemble filter saves only the
-    per-slot member states, which `4d` needed anyway to evaluate the departures
-    at their own times. So it is the same cost for a worse covariance.
+    The degenerate middle is not merely pointless here, it is not expressible.
+    FGAT *is* the combination of right-time departures with an analysis-time
+    covariance, and an ensemble filter cannot state that combination: its
+    departures and its observation-space perturbations come from one hofx over
+    one set of member states. Hand it three-dimensional states and both land at
+    the window's centre, which is `3d`. Hand it four-dimensional ones and both
+    land at their own slots, which is `4d`. There is no third loading, so there
+    is nothing between them to name.
+
+    Which is why this keys on the solver's name and `fgat` stays legal for a
+    variational one. There the trajectory and the covariance are separate
+    objects, so a cost function can take its departures off a stepped trajectory
+    while its B stays at the analysis time. That asymmetry between the two
+    columns is a fact about what each solver can express, not an oversight.
 
     Refused at graph build rather than left to the analysis, which is where it
     would otherwise land: `letkf_config` never reads `solver.window.type`, so
@@ -579,16 +586,15 @@ def _check_ensemble_window(config):
     if window_type(config) != "fgat":
         return
     raise GraphError(
-        "solver.window.type is 'fgat' and solver.name is 'letkf'. FGAT is the "
-        "method that takes each departure at its own time and then carries the "
-        "increment back with the identity, because it has no tangent linear "
-        "model; an ensemble filter always has one, in the shape of its own "
-        "spread at each sub-window, so there is nothing for it to concede. Use "
-        "'3d', which compares every observation against the state at the "
-        "window's centre, or '4d', which compares each against its own "
-        "sub-window and updates through that sub-window's covariance. Going "
-        "from one to the other costs only the per-slot member states, which "
-        "'fgat' would have had to write anyway."
+        "solver.window.type is 'fgat' and solver.name is 'letkf'. FGAT is "
+        "right-time departures against an analysis-time covariance, and an "
+        "ensemble filter cannot express that: its departures and its "
+        "observation-space perturbations come from one hofx over one set of "
+        "member states, so three-dimensional states put both at the window's "
+        "centre ('3d') and four-dimensional ones put both at their own slots "
+        "('4d'). There is no third loading between them. Use '3d' or '4d'. "
+        "A variational solver keeps 'fgat' because its trajectory and its B "
+        "are separate objects, which an ensemble filter's are not."
     )
 
 
