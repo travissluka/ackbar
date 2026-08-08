@@ -82,8 +82,47 @@ analysis there has very little to do. `gom_25km` is for exercising the workflow.
 
 ### What is wrong with them
 
-Three things, all known, none of them properties of the workflow. Each is worth
-fixing and none blocks development.
+Four things, all known, none of them properties of the workflow. Each is worth
+fixing and none blocks development. The first has been fixed for `gom_25km` and
+not for the others.
+
+**The imported bathymetry is a cliff at the shelf break.** The steepness of a
+neighbouring pair, `r = |h1-h2|/(h1+h2)`, reached 0.998 on `gom_25km` as
+imported: the Cuban shelf sits at 2 to 9 m across many cells and drops to 3300
+to 4400 m in one 25 km cell. 117 ocean cells were above r = 0.9.
+
+A free forecast tolerates it. `osse25-noda` ran 45 cycles without complaint. An
+analysis does not: the face between a thin column and a deep one carries
+transport scaled to the deep side, so any increment error there drains the thin
+one, and MOM6 reports `btstep: eta has dropped below bathyT` and then dies in
+`implied h<0`. **Every forecast this workflow has lost to an analysis increment
+was one of those cells**, and the workarounds that preceded finding it, relaxing
+the increment, tapering it by depth, bounding its divergence, all paid for a few
+hundred cells with the analysis everywhere.
+
+`tools/smooth-topography.py` caps it, keeping the land mask exactly so the
+mosaics and the SOCA gridspec stay true. The cap is a choice with a cost: `r`
+bounds the depth ratio between neighbours at `(1+r)/(1-r)`, so a 10 m to 4000 m
+shelf break is spread over `log(400)/log((1+r)/(1-r))` cells. The classic 0.2
+comes from sigma-coordinate pressure gradient error, which is not the problem
+here, and would spread it over thirteen cells and relocate the shelf break.
+
+| target | cells moved > 1 m | largest move | shelf break spread over |
+|---|---|---|---|
+| 0.2 | - | 2566 m | 13 cells, 327 km |
+| 0.6 | 753 | 1198 m | 4 cells, 96 km |
+| **0.8** | **468** | **497 m** | **2.4 cells, 60 km** |
+
+Which resolutions carry a smoothed field is a property of the data, not of this
+file: `ocean_topog.nc.unsmoothed` sits beside the field it replaced wherever the
+tool has run, and the file it writes records the cap in a `smoothed` attribute.
+
+Changing it invalidates everything downstream of the sea floor: the gridspec,
+every initial condition, the diffusion calibration, and every experiment. The
+observations and the nature run are not affected while only `gom_25km` changes,
+because those are `gom_12km` products, and that is what keeps the rebuild
+bounded. `gom_12km` needs the same treatment before it is used for DA, and doing
+it means regenerating the truth and the whole observation archive with it.
 
 **The open boundary is frozen.** Every `obc.nc` holds exactly one time record, a
 SODA 3.3.1 five-day mean valid 2015-01-04 13:00, and `ic.nc` is the same
