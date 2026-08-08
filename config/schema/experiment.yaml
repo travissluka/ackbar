@@ -273,6 +273,13 @@ properties:
             properties:
               first: { type: number, exclusiveMinimum: 0, maximum: 1 }
               cycles: { type: integer, minimum: 2 }
+      # How fast the velocity increment's transport may move a column's free
+      # surface, in fractions of that column's own depth per hour. One number
+      # covers a 10 m shelf cell and a 3000 m basin, because it is scaled by the
+      # water there is rather than by a depth threshold. See `ackbar.writeback`.
+      increment divergence limit:
+        type: number
+        exclusiveMinimum: 0
       # What the analysis reads out of the restart set, which is a superset of
       # what it solves for: `SOCAParametricOceanStdDev` reads mixed layer
       # thickness and depth to build the standard deviations, and never writes

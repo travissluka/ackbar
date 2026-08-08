@@ -138,6 +138,19 @@ def apply_analysis(config, analysis, restart, cycle=1):
         alive = vanished_layers(target)
         limits = increment_limits(config)
         relaxation = increment_relaxation(config, cycle)
+
+        # The velocities are scaled together, before either is written, because
+        # the quantity being bounded is a property of the pair: how much water
+        # the increment moves in and out of a column. See `divergence_scaling`.
+        scales = {}
+        limit = divergence_limit(config)
+        if limit is not None and {"u", "v"} <= set(source.variables):
+            scale_u, scale_v, report = divergence_scaling(
+                target, source, masks, metrics_of(config), float(limit))
+            scales = {"eastward_sea_water_velocity": scale_u,
+                      "northward_sea_water_velocity": scale_v}
+            lines.append(report)
+
         for field in variables:
             io = field["io name"]
             if io not in source.variables:
@@ -152,7 +165,8 @@ def apply_analysis(config, analysis, restart, cycle=1):
                        if values.ndim == alive.ndim else None)
             lines.append(place(target, field, mask, values,
                                limit=limits.get(field["name"]),
-                               relaxation=relaxation, alive=cropped))
+                               relaxation=relaxation, alive=cropped,
+                               taper=scales.get(field["name"])))
     return lines
 
 
@@ -196,6 +210,134 @@ def fill_down(change, alive):
     # left alone, which is the only sensible answer when there is nothing above.
     source = np.maximum.accumulate(np.where(alive, levels, 0), axis=0)
     return np.take_along_axis(change, source, axis=0)
+
+
+#: How many passes the divergence limiter is allowed. Each one only ever shrinks
+#: a face, so the sequence is monotone and terminates; the cap is there because a
+#: face is shared by two cells and takes the smaller of their two demands, so one
+#: pass can leave a cell that was relying on cancellation still over its limit.
+#: Two or three is what it takes on gom_25km.
+DIVERGENCE_PASSES = 10
+
+#: An hour, in seconds. The limit below is quoted per hour because that is the
+#: timescale the failure happens on: a column drains and the model dies inside
+#: the first hour of the forecast, long before anything else has responded.
+PER_HOUR = 3600.0
+
+
+def divergence_limit(config):
+    """How fast the velocity increment may move the free surface, per column.
+
+    In units of the column's own depth per hour, so one number covers a 10 m
+    shelf cell and a 3000 m basin. `None` when nothing is configured.
+    """
+    return (config.get("solver") or {}).get("increment divergence limit")
+
+
+def divergence_scaling(restart, analysis, masks, metrics, limit):
+    """Scale factors for the velocity increment, per face, from its divergence.
+
+    **Every forecast this workflow has lost to an analysis increment died the
+    same way**, and it is not where the increment was largest. The message is
+    always `btstep: eta has dropped below bathyT` and the column is always a thin
+    one, so the tempting fix is to damp the increment in shallow water. That
+    treats a symptom: depth is a proxy, and it throws away a strong alongshore
+    increment that the column could have carried perfectly well because it moves
+    no water in or out.
+
+    What actually kills the column is the divergence of the transport the
+    increment implies:
+
+        d(eta)/dt  =  -(1/A) div( sum_k h_k du_k )
+
+    A 0.5 m/s increment across a 25 km cell is a divergence of 2e-5 per second,
+    which against a 10 m column lowers the surface 0.7 m an hour and reaches the
+    sea floor before the first hour is out. The same increment in 1000 m of water
+    is nothing at all. So the bound is on that rate, as a fraction of the
+    column's own depth per hour, and it is the only form of this that does not
+    need a depth threshold argued into it.
+
+    **The faces, not the cells.** A cell over its limit asks for all four of its
+    faces to be scaled, and a face takes the smaller of what its two cells ask,
+    so no cell ever ends up with more than it wanted. That is not a fixed point
+    in one pass, because divergence is a signed sum and a cell relying on two
+    large fluxes cancelling can come out worse when one of them shrinks more than
+    the other, so it iterates until nothing is over or `DIVERGENCE_PASSES` is
+    reached. Every pass only shrinks, so it converges.
+
+    Computed on the raw increment rather than on the one `fill_down` has already
+    touched, because the layers that fills are collapsed ones whose thickness is
+    a fraction of a millimetre and which therefore carry no transport either way.
+
+    Returns `(scale_u, scale_v, report)`, both tracer-sized, to be handed to
+    `place` as its taper.
+    """
+    thickness = np.asarray(restart.variables["h"][0])
+    height, width = thickness.shape[-2:]
+    dx, dy, area = metrics["dx"], metrics["dy"], metrics["area"]
+    depth = thickness.sum(axis=0)
+
+    def increment(name, mask):
+        got = np.asarray(analysis.variables[name][0])
+        was = np.asarray(restart.variables[name][0])[..., :height, :width]
+        return (got - was) * mask
+
+    change_u = increment("u", masks["u"])
+    change_v = increment("v", masks["v"])
+    # The most the transport may take out of a column in a second.
+    allowed = limit * depth / PER_HOUR
+
+    scale_u = np.ones((height, width))
+    scale_v = np.ones((height, width))
+    over = 0
+    for _ in range(DIVERGENCE_PASSES):
+        # Transport through each cell's western and southern face, which is
+        # where `u[i]` and `v[j]` sit on a symmetric-memory C grid.
+        west = (thickness * change_u).sum(axis=0) * dy
+        south = (thickness * change_v).sum(axis=0) * dx
+        # The outer faces have no cell beyond them; `place` gives them their
+        # neighbour's increment, so the transport there is the neighbour's too.
+        east = np.concatenate([west[:, 1:], west[:, -1:]], axis=1)
+        north = np.concatenate([south[1:, :], south[-1:, :]], axis=0)
+
+        rate = np.abs((east - west) + (north - south)) / area
+        excess = np.where(allowed > 0, rate / np.maximum(allowed, 1e-30), 0.0)
+        over = int((excess > 1.0).sum())
+        if not over:
+            break
+        cell = np.where(excess > 1.0, 1.0 / np.maximum(excess, 1e-30), 1.0)
+        # A face takes the smaller of the two cells it separates.
+        pass_u = np.minimum(cell, np.concatenate([cell[:, :1], cell[:, :-1]], axis=1))
+        pass_v = np.minimum(cell, np.concatenate([cell[:1, :], cell[:-1, :]], axis=0))
+        change_u = change_u * pass_u
+        change_v = change_v * pass_v
+        scale_u = scale_u * pass_u
+        scale_v = scale_v * pass_v
+
+    touched = int(((scale_u < 1.0) | (scale_v < 1.0)).sum())
+    report = (f"divergence limit {limit:g} column depth(s) per hour: "
+              f"{touched} face pair(s) reduced"
+              + (f", {over} cell(s) still over after {DIVERGENCE_PASSES} passes"
+                 if over else ""))
+    return scale_u, scale_v, report
+
+
+def metrics_of(config):
+    """The cell area and face lengths, from the same gridspec as the masks.
+
+    Approximated onto the tracer grid: `dy` at a cell's western face is taken as
+    that cell's own `dy` rather than an interpolation between it and its
+    neighbour's. On a grid whose spacing varies over hundreds of kilometres and
+    for a quantity used to decide whether an increment is dangerous, the
+    difference is far below the threshold being tested.
+    """
+    from .soca import GRIDSPEC
+
+    path = Path(_require(config["domain"], "static")) / GRIDSPEC
+    with netCDF4.Dataset(path) as data:
+        data.set_auto_mask(False)
+        return {name: np.asarray(data.variables[name][0])
+                for name in ("dx", "dy", "area")}
 
 
 def vanished_layers(restart):
@@ -321,7 +463,8 @@ def increment_relaxation(config, cycle):
     return first + (1.0 - first) * (cycle - 1) / (cycles - 1)
 
 
-def place(target, field, mask, values, limit=None, relaxation=1.0, alive=None):
+def place(target, field, mask, values, limit=None, relaxation=1.0, alive=None,
+          taper=None):
     """Write *values* into one variable of an open restart, ocean cells only.
 
     Separate from `apply_analysis` because the values do not always come from an
@@ -372,6 +515,13 @@ def place(target, field, mask, values, limit=None, relaxation=1.0, alive=None):
     change = values - view
     if alive is not None and change.ndim == alive.ndim:
         change = fill_down(change, alive)
+
+    # By column, before anything that acts by value. How much water an increment
+    # moves in and out of a column is a property of the pair of velocities and of
+    # the sea floor under them, so it is settled before either one is judged on
+    # its own size. See `divergence_scaling`.
+    if taper is not None:
+        change = change * taper
 
     # Bounded against the *background*, so the limit is on the increment and
     # not on the state: a temperature is not wrong for being 30 degrees, it is

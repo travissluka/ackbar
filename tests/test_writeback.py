@@ -26,6 +26,9 @@ from ackbar.soca import GRIDSPEC  # noqa: E402
 
 NX, NY, NZ = 6, 5, 3
 
+#: Cell side, in metres. A kilometre, so a divergence works out by hand.
+CELL = 1000.0
+
 #: The real file, not a fixture of it. The mapping from a JEDI variable name to
 #: a restart variable on a staggered grid is the model layer's statement, and a
 #: test that restates it here would pass while the two disagreed.
@@ -51,6 +54,9 @@ def write_gridspec(path):
         ocean = mask().astype("f8")
         for name in ("mask2d", "mask2du", "mask2dv"):
             data.createVariable(name, "f8", ("Time", "y", "x"))[:] = ocean
+        # Square cells a kilometre on a side, so a divergence works out by hand.
+        for name, value in (("dx", CELL), ("dy", CELL), ("area", CELL * CELL)):
+            data.createVariable(name, "f8", ("Time", "y", "x"))[:] = value
 
 
 def write_restart(path, value=1.0):
@@ -384,3 +390,74 @@ def test_the_model_layer_still_names_every_analysis_variable(scene):
             assert name in fields, f"{solver}: {name}"
             assert fields[name]["io file"] in writeback.IO_FILES
             assert fields[name]["grid"] in writeback.MASKS
+
+
+def velocities(analysis, u, v):
+    """Give the analysis a velocity pair, on the tracer grid SOCA writes."""
+    with netCDF4.Dataset(analysis, "r+") as data:
+        for name, values in (("u", u), ("v", v)):
+            data.createVariable(name, "f8",
+                                ("Time", "zaxis_1", "yaxis_1", "xaxis_1"))[:] = \
+                np.where(mask(), values, 0.0)
+
+
+def test_a_divergent_velocity_increment_is_scaled_by_what_the_column_can_take(scene):
+    """The velocity increment is bounded by how fast it drains a column.
+
+    Every forecast this workflow has lost to an analysis increment died in
+    `btstep: eta has dropped below bathyT`, and always in a thin column. Damping
+    the increment in shallow water treats the symptom: depth is a proxy, and it
+    also throws away a strong alongshore increment the column could carry
+    perfectly well because it moves no water in or out.
+
+    What empties the column is the divergence of the transport the increment
+    implies, `d(eta)/dt = -div(sum_k h_k du_k)/A`, so that is what is bounded, as
+    a fraction of the column's own depth per hour. One number then covers a 10 m
+    shelf cell and a 3000 m basin.
+    """
+    config, paths, background, analysis, target = scene
+    config["solver"]["analysis variables"] = ["eastward_sea_water_velocity",
+                                              "northward_sea_water_velocity"]
+    config["solver"]["increment divergence limit"] = 0.05
+
+    # A jet that stops dead partway across: the faces west of column 3 all carry
+    # the same increment and the ones east of it carry none, so column 3 is
+    # purely convergent. Everywhere else the two faces cancel exactly.
+    jet = np.zeros((NZ, NY, NX))
+    jet[:, :, :3] = 5.0
+    velocities(analysis, jet, np.ones((NZ, NY, NX)))
+
+    run(scene)
+    u = field(target / "MOM.res.nc", "u")
+    ocean = mask()
+    # Background 1.0, so the untouched increment at the convergent face is +4.0.
+    # A column NZ metres deep may lose 5% of NZ metres an hour, which is orders
+    # of magnitude less than a 4 m/s jet across a kilometre delivers, so what
+    # survives is a small fraction of what was asked for.
+    moved = (u[:, :, :NX] - 1.0)[:, ocean]
+    assert np.abs(moved).max() < 0.1, f"the divergent face kept {moved.max()}"
+    assert np.all(np.isfinite(u))
+
+
+def test_the_divergence_limit_leaves_a_uniform_increment_alone(scene):
+    """A velocity increment that moves no water in or out is not touched.
+
+    This is the whole reason the bound is on divergence and not on depth: a
+    uniform along-shelf increment in 10 m of water is harmless, and a depth
+    taper would throw it away along with the dangerous one.
+    """
+    config, paths, background, analysis, target = scene
+    config["solver"]["analysis variables"] = ["eastward_sea_water_velocity",
+                                              "northward_sea_water_velocity"]
+    config["solver"]["increment divergence limit"] = 0.05
+
+    velocities(analysis, np.full((NZ, NY, NX), 9.0), np.ones((NZ, NY, NX)))
+
+    run(scene)
+    u = field(target / "MOM.res.nc", "u")
+    # Every face in a row takes the same increment, so nothing diverges and
+    # nothing is cut, at 9.0 against a background of 1.0 in three metres of
+    # water. Row 1 is excluded because the island is in it: an increment that
+    # stops at a coast is divergent there, and the limiter is right to cut it.
+    rows = [j for j in range(NY) if j != 1]
+    assert np.all(u[:, rows, :NX] == 9.0)
