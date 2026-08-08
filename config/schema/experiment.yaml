@@ -544,31 +544,45 @@ properties:
           length: { type: string, pattern: '^P' }
           every: { type: string, pattern: '^P' }
           members: { type: array, items: { type: integer, minimum: 0 } }
-          # Two cadences, because the two products want different ones.
+          # Two cadences, because the two products want different ones. The
+          # difference between them is **retention**, not resolution: both name
+          # how often the model writes a state, and the names say which of those
+          # writes survives the run.
           #
-          # `interval` is how often a *state* is kept, and therefore which leads
-          # the state verification has points at: F024, F048, F072 for PT24H.
-          # These are full compressed fields and are the expensive product, so
-          # daily is usually enough. Without it the run keeps one state, at the
-          # end, and a skill curve with one point on it is not a curve.
+          # `keep_states` is how often a state is kept, and therefore which
+          # leads the state verification has points at: F024, F048, F072 for
+          # PT24H. These are full compressed fields and are the expensive
+          # product, so daily is usually enough. Without it the run keeps one
+          # state, at the end, and a skill curve with one point on it is not a
+          # curve.
           #
           # `slots` is how often the model writes a state for the *departures*
           # to be computed against, and wants to be finer: an observation is
           # compared against the trajectory nearest its own time, so a coarse
           # cadence throws away the timing of every observation between two
-          # writes. These states are intermediate, reaped once `hofx.ext` has
-          # reduced them to departures, so the cost is disk for one cycle rather
-          # than disk for the life of the experiment.
+          # writes. These states are **not** kept: they are reaped once
+          # `hofx.ext` has reduced them to departures, so the cost is disk for
+          # one cycle rather than disk for the life of the experiment. The word
+          # means here what it means in `forecast.slots` above, a state written
+          # so an observation can be compared at its own time, which is why it
+          # is the same word.
           #
           # Same mechanism for both, and it is `forecast.slots`': FMS dumps in
           # place each time its clock reaches the interval, so every lead costs
           # one write and not a second model run. The model writes at `slots`,
-          # and the kept states are the subset of those at `interval`.
+          # and the kept states are the subset of those at `keep_states`.
+          #
+          # `slots` is not inherited from `forecast.slots` and must not be: that
+          # key exists only on a 4D experiment, where it is constrained by the
+          # DA window, and a 3D experiment wanting long-forecast departures has
+          # nothing there to inherit. Unset, it falls back to `keep_states`, so
+          # a forecast naming no slot cadence scores its observations against
+          # the states it was keeping anyway.
           #
           # Relations, all checked in `ackbar/graph/build.py`: both divide
-          # `length`; `slots` divides `interval`, so the kept states really are
-          # a subset; `interval` is a whole number of cycles, so every kept lead
-          # lands on an analysis time and is scored against the same
+          # `length`; `slots` divides `keep_states`, so the kept states really
+          # are a subset; `keep_states` is a whole number of cycles, so every
+          # kept lead lands on an analysis time and is scored against the same
           # observations the cycling background was.
-          interval: { type: string, pattern: '^P' }
+          keep_states: { type: string, pattern: '^P' }
           slots: { type: string, pattern: '^P' }

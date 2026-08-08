@@ -238,11 +238,11 @@ def extended_interval(config):
 
     `slots` when it is set, because that is the cadence the departures want and
     it is the finer of the two; the kept states are a subset of what it writes.
-    Falls back to `interval`, so a forecast that names only a state cadence
-    still writes at it. See `forecast.extended` in the schema.
+    Falls back to `keep_states`, so a forecast that names only a kept-state
+    cadence still writes at it. See `forecast.extended` in the schema.
     """
     extended = (config.get("forecast") or {}).get("extended") or {}
-    declared = extended.get("slots") or extended.get("interval")
+    declared = extended.get("slots") or extended.get("keep_states")
     return parse_duration(declared) if declared else None
 
 

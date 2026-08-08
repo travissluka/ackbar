@@ -262,8 +262,8 @@ declared and empty (`DEFERRED` in `run.py`), and the OSSE is what forces them.
    real model could produce; its trajectory goes to `run/<init>/fcst/`,
    `post.fcst` reduces the kept leads to `fcst/<init>/F###/`, and `hofx.ext`
    evaluates the whole trajectory with `soca_hofx.x` into
-   `fcst/<init>/obs/F###/`. Two cadences configure it: `forecast.extended.interval`
-   for the kept states, `forecast.extended.slots`, finer, for the trajectory the
+   `fcst/<init>/obs/F###/`. Two cadences configure it: `forecast.extended.keep_states`
+   for the states that survive, `forecast.extended.slots`, finer, for the trajectory the
    departures are computed against.
 4. **`verify`.** Scoring against a truth archive. Needs one new config key, a
    verification source naming the promoted truth, and it has to tolerate the

@@ -405,7 +405,7 @@ class TestCadence:
 
 
 class TestTheLongForecastsTwoCadences:
-    """`interval` keeps states, `slots` writes them for the departures.
+    """`keep_states` keeps states, `slots` writes them for the departures.
 
     Two cadences because the two products want different ones: a compressed
     state per lead is the expensive kept product and daily is usually enough,
@@ -419,17 +419,17 @@ class TestTheLongForecastsTwoCadences:
         return config
 
     def test_the_kept_leads_run_to_the_length_of_the_forecast(self, keys):
-        config = self.extended(keys, length="P5D", interval="P1D")
+        config = self.extended(keys, length="P5D", keep_states="P1D")
         assert extended_leads(config) == tuple(timedelta(days=n) for n in range(1, 6))
 
-    def test_without_an_interval_there_is_one_state_at_the_end(self, keys):
+    def test_without_keep_states_there_is_one_state_at_the_end(self, keys):
         # A legitimate experiment, just not a skill curve.
         config = self.extended(keys, length="P5D")
-        config["forecast"]["extended"].pop("interval", None)
+        config["forecast"]["extended"].pop("keep_states", None)
         assert extended_leads(config) == (timedelta(days=5),)
 
     def test_the_slots_are_finer_than_the_kept_leads(self, keys):
-        config = self.extended(keys, length="P1D", interval="P1D", slots="PT6H")
+        config = self.extended(keys, length="P1D", keep_states="P1D", slots="PT6H")
         assert extended_slots(config) == tuple(
             timedelta(hours=h) for h in (6, 12, 18, 24))
         assert extended_leads(config) == (timedelta(days=1),)
@@ -437,18 +437,18 @@ class TestTheLongForecastsTwoCadences:
     def test_the_slots_fall_back_to_the_kept_leads(self, keys):
         # So that a forecast with no sub-window cadence evaluates its
         # observations against the states it was keeping anyway.
-        config = self.extended(keys, length="P2D", interval="P1D")
+        config = self.extended(keys, length="P2D", keep_states="P1D")
         config["forecast"]["extended"].pop("slots", None)
         assert extended_slots(config) == extended_leads(config)
 
     def test_a_kept_lead_the_model_never_writes_is_refused(self, keys):
         # The kept states have to be a subset of the written ones, or keeping
         # one would name a state the trajectory does not contain.
-        config = self.extended(keys, length="P2D", interval="P1D", slots="PT16H")
+        config = self.extended(keys, length="P2D", keep_states="P1D", slots="PT16H")
         with pytest.raises(GraphError, match="not one the model writes"):
             build_graph(config)
 
-    def test_an_interval_that_misses_the_analysis_times_is_refused(self, keys):
+    def test_a_kept_cadence_that_misses_the_analysis_times_is_refused(self, keys):
         """A kept lead has to land on a cycle time.
 
         That is what makes the verification comparable: the lead is scored
@@ -456,12 +456,12 @@ class TestTheLongForecastsTwoCadences:
         at that time. A lead between two analysis times is scored against no
         cycle's observations at all.
         """
-        config = self.extended(keys, length="P3D", interval="PT36H")
+        config = self.extended(keys, length="P3D", keep_states="PT36H")
         with pytest.raises(GraphError, match="whole number of cycles"):
             build_graph(config)
 
-    def test_an_interval_that_does_not_divide_the_length_is_refused(self, keys):
-        config = self.extended(keys, length="P5D", interval="P2D")
+    def test_a_kept_cadence_that_does_not_divide_the_length_is_refused(self, keys):
+        config = self.extended(keys, length="P5D", keep_states="P2D")
         with pytest.raises(GraphError, match="does not divide"):
             build_graph(config)
 

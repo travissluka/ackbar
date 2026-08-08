@@ -46,7 +46,7 @@ forecast:
     # Kept states every twelve hours, which is the cycle length, so the first
     # kept lead is F012 and is the one `bkg/` already holds: this experiment is
     # the one that proves that lead is a symlink rather than a second copy.
-    interval: PT12H
+    keep_states: PT12H
     # And the trajectory the departures are computed against, four times finer.
     # A three hour cadence over two days is sixteen states, which is what the
     # four-dimensional application holds at once.

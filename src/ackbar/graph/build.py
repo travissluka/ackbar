@@ -129,16 +129,16 @@ def _ladder(config, key, default_to_length=True):
 def extended_leads(config):
     """Which leads keep a compressed state, shortest first.
 
-    `interval` is optional and its absence means one state, at the end. That is
-    a legitimate experiment, it is just not a skill curve: verification against
-    lead needs more than one lead to have an axis.
+    `keep_states` is optional and its absence means one state, at the end. That
+    is a legitimate experiment, it is just not a skill curve: verification
+    against lead needs more than one lead to have an axis.
 
     The cycle-length lead is in this list even though nothing writes a file for
     it. `bkg/` already holds that state, from the cycling forecast, which starts
     from the same set and is therefore the same trajectory; `post.state` links
     it rather than storing it twice. See `Paths.fcst_product`.
     """
-    return _ladder(config, "interval")
+    return _ladder(config, "keep_states")
 
 
 def extended_slots(config):
@@ -196,10 +196,10 @@ def _check_extended(config):
     # against the same observations the cycling background was scored against at
     # that time. Which is the comparison forecast verification is *for*.
     cycle = cycle_length(config)
-    if extended.get("interval") and \
-            parse_duration(extended["interval"]).total_seconds() % cycle.total_seconds():
+    if extended.get("keep_states") and \
+            parse_duration(extended["keep_states"]).total_seconds() % cycle.total_seconds():
         raise GraphError(
-            f"forecast.extended.interval ({extended['interval']}) is not a whole "
+            f"forecast.extended.keep_states ({extended['keep_states']}) is not a whole "
             f"number of cycles ({config['cycle']['length']}), so a kept lead "
             f"would fall between two analysis times and be scored against no "
             f"cycle's observations"
@@ -394,7 +394,7 @@ def _check_hours(config):
     ) + tuple(
         (f"forecast.extended.{name}", extended.get(name))
         for extended in [(config.get("forecast") or {}).get("extended") or {}]
-        for name in ("length", "every", "interval", "slots")
+        for name in ("length", "every", "keep_states", "slots")
     ):
         if value is None:
             continue
