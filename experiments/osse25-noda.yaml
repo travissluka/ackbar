@@ -72,6 +72,21 @@ vars:
   # would score as ordinary observation error.
   obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
+forecast:
+  # Identical to `osse25-3dvar`, `osse25-3dfgat` and `osse25-letkf`, and it has
+  # to be: the comparison at each lead is a paired difference, so the launches
+  # and the valid times must match.
+  #
+  # This run is the baseline the other three are scored against, so it is the
+  # one place a missing extended forecast is not merely a gap. Without it there
+  # is no free-run decay curve to put a corrected one beside, and every skill
+  # number collapses back to a single 24 hour lead.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
 cleanup:
   # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
   # `post.state`, so nothing has to be held for a promotion step at the end;
