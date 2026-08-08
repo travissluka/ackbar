@@ -144,6 +144,39 @@ def test_the_ocean_takes_the_analysis_and_the_land_keeps_the_background(scene):
     assert np.all(ssh[ocean] == 9.0) and np.all(ssh[~ocean] == 1.0)
 
 
+def test_a_vanished_layer_keeps_the_background(scene):
+    """A collapsed Z* layer is not water, so nothing may be analysed into it.
+
+    Under Z* every column carries all `NK` levels whether or not the seafloor
+    leaves room, and the ones below the bottom hold a residual thickness. A
+    third of the cells on gom_25km are in that state. Nothing constrains what an
+    ensemble covariance says about them, so the spread is large and the filter
+    produces a large increment; writing it back gives the cell a density anomaly
+    with no mass behind it and the model stops in `adjust_interface_motion` on
+    the first step.
+
+    The masking is per *cell*, not per column, which is the whole point: the
+    surface of the same column is ordinary ocean and must still be written.
+    """
+    config, paths, background, analysis, target = scene
+    with netCDF4.Dataset(background / "MOM.res.nc", "r+") as data:
+        thickness = np.asarray(data.variables["h"][:])
+        thickness[0, -1, 2, 3] = writeback.VANISHED / 10.0
+        data.variables["h"][:] = thickness
+
+    run(scene)
+    for name in ("Temp", "Salt"):
+        values = field(target / "MOM.res.nc", name)
+        assert values[-1, 2, 3] == 1.0, f"{name} was written into a vanished layer"
+        # The same column at the surface is ordinary ocean.
+        assert values[0, 2, 3] == 9.0
+        # And a neighbouring column at the same level is untouched by the rule.
+        assert values[-1, 2, 4] == 9.0
+
+    # `ave_ssh` has no level to vanish, so the rule cannot reach it.
+    assert field(target / "MOM.res.nc", "ave_ssh")[2, 3] == 9.0
+
+
 def test_what_the_analysis_did_not_solve_for_is_untouched(scene):
     """`h`, `u` and `v` are in the restart and not in `analysis variables`.
 

@@ -241,6 +241,38 @@ properties:
       analysis variables:
         type: array
         items: { type: string }
+      # The largest increment writeback will put into the restart, per analysis
+      # variable, as a soft bound rather than a clip: `ackbar.writeback` applies
+      # `L*tanh(x/L)`. Absent means unlimited, which is what a variational
+      # experiment runs with, because a covariance model cannot produce an
+      # increment far outside its own standard deviations and a twenty-member
+      # sample covariance can. Keyed by JEDI variable name; a variable with no
+      # entry is unbounded.
+      increment limits:
+        type: object
+        additionalProperties: { type: number, exclusiveMinimum: 0 }
+      # How much of the increment writeback applies, as a fraction. Absent means
+      # all of it. The crude form of IAU: what destabilises the model is the
+      # speed of the correction rather than its size, and until the increment
+      # can be spread across the forecast, scaling it is what is available.
+      # Preferred over a tighter bound because a scalar shrinks every gradient
+      # by the same factor and invents none, where a bound changes the shape.
+      # Either a number, constant for every cycle, or a ramp from `first` at
+      # cycle 1 to 1.0 at cycle `cycles`. The ramp is the useful form: the shock
+      # is a spin-up transient, largest at cycle 1 where the background is the
+      # ensemble's initial condition, and a constant low enough to survive that
+      # throws away most of the analysis for every cycle after it.
+      increment relaxation:
+        oneOf:
+          - type: number
+            exclusiveMinimum: 0
+            maximum: 1
+          - type: object
+            required: [first, cycles]
+            additionalProperties: false
+            properties:
+              first: { type: number, exclusiveMinimum: 0, maximum: 1 }
+              cycles: { type: integer, minimum: 2 }
       # What the analysis reads out of the restart set, which is a superset of
       # what it solves for: `SOCAParametricOceanStdDev` reads mixed layer
       # thickness and depth to build the standard deviations, and never writes
