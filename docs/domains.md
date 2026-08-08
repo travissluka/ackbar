@@ -117,6 +117,22 @@ Which resolutions carry a smoothed field is a property of the data, not of this
 file: `ocean_topog.nc.unsmoothed` sits beside the field it replaced wherever the
 tool has run, and the file it writes records the cap in a `smoothed` attribute.
 
+**`MINIMUM_DEPTH` was not changed and probably does not need to be.** It is 10 m
+in `gom/common/MOM_input` for every Gulf resolution, and the imported topography
+holds columns down to 2 m that MOM6 was already rounding up to it at run time.
+The smoother floors at the same number, so the water the model integrates is
+unchanged and the file has stopped disagreeing with it. Raising the minimum is a
+separate lever, available if a domain still drains after smoothing, and worth
+reaching for only then: `MASKING_DEPTH` is 0, so raising it deepens those columns
+rather than drying them, and the coastline does not move either way.
+
+**The finer resolutions will need less of this, and the target should be
+re-derived rather than copied.** `r` is a property of the grid as much as of the
+sea floor: the same shelf break sampled at 12 km spans twice as many cells as at
+25 km, so it is half as steep before anything is done to it. Run the tool with
+`--dry-run` on a new resolution and read its own distribution before choosing a
+cap; 0.8 is what `gom_25km` needed, not a constant.
+
 Changing it invalidates everything downstream of the sea floor: the gridspec,
 every initial condition, the diffusion calibration, and every experiment. The
 observations and the nature run are not affected while only `gom_25km` changes,
