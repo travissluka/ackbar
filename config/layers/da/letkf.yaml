@@ -25,14 +25,44 @@ solver:
   # variable in its background, which is a superset of this: the ensemble has
   # real spread in layer thickness, and an ensemble filter that saw a
   # correlation between thickness and temperature would use it. What comes back
-  # here is the same three fields the variational analysis writes, on the
-  # background's own layers, because changing the vertical coordinate the
-  # analysed temperature is defined on is a separate decision from analysing
-  # the temperature.
+  # here is written on the background's own layers, because changing the
+  # vertical coordinate the analysed temperature is defined on is a separate
+  # decision from analysing the temperature.
+  #
+  # **The velocities are here and are absent from `da/variational`'s list.** No
+  # observer in this workflow measures a current, and the static B says nothing
+  # about velocity, so a variational analysis writes no velocity increment at
+  # all. An ensemble filter can: it sees the sample covariance between an
+  # altimeter's sea surface height and the geostrophic flow beneath it. An LETKF
+  # configured without these produces an identically zero velocity increment,
+  # which reads as a result and is a missing state variable.
+  #
+  # **What that does not mean is that the variational runs have no velocity
+  # skill.** They do, and a good deal of it, because the increment is not the
+  # only path: the model adjusts to the corrected density and pressure field
+  # within a cycle, so a temperature and salinity analysis reaches the flow
+  # geostrophically by the time the next background is written. So the question
+  # this configuration exists to answer is not whether an ensemble can correct
+  # velocity where a variational analysis cannot. It is whether a direct
+  # velocity increment beats what adjustment already delivers for free. The
+  # baseline for that comparison is the 3DVar run, not the free run, and
+  # scoring against the latter would flatter this by a wide margin. Both are
+  # measurable: the `bkg/` records carry `eastward_velocity` and
+  # `northward_velocity`, and so does the promoted truth.
+  #
+  # They are also the first analysed field the model keeps that is not a tracer.
+  # `sea_surface_height_above_geoid` is written to `ave_ssh`, which MOM6
+  # overwrites within a timestep (docs/osse.md, "Settle these before it runs"),
+  # so until now every increment the model actually integrated was temperature
+  # and salinity. `u` and `v` are authoritative in the restart, and the first
+  # forecast after an analysis that writes them is where adjustment noise would
+  # show up.
   analysis variables:
   - sea_water_potential_temperature
   - sea_water_salinity
   - sea_surface_height_above_geoid
+  - eastward_sea_water_velocity
+  - northward_sea_water_velocity
 
   # What each member's state carries. `sea_water_cell_thickness` is here for the
   # observation operators rather than for the filter: it is what makes anything
@@ -40,11 +70,17 @@ solver:
   # are absent, unlike the variational case, because what read them there was
   # SOCAParametricOceanStdDev and there is no parametric standard deviation in
   # an ensemble filter.
+  #
+  # Every analysis variable above appears here, and has to: the filter can only
+  # write back a field its background carried, and a velocity named for
+  # writeback but absent from the state is a field the analysis never had.
   background variables:
   - sea_water_potential_temperature
   - sea_water_salinity
   - sea_surface_height_above_geoid
   - sea_water_cell_thickness
+  - eastward_sea_water_velocity
+  - northward_sea_water_velocity
 
   # Deterministic LETKF, the square-root filter. The stochastic alternative
   # would need an observation perturbation seed and is a different experiment.
