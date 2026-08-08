@@ -120,13 +120,22 @@ tool has run, and the file it writes records the cap in a `smoothed` attribute.
 
 **The cap and the divergence limit are one decision, not two.** `gom_25km`
 survives at 0.8 with no protection on the increment at all, and at 0.9 with
-`increment divergence limit` doing the rest. The looser cap is preferred because
-it moves less sea floor, and the limiter is the cheaper half of the trade as long
-as it stops firing: on the first analysis it cuts about a thousand face pairs per
-member, which is what it cut on the unsmoothed field, and roughly half that on the
-second. A limiter that keeps cutting the same amount forever would be a constraint
-on the analysis rather than a guard against the spin-up transient, so the count per
-cycle is the thing to read, not the count on cycle one.
+`increment divergence limit` doing the rest. The looser cap is chosen because it
+moves less sea floor, 343 cells rather than 468, and the limiter carries the
+remainder.
+
+It carries it permanently, not just through spin-up. The count halves from the
+first analysis to the second, about a thousand face pairs per member down to six
+hundred, and then flattens rather than continuing down. So a few hundred faces per
+member are being held back every cycle for as long as the experiment runs. That is
+accepted here rather than tuned away: what the domain has to demonstrate is a
+stable cycling LETKF, and the analysis it produces is not a result anyone reads.
+The one quantity that does keep falling is the count of cells the limiter cannot
+bring under the bound within its ten passes.
+
+Do not carry the acceptance forward. The trade is only defensible because
+`gom_25km` is the plumbing domain, and the reason to expect it to evaporate at
+finer resolution is the same reason the cliff is there in the first place.
 
 **`MINIMUM_DEPTH` was not changed and probably does not need to be.** It is 10 m
 in `gom/common/MOM_input` for every Gulf resolution, and the imported topography
