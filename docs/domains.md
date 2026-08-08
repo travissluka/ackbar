@@ -111,11 +111,22 @@ here, and would spread it over thirteen cells and relocate the shelf break.
 |---|---|---|---|
 | 0.2 | - | 2566 m | 13 cells, 327 km |
 | 0.6 | 753 | 1198 m | 4 cells, 96 km |
-| **0.8** | **468** | **497 m** | **2.4 cells, 60 km** |
+| 0.8 | 468 | 497 m | 2.4 cells, 60 km |
+| **0.9** | **343** | **219 m** | **2.0 cells, 50 km** |
 
 Which resolutions carry a smoothed field is a property of the data, not of this
 file: `ocean_topog.nc.unsmoothed` sits beside the field it replaced wherever the
 tool has run, and the file it writes records the cap in a `smoothed` attribute.
+
+**The cap and the divergence limit are one decision, not two.** `gom_25km`
+survives at 0.8 with no protection on the increment at all, and at 0.9 with
+`increment divergence limit` doing the rest. The looser cap is preferred because
+it moves less sea floor, and the limiter is the cheaper half of the trade as long
+as it stops firing: on the first analysis it cuts about a thousand face pairs per
+member, which is what it cut on the unsmoothed field, and roughly half that on the
+second. A limiter that keeps cutting the same amount forever would be a constraint
+on the analysis rather than a guard against the spin-up transient, so the count per
+cycle is the thing to read, not the count on cycle one.
 
 **`MINIMUM_DEPTH` was not changed and probably does not need to be.** It is 10 m
 in `gom/common/MOM_input` for every Gulf resolution, and the imported topography
@@ -126,12 +137,20 @@ separate lever, available if a domain still drains after smoothing, and worth
 reaching for only then: `MASKING_DEPTH` is 0, so raising it deepens those columns
 rather than drying them, and the coastline does not move either way.
 
-**The finer resolutions will need less of this, and the target should be
-re-derived rather than copied.** `r` is a property of the grid as much as of the
-sea floor: the same shelf break sampled at 12 km spans twice as many cells as at
-25 km, so it is half as steep before anything is done to it. Run the tool with
-`--dry-run` on a new resolution and read its own distribution before choosing a
-cap; 0.8 is what `gom_25km` needed, not a constant.
+**`gom_25km` is the worst case, and it is the one domain where the answer does
+not matter.** `r` is a property of the grid as much as of the sea floor: the same
+shelf break sampled at 12 km spans twice as many cells as at 25 km, so it is half
+as steep before anything is done to it. So the coarsest domain, the one that
+exists to prove plumbing rather than to compute a result, is where the cliff is
+sharpest and where the increment has to be held back hardest. Expect `gom_12km`
+and finer to need a looser cap, and expect the divergence limiter to barely fire
+there. Run the tool with `--dry-run` on a new resolution and read its own
+distribution before choosing a cap; 0.9 is what `gom_25km` needed, not a constant.
+
+The corollary is that the limiter's settings should not be tuned on `gom_25km` and
+carried to `gom_12km`. A bound that is load bearing at 25 km may be inert at 12 km,
+and a science result should not inherit a number that was chosen to keep the
+plumbing domain alive.
 
 Changing it invalidates everything downstream of the sea floor: the gridspec,
 every initial condition, the diffusion calibration, and every experiment. The
