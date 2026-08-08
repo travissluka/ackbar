@@ -96,6 +96,25 @@ def test_the_prior_mean_group_is_the_reference_run(ensemble):
                           read(reference, "hofx"))
 
 
+def test_the_bare_forward_operator_is_removed(ensemble):
+    """Left in, it silently redefines what `post.obs` reports as O-B.
+
+    The solver writes the whole obs space back out, so anything here reaches the
+    committed departure file, and `post.obs` prefers an indexed forward operator
+    over `ombg`/`oman` when it finds one. A lone `hofx` would make it report
+    `ObsValue - H(mean(Xb))` and no O-A at all, where the filter's own departure
+    is `ObsValue - mean(H(Xb))`. Different quantity, no error, no message.
+    """
+    reference, members, out = ensemble
+    merge(reference, members, out)
+    with h5py.File(out) as ds:
+        assert "hofx" not in ds
+        # And nothing is lost: it is the group named for what it is.
+        assert ensemble_hofx.PRIOR_MEAN in ds
+    assert np.array_equal(read(out, ensemble_hofx.PRIOR_MEAN),
+                          read(reference, "hofx"))
+
+
 def test_the_quality_control_reaches_the_solver_through_obserror(tmp_path):
     """The one thing in the file that says what was rejected.
 

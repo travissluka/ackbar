@@ -710,8 +710,8 @@ What that buys is the point: **the solver reads one state per member whatever th
 weights are solved in ensemble space and applied to the perturbations at the analysis time, so the
 four dimensions live entirely in the departures. 4D costs the solver what 3D costs it, and there is
 one analysis to write back. `docs/design.md` has the mechanism, the three things about the merge
-that are easy to get wrong, and what the split gives up, which is `oman` in a four-dimensional
-window.
+that are easy to get wrong, and why `oman` in a four-dimensional window is a centre evaluation
+here exactly as it already is in 3D-FGAT.
 
 The split is also its own test. Applied to a **3D** window it is the same analysis by a different
 route, so it has to reproduce the monolithic filter, and against SOCA's own 4-member ctest ensemble

@@ -143,4 +143,16 @@ def merge(reference, members, out):
                              f"quality control")
         for name in simulated:
             merged[OBS_ERROR][name][:] = merged[EFFECTIVE_ERROR][name][:]
+
+        # **The bare `hofx` group has to go, and this is not tidiness.** The
+        # solver writes the whole obs space back out, so anything left here
+        # appears in the committed departure file, and `post.obs` prefers an
+        # indexed forward operator over `ombg`/`oman` when it finds one: a lone
+        # `hofx` would make it report O-B as `ObsValue - H(mean(Xb))` and no O-A
+        # at all. The filter's own departure is `ObsValue - mean(H(Xb))`, which
+        # is a different quantity, and the substitution is silent.
+        #
+        # Nothing is lost. This group is H(mean(Xb)), which is exactly what
+        # `hofx_y_mean_xb0` above now holds under the name that says so.
+        del merged[FORWARD]
     return out

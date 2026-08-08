@@ -739,23 +739,23 @@ def test_the_solver_runs_none_of_the_filters_the_observer_ran(config):
     assert "obs filters" not in document["observations"]["observers"][0]
 
 
-def test_the_posterior_observer_runs_only_where_it_means_something(config):
-    """`oman` from a single analysis state, against `ombg` over a trajectory.
+def test_the_posterior_observer_is_what_writes_the_departures_at_all(config):
+    """Not a diagnostic knob. `oops::LocalEnsembleDA` saves the obs space only
+    when `!read HX from disk || do posterior observer`, so with the departures
+    read from disk, turning this off writes no observation output whatsoever,
+    `ombg` included, and the application still exits 0.
 
-    In a 3D window those are the same comparison and the pair is the analysis
-    fit. In a 4D window `ombg` came from the whole trajectory and this would
-    come from one state at the centre, so the two would not be a pair at all.
+    On in both windows, and that also makes the number mean the same thing the
+    variational one does: `soca_var.x` evaluates FGAT's `oman` at the window's
+    centre too, because `CostFctFGAT::finishLinearize` clears `fgat_` and
+    replaces the background with the midpoint state after the first outer loop.
     """
-    three = soca.letkf_config(dict(config, solver=dict(LETKF)), 1, [observer()],
-                              backgrounds=Path("/out/e/rst/0"), members=(1, 2),
-                              departures=DEPARTURES)
-    assert three["driver"]["do posterior observer"] is True
-
-    four = dict(config, solver=dict(LETKF, window={"type": "4d"}))
-    document = soca.letkf_config(four, 1, [observer()],
-                                 backgrounds=Path("/out/e/rst/0"),
-                                 members=(1, 2), departures=DEPARTURES)
-    assert document["driver"]["do posterior observer"] is False
+    for window in ("3d", "4d"):
+        solver = dict(LETKF, window={"type": window})
+        document = soca.letkf_config(dict(config, solver=solver), 1, [observer()],
+                                     backgrounds=Path("/out/e/rst/0"),
+                                     members=(1, 2), departures=DEPARTURES)
+        assert document["driver"]["do posterior observer"] is True, window
 
 
 def test_the_background_is_one_state_per_member_whatever_the_window(config):

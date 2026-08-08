@@ -899,12 +899,19 @@ Three things about the split are easy to get wrong and are pinned by tests:
   needs every rank to hold a halo as wide as its localization. Both read the same observer layer,
   which is why `GLOBAL_DISTRIBUTION` is set per application and never by a layer.
 
-What the split gives up is `oman` in a four-dimensional window. The posterior observer evaluates a
-single analysis state, so against an `ombg` taken over a whole trajectory it is a different
-operator rather than a worse number, and `config/soca/letkf.yaml` turns it off for `fgat` and `4d`
-rather than writing a pair that does not pair. The honest replacement is FGAT's own, the background
-trajectory plus the posterior mean increment at every slot evaluated by a second four-dimensional
-observer run, and it is not built.
+The split gives up nothing, and the one thing it looked like it would is worth recording because
+the first version of this section had it wrong. The posterior observer evaluates a single analysis
+state at the window's centre, so in a four-dimensional window it is a different operator from the
+`ombg` taken over the trajectory. Turning it off is not the fix, for two reasons. `oops` saves the
+obs space only when `!read HX from disk || do posterior observer`, so with the departures read from
+disk that writes **no** observation output at all, `ombg` included. And `soca_var.x` does the same
+thing anyway: `CostFctFGAT::doLinearize` sets `fgat_` only on iteration 0 and `finishLinearize`
+clears it and replaces the background and first guess with the midpoint state, so every later
+`runNL` takes the single-state branch and 3D-FGAT's `oman` is a centre evaluation against a 4D
+`ombg` too. Leaving it on therefore makes an ensemble filter's `oman` mean exactly what the
+variational one's means, which is what makes the two comparable at all. A trajectory-consistent
+`oman` for both is the background trajectory plus the posterior mean increment at every slot
+through a second observer run, and it is not built for either.
 
 Two solvers, and the variational one is parameterized. The configuration layers carry the
 parameterization, so there is no mode dispatch in the code.

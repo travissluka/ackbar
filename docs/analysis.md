@@ -175,17 +175,28 @@ analysis at all. `save posterior ensemble` is the analysis. `LocalEnsembleDA`
 throws by name when a flag is set and its output block is missing, which makes
 this the one part of the document that fails loudly.
 
-`do posterior observer` computes `oman`, and it is **on for a 3D window and off
-for a four-dimensional one**. The posterior observer evaluates the analysis,
-which this application holds as a single state at the window's centre. In a 3D
-window that is the same comparison `ombg` got and the pair is the analysis fit.
-In a 4D window `ombg` came from the whole trajectory, so the two would be
-different operators and would read as an analysis that had degraded the fit at
-the ends of the window when nothing of the sort had happened. oops flags the
-same trap in `LocalEnsembleDA.h`. So a four-dimensional filter has no `oman`
-yet; the honest one is FGAT's own, the background trajectory plus the posterior
-mean increment at every slot through a second observer run, and it is not built.
-`post.obs` omits the `oma` key rather than failing.
+`do posterior observer` computes `oman`, and it is also **what writes the
+departure files at all** for an ensemble filter. `oops::LocalEnsembleDA` saves
+the obs space only when `!read HX from disk || do posterior observer`, so with
+the departures read from disk, turning this off leaves the application exiting 0
+having written no observation output whatsoever, `ombg` included.
+
+What to know when reading the number: the posterior observer evaluates the
+analysis, which this application holds as one state at the window's centre. In a
+3D window that is the same comparison `ombg` got. In a four-dimensional one it
+is not, because `ombg` came from the whole trajectory.
+
+**`soca_var.x` does the same thing in an FGAT window**, which is what makes this
+a property of the comparison rather than of the ensemble filter.
+`CostFctFGAT::doLinearize` sets `fgat_` only on iteration 0, and
+`finishLinearize` clears it and replaces both background and first guess with
+the state at the midpoint; every later `runNL` therefore takes the single-state
+branch. So `osse25-3dfgat`'s `oman` is a centre evaluation against a 4D `ombg`
+too, and has been since it was first run. The two experiments' `oman` mean the
+same thing as each other, which is the property that matters, and neither is
+trajectory-consistent with its own `ombg`. Making them so means evaluating the
+background trajectory plus the analysis increment at every slot through a second
+observer run, for both solvers, and it is not built.
 
 **The spread.** Prior and posterior variance are written every cycle. An
 ensemble filter fails in two ways that look identical in any single analysis:

@@ -45,24 +45,30 @@ driver:
   # observers above. Not an option: the observers here carry no filters, so an
   # application that recomputed H(x) would apply no quality control at all.
   read HX from disk: true
-  # `oman`, and only where it means something.
+  # `oman`, and **the thing that writes the departure files at all**.
   #
-  # The posterior observer evaluates the *analysis*, which this application
-  # holds as a single state at the analysis time. In a 3D window that is the
-  # same comparison the background got, so the number is the analysis fit and
-  # the departures pair up.
+  # `oops::LocalEnsembleDA` saves the obs space only when it computed something
+  # into it: `!read HX from disk || do posterior observer`. With the departures
+  # read from disk, turning this off means the application exits 0 having
+  # written no observation output whatsoever, `ombg` included. That is not a
+  # trade of `oman` for nothing, it is the loss of every departure the cycle
+  # produced, and `post.obs` then has nothing at all to read.
   #
-  # In an FGAT or 4D window it is not. There `ombg` compared each observation
-  # against the background nearest its own time, over the whole trajectory, and
-  # the posterior observer would compare it against one analysis state at the
-  # window's centre. Those are two different operators, so the pair would look
-  # like an analysis that had degraded the fit at the ends of the window when
-  # nothing of the kind had happened. oops notes the same trap in
-  # `LocalEnsembleDA.h`. So this is false for a four-dimensional window and
-  # there is no `oman`; the honest one is FGAT's own, the background trajectory
-  # plus the posterior mean increment at every slot evaluated by a second 4D
-  # observer run, and that is not built yet.
-  do posterior observer: $(POSTERIOR_OBSERVER)
+  # What it is worth knowing about the number: the posterior observer evaluates
+  # the analysis, which this application holds as a single state at the window's
+  # centre. In a 3D window that is the same comparison `ombg` got. In a
+  # four-dimensional one it is not, since `ombg` came from the whole trajectory.
+  #
+  # **`soca_var.x` does exactly the same thing in an FGAT window**, which is
+  # what settles it. `CostFctFGAT::doLinearize` sets `fgat_` only on iteration
+  # 0, and `finishLinearize` then clears it and replaces the background and
+  # first guess with the state at the midpoint, so every later `runNL` takes the
+  # single-state branch. So 3D-FGAT's `oman` is a 3D evaluation at the centre
+  # against a 4D `ombg`, and has been all along. Leaving this on makes an
+  # ensemble filter's `oman` mean the same thing as the variational one's, which
+  # is what makes the two comparable. `docs/analysis.md` says so where the
+  # number is read.
+  do posterior observer: true
   # Without this the control member has no analysis at all: in a pure LETKF the
   # posterior mean *is* the control's answer, since ACKBAR does not separately
   # compute one.
