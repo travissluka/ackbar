@@ -241,6 +241,7 @@ def build_graph(config):
     _check_hours(config)
     _check_window(config)
     _check_four_d_covariance(config)
+    _check_ensemble_window(config)
     _check_extended(config)
     count = config["cycle"]["count"]
     canonical = member_set(config)
@@ -542,6 +543,53 @@ def _check_four_d_covariance(config):
             f"compares against the trajectory and solves one increment at the "
             f"window's centre."
         )
+
+
+def _check_ensemble_window(config):
+    """An ensemble filter has a `3d` window and a `4d` one. It has no `fgat`.
+
+    FGAT is defined by what it does between the observation's time and the
+    analysis time: it takes the departure at the right time and then carries the
+    increment back with the identity, because it has no tangent linear model to
+    carry it with. That is the whole method, and it is a concession.
+
+    An ensemble filter never makes that concession, because it never lacks the
+    propagator. Its increment is `X_b(t) w`: one weight vector, and a basis that
+    is the ensemble's own spread at time *t*. Composing the two gives
+    `X_b(t) X_b(t_a)^+`, which is the ensemble's estimate of the tangent linear
+    model, so an observation in one sub-window reaches the analysis through
+    another sub-window's covariance. Constant weights are not a constant
+    increment. 4D-LETKF therefore sits with 4D-Ens-Var and 4D-Var in what it can
+    do, and not with FGAT.
+
+    A degenerate middle *is* constructible: departures at their own times scored
+    against the ensemble perturbations at the *analysis* time, which is the
+    structural analogue of FGAT-Var. It is refused rather than offered because
+    it buys nothing here. FGAT-Var earns its inconsistency by escaping the need
+    for a linear model; the same trade for an ensemble filter saves only the
+    per-slot member states, which `4d` needed anyway to evaluate the departures
+    at their own times. So it is the same cost for a worse covariance.
+
+    Refused at graph build rather than left to the analysis, which is where it
+    would otherwise land: `letkf_config` never reads `solver.window.type`, so
+    `fgat` today is accepted in full and silently runs `3d`.
+    """
+    if (config.get("solver") or {}).get("name") != "letkf":
+        return
+    if window_type(config) != "fgat":
+        return
+    raise GraphError(
+        "solver.window.type is 'fgat' and solver.name is 'letkf'. FGAT is the "
+        "method that takes each departure at its own time and then carries the "
+        "increment back with the identity, because it has no tangent linear "
+        "model; an ensemble filter always has one, in the shape of its own "
+        "spread at each sub-window, so there is nothing for it to concede. Use "
+        "'3d', which compares every observation against the state at the "
+        "window's centre, or '4d', which compares each against its own "
+        "sub-window and updates through that sub-window's covariance. Going "
+        "from one to the other costs only the per-slot member states, which "
+        "'fgat' would have had to write anyway."
+    )
 
 
 def _check_coupling(config, name, quantity):

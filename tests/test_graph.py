@@ -334,10 +334,40 @@ class TestConfigurationDrivesTheTaskSet:
 
     def test_fgat_takes_any_covariance(self, keys):
         """FGAT is one increment solved at the window's centre, so a static B is
-        exactly as applicable as it is in 3D-Var. Only `4d` is restricted."""
+        exactly as applicable as it is in 3D-Var. What restricts it is the
+        solver, not the covariance: every variational one takes it."""
         for name in ("var_om1deg", "envar_om1deg", "hybrid_om1deg"):
             config = load(name, keys)
             config["solver"]["window"] = {"type": "fgat"}
+            config["forecast"] = {"slots": "PT6H"}
+            build_graph(config)
+
+    def test_an_ensemble_filter_has_no_fgat(self, keys):
+        """`fgat` names a method that does not exist for an ensemble filter.
+
+        FGAT carries the increment from the observation's time to the analysis
+        time with the identity, because it has no tangent linear model. An
+        ensemble filter has one: its increment is `X_b(t) w`, a single weight
+        vector in a basis that evolves with the flow, so the composition is the
+        ensemble's own estimate of the propagator. There is no concession left
+        for FGAT to make, which puts 4D-LETKF with 4D-Ens-Var rather than with
+        FGAT.
+
+        It has to be refused rather than ignored: `letkf_config` never reads
+        `solver.window.type`, so this would otherwise be accepted in full and
+        quietly run `3d`.
+        """
+        config = load("letkf_om1deg", keys)
+        config["solver"]["window"] = {"type": "fgat"}
+        config["forecast"] = {"slots": "PT6H"}
+        with pytest.raises(GraphError, match="ensemble filter always has one"):
+            build_graph(config)
+
+        # Both of the windows it does have are accepted, which is what says the
+        # refusal is about `fgat` and not about the solver being an ensemble one.
+        for window in ({"type": "3d"}, {"type": "4d"}):
+            config = load("letkf_om1deg", keys)
+            config["solver"]["window"] = window
             config["forecast"] = {"slots": "PT6H"}
             build_graph(config)
 
