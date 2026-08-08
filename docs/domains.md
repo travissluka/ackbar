@@ -100,6 +100,22 @@ was one of those cells**, and the workarounds that preceded finding it, relaxing
 the increment, tapering it by depth, bounding its divergence, all paid for a few
 hundred cells with the analysis everywhere.
 
+**It is also not a defect in the import.** `OM4_025` is quarter degree, so at 22 N
+its cells are about as wide as `gom_25km`'s, and GFDL ships it with a 3 cm wet
+cell, a worst-pair steepness of 0.9993, and 1.65% of Gulf-window pairs above
+r = 0.9, against our imported field's 2.09%. Their `MINIMUM_DEPTH` is 9.5 m to our
+10 m. What they hand-edit is not the slope: `TOPO_EDITS_FILE = All_edits.nc` holds
+80 cells globally, 30 in the Gulf window, and every one of the 30 *deepens* a cell,
+in two lines, the Old Bahama Channel to 500 m and the Florida Current's path along
+79.6 W to 710 to 730 m. The practice at this resolution is to leave the shelf break
+as a cliff and spend the editing budget on the transport pathways.
+
+So smoothing here is a concession to the analysis, not a correction of the grid,
+and the capped field is already more conservative than a production one. Read that
+as a bound on how far to take it: capping harder moves further from a sea floor
+GFDL is content to integrate, to buy something the DA should be buying instead.
+The durable fix is IAU.
+
 `tools/smooth-topography.py` caps it, keeping the land mask exactly so the
 mosaics and the SOCA gridspec stay true. The cap is a choice with a cost: `r`
 bounds the depth ratio between neighbours at `(1+r)/(1-r)`, so a 10 m to 4000 m
