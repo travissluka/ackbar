@@ -5,15 +5,14 @@
 # something. Read nothing about skill off two cycles.
 #
 # **What it exists to answer.** Whether the ensemble filter produces a sane
-# velocity increment. `da/letkf` carries the two velocities in its `background
-# variables`, which no variational experiment here can do usefully, because no
-# observer measures a current and a static B says nothing about one.
+# velocity increment, and whether the model will take it. `da/letkf` analyses
+# and writes back both velocities, which no variational experiment here can do:
+# no observer measures a current and a static B says nothing about one.
 #
-# The increment is read off SOCA's own output, `ana/mem###/analysis/ocn.incr.*`
-# and `ocn.ana.*`, and **not** off the `bkg/` records. Writeback does not put
-# velocity into the restart, so the cycled state does not carry it; that layer's
-# long note says why, and the short version is that the staggered outer face
-# cannot be written and the resulting step at the open boundary kills the model.
+# It is also the test of how much damping is actually needed. The ensemble is
+# settled before use, the staggered outer face is written, and the bounds are
+# loose enough to touch very few cells, so what remains under test is the
+# relaxation ramp alone.
 #
 # **The bar is the 3DVar run, not the free run.** A variational analysis writes
 # no velocity increment and still has substantial velocity skill, because the
@@ -66,23 +65,23 @@ vars:
   obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
 ensemble:
-  # Twenty members, `mem001` through `mem020`, plus the control at `mem000`.
-  size: 20
+  # Eighteen members, `mem001` through `mem018`, plus the control at `mem000`.
+  size: 18
   # The control's analysis in a pure LETKF is the posterior mean, which the
   # filter computes anyway; `config/soca/letkf.yaml` asks for it explicitly.
   control: true
   source: offline
   # `fail_cycle` rather than the `replace_from_mean` a production run would
   # take. This is the run where a member dying is information: rebuilding it
-  # from the mean would keep the ensemble at twenty and hide the fact that
-  # twenty-one forecasts a cycle on eight cores is a new load for this domain.
+  # from the mean would hide a member the model cannot integrate, which is
+  # exactly what this run is looking for.
   on_missing_member: fail_cycle
-  # One year of GLORYS per member, 1994 through 2013, recentred onto the
-  # control. Not `tools/ensemble-ic.sh`: perturbations drawn from the static B
-  # carry none of the ocean's flow structure and are identical in velocity,
-  # which would make the question above unanswerable. The README beside it says
-  # how it was built and how to rebuild it.
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  # One GLORYS year per member, recentred onto the control and then settled by
+  # a free forecast. Not `tools/ensemble-ic.sh`: perturbations drawn from the
+  # static B carry none of the ocean's flow structure and are identical in
+  # velocity, which would make the question above unanswerable. The README
+  # beside it says how it was built and why it is eighteen and not twenty.
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble18-settled
 
 cleanup:
   # Two, so both cycles' analysis directories survive the run: `ana` under

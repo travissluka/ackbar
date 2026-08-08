@@ -29,51 +29,34 @@ solver:
   # vertical coordinate the analysed temperature is defined on is a separate
   # decision from analysing the temperature.
   #
-  # **The velocities are deliberately absent here and present in `background
-  # variables` below.** The filter therefore updates them, and SOCA writes them
-  # into its own analysis, increment and spread files, while writeback leaves
-  # the restart's `u` and `v` at their background values. That split is not the
-  # original intent; it is what the model forced, and it is written out at
-  # length because the obvious thing to do is put them back.
+  # **The velocities are here, and no variational experiment can put them
+  # there.** No observer in this workflow measures a current and the static B
+  # says nothing about one, so a variational analysis writes no velocity
+  # increment at all. An ensemble filter sees the sample covariance between an
+  # altimeter's sea surface height and the flow beneath it, and can.
   #
-  # **Writing them kills the forecast.** Thirteen of eighteen members died on
-  # the first cycle after an analysis that wrote velocity, all with
-  # `MOM_regridding: adjust_interface_motion() - implied h<0 is larger than
-  # roundoff!` out of `build_zstar_grid`. The mechanism is `writeback.place`,
-  # which writes the tracer-sized corner of each array. That is the whole of an
-  # h-grid field, and it is `u` short one column and `v` short one row. Those
-  # outer faces keep their background values while every face inside them moves,
-  # so an increment reaching 1.8 m/s in the interior meets exactly zero at the
-  # edge. On a regional domain that edge is an open boundary, so the step lands
-  # where the OBC is imposing its own solution; the divergence it implies moves
-  # interfaces further than a layer is thick, and Z* regridding fails.
+  # Writing them needs two things that tracers do not. The staggered outer face
+  # has to be handled, because a symmetric-memory restart carries `u` one column
+  # wider than the analysis and leaving that face at the background while every
+  # face inside it moves puts a step in the velocity field on the open boundary;
+  # `writeback.place` now gives it the increment of the face beside it. And they
+  # need their own entry in `increment limits` below, because an oversized
+  # velocity increment does more damage than an oversized tracer one.
   #
-  # Leaving the outer face alone was a deliberate, documented choice, made when
-  # every analysed field was on the h-grid and it was therefore free. It is not
-  # free for a staggered field, and putting it right is real work rather than a
-  # missing line: SOCA's analysis is tracer-sized, so there is no analysed value
-  # for that face and it would have to be extrapolated, and whether an
-  # extrapolated velocity increment belongs on an open boundary face at all is a
-  # question about the OBC rather than about writeback.
-  #
-  # **The increment is still worth having, and it is still produced.** It is the
-  # field no variational experiment here can produce at all, because no observer
-  # measures a current and the static B says nothing about one. What is lost by
-  # this split is only that the model does not integrate it.
-  #
-  # **What that does not mean is that the variational runs have no velocity
-  # skill.** They do, and a good deal of it, because the increment is not the
-  # only path: the model adjusts to the corrected density and pressure field
-  # within a cycle, so a temperature and salinity analysis reaches the flow
-  # geostrophically by the time the next background is written. The baseline for
-  # judging a velocity increment is therefore the 3DVar run and not the free
-  # run, and scoring against the latter would flatter it by a wide margin. Both
-  # are measurable: the `bkg/` records carry `eastward_velocity` and
-  # `northward_velocity`, and so does the promoted truth.
+  # **What this does not mean is that the variational runs have no velocity
+  # skill.** They have a good deal, because the increment is not the only path:
+  # the model adjusts to the corrected density and pressure within a cycle, so a
+  # temperature and salinity analysis reaches the flow geostrophically by the
+  # time the next background is written. The baseline for judging a velocity
+  # increment is the 3DVar run and not the free run, and scoring against the
+  # latter flatters it by a wide margin. Both are measurable: the `bkg/` records
+  # carry `eastward_velocity` and `northward_velocity`, and so does the truth.
   analysis variables:
   - sea_water_potential_temperature
   - sea_water_salinity
   - sea_surface_height_above_geoid
+  - eastward_sea_water_velocity
+  - northward_sea_water_velocity
 
   # What each member's state carries. `sea_water_cell_thickness` is here for the
   # observation operators rather than for the filter: it is what makes anything
@@ -86,10 +69,6 @@ solver:
   # write back a field its background carried, and a velocity named for
   # writeback but absent from the state is a field the analysis never had.
   #
-  # The velocities go the other way. They are here and not above, so the filter
-  # updates them and SOCA writes them, and writeback does not put them into the
-  # restart. See the long note above for why that is the model's decision rather
-  # than a preference.
   background variables:
   - sea_water_potential_temperature
   - sea_water_salinity
@@ -99,7 +78,7 @@ solver:
   - northward_sea_water_velocity
 
   # The largest increment writeback will put into the restart, per variable, as
-  # a soft limit: `ackbar.writeback` applies `L*tanh(x/L)`, so small increments
+  # a soft bound: `ackbar.writeback` applies `L*tanh(x/L)`, so small increments
   # pass through, the tail asymptotes to the bound, and nothing is flattened
   # into a plateau. See that module for why soft rather than a clip.
   #
@@ -111,61 +90,40 @@ solver:
   # reported by MOM6 several steps downstream as
   # `adjust_interface_motion: implied h<0`.
   #
-  # **What actually stabilised this was the relaxation, not the bound.** A first
-  # pass with the bound alone at 5.0 / 2.0 / 0.5 took the failures from thirteen
-  # of eighteen members to two; tightening it to 2.0 / 0.5 / 0.2 did not remove
-  # the last two, it only changed which members died. That is the signature of
-  # the wrong instrument: a bound acts per point and non-linearly, so it flattens
-  # peaks and alters the *shape* of the increment field, and shape is what the
-  # model responds to.
+  # **What stabilised this was not the bound.** A first pass with the bound
+  # alone took the failures from thirteen of eighteen members to two, and
+  # tightening it did not remove the last two, it only changed which members
+  # died. A bound acts per point and non-linearly, so it flattens peaks and
+  # changes the *shape* of the increment field, and shape is what the model
+  # responds to. Two things fixed it: settling the recentred ensemble with a
+  # free forecast before it is ever used, which is the larger half and lives in
+  # `experiments/osse25-ensemble-settle.yaml`, and relaxing the increment, which
+  # scales every gradient by one number and invents none.
   #
-  # The diagnosis that settled it: the background has no fragile column anywhere,
-  # every wet column carries `h[1]` near 2 m. The 1e-4 m layer MOM6 reports does
-  # not exist in the initial state, it *develops inside the first timestep* as
-  # the model adjusts to the density gradient the analysis introduced. So the
-  # problem is the speed of the correction, not its magnitude, and the fix has to
-  # be one that leaves gradients proportional rather than one that clips them.
-  #
-  # So the bounds are back to the loose values set from the ensemble's own
-  # spread, where they do the job they are good at: catching a tail. Peak
-  # thermocline spread is 1.4 degC in the mean and 4.1 degC at its largest, so
-  # 5 degC sits above every correction the ensemble can justify.
+  # A ramp rather than a constant, because what is left is a spin-up transient.
+  # Cycle 1's background is the ensemble's initial condition, ocean states from
+  # different years, so its innovation is the largest the experiment will see;
+  # every later background is a 24 hour forecast from an analysis that has
+  # already seen the observations. `osse25-3dvar` kept all 45 of its writeback
+  # logs and shows the shape directly: increment rms 0.332 at cycle 1, about
+  # 0.15 by cycle 5, 0.11 from cycle 20 on. A constant low enough to survive
+  # cycle 1 would tax forty cycles for a transient confined to the first few.
   #
   # **The right fix is IAU**, which spreads the increment across the forecast
   # instead of applying all of it between two timesteps, and removes the
-  # violence rather than the correction. `CLAUDE.md` already carries it as a
-  # later alternate implementation of writeback. The relaxation should go back
-  # to 1.0 when it lands, and it is the first thing to revisit before any
-  # tuning of the filter itself.
-  # A ramp rather than a constant, because the shock is a spin-up transient and
-  # not a property of the filter. Cycle 1's background is the ensemble's initial
-  # condition, which on this OSSE is twenty ocean states from twenty *different
-  # years*, so its innovation is the largest the experiment will ever see. Every
-  # later background is a 24 hour forecast from an analysis that has already
-  # seen the observations. `osse25-3dvar` kept all 45 of its writeback logs and
-  # shows the shape directly: increment rms 0.332 at cycle 1, about 0.15 by
-  # cycle 5, 0.11 from cycle 20 on. A constant low enough to survive cycle 1
-  # would throw away most of the analysis for forty cycles that never needed it.
-  #
-  # `first: 0.1` because 0.25 was measured and was not enough: it carried 20 of
-  # 21 members through cycle 1 and lost one, and one is as bad as ten here,
-  # since `submit` hangs off the forecast array with `afterok` and a single
-  # failure stalls the experiment. Healing cannot recover it either, because the
-  # crash is deterministic given the same restart.
-  #
-  # `cycles: 10` rather than the 5 that the 3DVar trend alone would justify, and
-  # the reason is asymmetry rather than physics: reaching full strength a few
-  # cycles late costs a little analysis in cycles the scoring discards as spin-up
-  # anyway, while reaching it a few cycles early costs the entire run. The
-  # comparison tools already drop the opening cycles.
+  # violence rather than the correction. MOM6 already implements it, in
+  # `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and `ODA_INCUPD_UV`. The
+  # relaxation goes back to 1.0 when that is wired.
   increment relaxation:
-    first: 0.1
-    cycles: 10
+    first: 0.25
+    cycles: 5
 
   increment limits:
-    sea_water_potential_temperature: 5.0
-    sea_water_salinity: 2.0
-    sea_surface_height_above_geoid: 0.5
+    sea_water_potential_temperature: 10.0
+    sea_water_salinity: 5.0
+    sea_surface_height_above_geoid: 1.0
+    eastward_sea_water_velocity: 0.5
+    northward_sea_water_velocity: 0.5
 
   # Deterministic LETKF, the square-root filter. The stochastic alternative
   # would need an observation perturbation seed and is a different experiment.

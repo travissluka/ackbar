@@ -204,10 +204,17 @@ def test_what_the_analysis_did_not_solve_for_is_untouched(scene):
 def test_a_staggered_variable_would_be_written_on_its_own_grid(scene):
     """`u` and `v` are one cell larger than the analysis in one direction.
 
-    Not exercised by the default `analysis variables`, and that is exactly why
-    it is tested: the day velocity is added to that list, the shape mismatch has
-    to be handled rather than discovered. The extra column of `u` is the model's
-    western boundary face and belongs to no tracer cell.
+    The extra column of `u` belongs to no tracer cell, so the analysis has no
+    value for it. It takes the increment of the face beside it rather than
+    keeping the background, and the difference is not cosmetic: every face
+    inside moving while the outermost stays put is a step in the velocity field
+    at the domain edge, and on a regional domain that edge is an open boundary
+    where the OBC is imposing its own solution. Measured before this was
+    handled, the step reached 1.8 m/s against zero.
+
+    Copying the neighbour is the weakest assumption that does not invent a
+    gradient. Leaving the face alone is not neutral, it asserts the increment
+    falls to zero over half a cell.
     """
     config, paths, background, written, target = scene
     config["solver"]["analysis variables"] = ["eastward_sea_water_velocity",
@@ -223,12 +230,14 @@ def test_a_staggered_variable_would_be_written_on_its_own_grid(scene):
     u = field(target / "MOM.res.nc", "u")
     assert u.shape == (NZ, NY, NX + 1)
     assert np.all(u[:, :, :NX][:, ocean] == 9.0)
-    # The face the analysis has no value for keeps the background's.
-    assert np.all(u[:, :, -1] == 1.0)
+    # The outer face takes the increment of the column beside it, so it lands
+    # where that column landed: background 1.0 plus an increment of 8.0. The
+    # last tracer column is ocean for every row, the island being inland.
+    assert np.all(u[:, :, -1] == 9.0)
     v = field(target / "MOM.res.nc", "v")
     assert v.shape == (NZ, NY + 1, NX)
     assert np.all(v[:, :NY, :][:, ocean] == 9.0)
-    assert np.all(v[:, -1, :] == 1.0)
+    assert np.all(v[:, -1, :] == 9.0)
 
 
 def test_the_rest_of_the_restart_set_comes_across(scene):

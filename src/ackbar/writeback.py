@@ -401,6 +401,27 @@ def place(target, field, mask, values, limit=None, relaxation=1.0, alive=None):
         change = limit * np.tanh(change / limit)
 
     view[where] = view[where] + change[where]
+
+    # **The staggered outer face.** A symmetric-memory restart carries `u` one
+    # column wider and `v` one row taller than the analysis, so the loop above
+    # leaves that face untouched. For a tracer that is the whole story, because
+    # an h-grid field has no such face. For a velocity it is a defect: every
+    # face inside moves and the outermost does not, which is a step in the
+    # velocity field exactly at the domain edge, and on a regional domain that
+    # edge is an open boundary where the OBC is imposing its own solution. Left
+    # alone it reached 1.8 m/s against zero.
+    #
+    # There is no analysed value for that face to use, since SOCA's analysis is
+    # tracer-sized, so it takes the increment of the face beside it. That is the
+    # weakest assumption available that does not invent a gradient: the two
+    # faces are half a cell apart, and the alternative of leaving it at the
+    # background asserts the increment falls to zero over that distance.
+    if data.shape[-2:] != values.shape[-2:]:
+        if data.shape[-1] > width:      # u: one extra column at the east edge
+            data[..., :height, width] += change[..., :, -1] * mask[..., :, -1]
+        if data.shape[-2] > height:     # v: one extra row at the north edge
+            data[..., height, :width] += change[..., -1, :] * mask[..., -1, :]
+
     target.variables[io][0] = data
     change = change[where]
 
