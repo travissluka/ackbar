@@ -1,0 +1,58 @@
+# One cycle of free forecast, to settle the recentred ensemble.
+#
+# Not a science experiment. Its only product is `run/<cycle>/rst/mem###`, which
+# becomes the ensemble every LETKF experiment actually starts from.
+#
+# **Why it exists.** `tools/ensemble-recenter.py` adds `control - mean` to every
+# member. That leaves the ensemble covariance bit-identical, which is the
+# property the filter cares about, and it says nothing at all about whether each
+# member is still a state the model is comfortable integrating. It is not: the
+# shift is rms 0.8 degC in temperature, applied instantaneously to a balanced
+# ocean, and what comes out the other side is balanced only to the accuracy that
+# a common additive offset happens to preserve.
+#
+# The symptom is precise and was expensive to find. A recentred member
+# integrates perfectly well on its own, and dies in
+# `MOM_regridding: adjust_interface_motion() - implied h<0` when handed an
+# analysis increment whose maximum is under 1 degC, which is *smaller* than what
+# `osse25-3dvar` writes into the control every cycle without trouble. So the
+# members are not broken, they are marginal: stable when undisturbed, and out of
+# room when nudged. A day of free integration is what gives them that room back.
+#
+# It has to be an experiment rather than a step inside `ensemble-ic-lagged.sh`
+# because `coldstart-ic.sh` initializes from a z-level `ic.nc` and there is no
+# offline tool that integrates a *restart set* forward. The forecast task is
+# exactly that tool, so this borrows it.
+#
+# The states it writes are valid one cycle after `cycle.start`, so they are
+# restamped back before use; see the ensemble's README.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/none
+
+experiment:
+  name: osse25-ensemble-settle
+  description: one free cycle to settle the recentred lagged ensemble
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 1
+
+ensemble:
+  size: 20
+  control: true
+  source: none
+  # Every member matters here, because every member is the product. A member
+  # rebuilt from the mean would be a state with no independent information
+  # sitting in an ensemble whose whole purpose is to carry some.
+  on_missing_member: fail_cycle
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  # Nothing may be reaped: the restarts are the product.
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

@@ -144,19 +144,20 @@ def test_the_ocean_takes_the_analysis_and_the_land_keeps_the_background(scene):
     assert np.all(ssh[ocean] == 9.0) and np.all(ssh[~ocean] == 1.0)
 
 
-def test_a_vanished_layer_keeps_the_background(scene):
-    """A collapsed Z* layer is not water, so nothing may be analysed into it.
+def test_a_vanished_layer_takes_the_increment_from_above(scene):
+    """A collapsed Z* layer gets the increment of the last live layer over it.
 
     Under Z* every column carries all `NK` levels whether or not the seafloor
     leaves room, and the ones below the bottom hold a residual thickness. A
     third of the cells on gom_25km are in that state. Nothing constrains what an
-    ensemble covariance says about them, so the spread is large and the filter
-    produces a large increment; writing it back gives the cell a density anomaly
-    with no mass behind it and the model stops in `adjust_interface_motion` on
-    the first step.
+    ensemble covariance says about them, so its increment there is meaningless
+    and must not be used.
 
-    The masking is per *cell*, not per column, which is the whole point: the
-    surface of the same column is ordinary ocean and must still be written.
+    Leaving the cell at its background value is *not* the right way to not use
+    it. The live layer above moves and the dead one does not, which puts a step
+    into the column, and a step in temperature is a density inversion the model
+    convects away. Copying the increment down keeps the background's own
+    vertical gradient through the dead part instead, so nothing is destabilised.
     """
     config, paths, background, analysis, target = scene
     with netCDF4.Dataset(background / "MOM.res.nc", "r+") as data:
@@ -164,13 +165,25 @@ def test_a_vanished_layer_keeps_the_background(scene):
         thickness[0, -1, 2, 3] = writeback.VANISHED / 10.0
         data.variables["h"][:] = thickness
 
+    # The analysis has to vary by level or the fill is invisible: give the dead
+    # cell an absurd value and the live cell above it an ordinary one.
+    with netCDF4.Dataset(analysis, "r+") as data:
+        for name in ("Temp", "Salt"):
+            values = np.asarray(data.variables[name][:])
+            values[0, -1, 2, 3] = 100.0
+            values[0, -2, 2, 3] = 5.0
+            data.variables[name][:] = values
+
     run(scene)
     for name in ("Temp", "Salt"):
         values = field(target / "MOM.res.nc", name)
-        assert values[-1, 2, 3] == 1.0, f"{name} was written into a vanished layer"
+        # Background 1.0, live layer above analysed to 5.0, so the increment
+        # carried down is +4.0 and the dead cell lands on 5.0. Neither its own
+        # analysed 100.0 nor the untouched background 1.0.
+        assert values[-1, 2, 3] == 5.0, f"{name}: dead cell took the wrong value"
         # The same column at the surface is ordinary ocean.
         assert values[0, 2, 3] == 9.0
-        # And a neighbouring column at the same level is untouched by the rule.
+        # And a neighbouring column at the same level is live, so it keeps its own.
         assert values[-1, 2, 4] == 9.0
 
     # `ave_ssh` has no level to vanish, so the rule cannot reach it.

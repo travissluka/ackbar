@@ -1,0 +1,106 @@
+# The quarter degree OSSE's 3D LETKF.
+#
+# The fourth entry in the deterministic matrix, and the first that is not
+# variational. Same domain, same dates, same control initial condition, same
+# thirteen observers and the same observation archive as `osse25-noda`,
+# `osse25-3dvar` and `osse25-3dfgat`, so what differs is the solver.
+#
+# It is not a one-layer difference the way the variational three are, and the
+# two places it is not are worth naming rather than discovering:
+#
+# 1. **It has an ensemble**, eighteen members plus the control, which the others
+#    do not. That is the solver, not a confound: an ensemble filter without an
+#    ensemble is not a thing. But it means this experiment carries an initial
+#    condition the others do not have, and two LETKFs given different ensembles
+#    are not comparable even when everything else matches. The ensemble's
+#    README records how it was built.
+#
+# 2. **No `da/corr_vt_cycled`.** That layer rebuilds the *static* B's vertical
+#    correlation each cycle against the experiment's own background, and an
+#    ensemble filter has no static B to rebuild. Its absence is not a setting
+#    left out.
+#
+# **The ensemble is real ocean states, not perturbations.** One GLORYS year per
+# member, 1994 to 2013, each integrated a day under this domain's own boundary
+# and forcing, recentred onto the control, then settled by one more free day.
+# `tools/ensemble-ic-lagged.sh` says why that beats drawing from the static
+# background error, and the short version is two-fold: static perturbations
+# carry B's correlation scales rather than the ocean's flow structure, and B
+# says nothing about velocity at all, so every member would have an identical
+# current field. Measured against the free run's own error, this ensemble starts
+# at 1.32 in surface temperature and 0.74 in sea surface height, where the
+# static-B ensemble it replaces was low by a factor of twelve.
+#
+# Eighteen rather than twenty because two of the twenty could not be integrated
+# at all, freely, with no analysis involved. They are dropped rather than
+# repaired: a member is a sample, and there is nothing to recover from one the
+# model rejects. The ensemble's README records which, and the mapping back.
+#
+# **Under-dispersed in sea surface height and velocity is the thing to watch.**
+# Those ratios below one are in exactly the fields the altimeter constrains, so
+# the spread has less room to lose than the surface tracers do. `rtps: 0.95`
+# from `da/letkf` is the starting point and is not tuned here; the prior and
+# posterior variance that `config/soca/letkf.yaml` saves every cycle are what
+# says whether it was enough, and they should be read before it is changed.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-letkf
+  description: OSSE, gom_25km 3D LETKF against the gom_12km truth
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 45
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 18
+  # The control is `mem000`, and in a pure LETKF its analysis is the posterior
+  # mean, which the filter computes anyway and `config/soca/letkf.yaml` asks
+  # for explicitly. Everything scored against the other three experiments is
+  # the control's, so that they are compared like for like.
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble18-settled
+
+forecast:
+  # Identical to `osse25-3dvar` and `osse25-3dfgat`, and it has to be: the
+  # comparison at each lead is a paired difference, so the launches and the
+  # valid times must match. Those files carry the reasoning for the cadences.
+  #
+  # In from the start rather than added later. The variational pair had to be
+  # rerun for exactly this, because without it every number is at a single 24
+  # hour lead and says nothing about whether a correction persists. The extra
+  # cost is one member, since `forecast.extended.members` defaults to the
+  # control alone.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

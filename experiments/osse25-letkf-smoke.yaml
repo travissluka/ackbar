@@ -1,0 +1,95 @@
+# Two cycles of LETKF at gom_25km. A mechanism check, not a result.
+#
+# The name says smoke on purpose: `osse25-letkf` is reserved for the science
+# run, so that one never has to be blown away because this one taught us
+# something. Read nothing about skill off two cycles.
+#
+# **What it exists to answer.** Whether the ensemble filter produces a sane
+# velocity increment. `da/letkf` carries the two velocities in its `background
+# variables`, which no variational experiment here can do usefully, because no
+# observer measures a current and a static B says nothing about one.
+#
+# The increment is read off SOCA's own output, `ana/mem###/analysis/ocn.incr.*`
+# and `ocn.ana.*`, and **not** off the `bkg/` records. Writeback does not put
+# velocity into the restart, so the cycled state does not carry it; that layer's
+# long note says why, and the short version is that the staggered outer face
+# cannot be written and the resulting step at the open boundary kills the model.
+#
+# **The bar is the 3DVar run, not the free run.** A variational analysis writes
+# no velocity increment and still has substantial velocity skill, because the
+# model reaches the flow geostrophically from the corrected density and
+# pressure within a cycle. Scoring against `osse25-noda` would flatter this by
+# a wide margin.
+#
+# The other things to read, in order: that every member's forecast survives the
+# analysis at all, that prior and posterior variance were written, and that
+# posterior spread is below prior.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  # The same thirteen as `osse25-3dvar` and `osse25-3dfgat`, and it has to be
+  # the same thirteen: the point of the matrix is that experiments differ in
+  # one thing. `osse-compare.py` scores only the platforms every experiment
+  # has, so a missing observer does not fail, it quietly drops that platform.
+  #
+  # No `da/corr_vt_cycled` here, unlike the variational pair. That layer
+  # rebuilds the *static* B's vertical correlation every cycle, and an ensemble
+  # filter has no static B to rebuild.
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-letkf-smoke
+  description: two cycles of LETKF at gom_25km, checking the velocity increment
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # Two, which is the smallest number that has a cycle *after* an analysis. One
+  # cycle would produce an increment and never integrate it, and half of what
+  # this checks is what the forecast does with a velocity increment.
+  count: 2
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  # Twenty members, `mem001` through `mem020`, plus the control at `mem000`.
+  size: 20
+  # The control's analysis in a pure LETKF is the posterior mean, which the
+  # filter computes anyway; `config/soca/letkf.yaml` asks for it explicitly.
+  control: true
+  source: offline
+  # `fail_cycle` rather than the `replace_from_mean` a production run would
+  # take. This is the run where a member dying is information: rebuilding it
+  # from the mean would keep the ensemble at twenty and hide the fact that
+  # twenty-one forecasts a cycle on eight cores is a new load for this domain.
+  on_missing_member: fail_cycle
+  # One year of GLORYS per member, 1994 through 2013, recentred onto the
+  # control. Not `tools/ensemble-ic.sh`: perturbations drawn from the static B
+  # carry none of the ocean's flow structure and are identical in velocity,
+  # which would make the question above unanswerable. The README beside it says
+  # how it was built and how to rebuild it.
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  # Two, so both cycles' analysis directories survive the run: `ana` under
+  # `run/` is released by its own cycle's forecast, so the default of one would
+  # leave only the last cycle's, and the increment and spread are the products
+  # being inspected here.
+  keep_cycles: 2
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

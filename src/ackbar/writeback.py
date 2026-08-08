@@ -148,11 +148,11 @@ def apply_analysis(config, analysis, restart, cycle=1):
                 )
             values = np.asarray(source.variables[io][0])
             mask = masks[field["grid"]]
-            if values.ndim == alive.ndim:
-                mask = alive[..., :mask.shape[0], :mask.shape[1]] & mask
+            cropped = (alive[..., :mask.shape[0], :mask.shape[1]]
+                       if values.ndim == alive.ndim else None)
             lines.append(place(target, field, mask, values,
                                limit=limits.get(field["name"]),
-                               relaxation=relaxation))
+                               relaxation=relaxation, alive=cropped))
     return lines
 
 
@@ -168,8 +168,38 @@ def apply_analysis(config, analysis, restart, cycle=1):
 VANISHED = 0.01
 
 
+def fill_down(change, alive):
+    """Carry each column's increment down through its collapsed layers.
+
+    **Not the same as leaving them alone, and the difference is convection.** A
+    vanished layer holds no water, so the increment the filter computed for it
+    is meaningless and must not be used. But leaving the cell at its background
+    value while the live layer above it moves puts a step into the column: the
+    analysis warms the water at the bottom of the ocean by two degrees and the
+    dead layer underneath stays where it was, which is a density inversion the
+    model will happily convect away. On this domain that would be manufactured
+    at the base of a third of all columns at once.
+
+    Copying the last live increment downward instead leaves the column's
+    vertical *gradient* exactly as the background had it through the dead part,
+    so nothing is destabilised that was not already. The value written there is
+    still meaningless, and it is meaningless in the way the model ignores rather
+    than the way it reacts to.
+
+    This is what makes `increment limits` load-bearing rather than a guard: the
+    increment being propagated is the deepest live one, and if that is wrong the
+    error is now repeated down the column instead of confined to one cell.
+    """
+    levels = np.arange(change.shape[0]).reshape(-1, 1, 1)
+    # The index of the deepest live level at or above each cell. A column whose
+    # very first level is dead keeps index 0, so it takes its own value and is
+    # left alone, which is the only sensible answer when there is nothing above.
+    source = np.maximum.accumulate(np.where(alive, levels, 0), axis=0)
+    return np.take_along_axis(change, source, axis=0)
+
+
 def vanished_layers(restart):
-    """Which cells hold enough water to be worth analysing.
+    """Which cells hold enough water for their own increment to mean anything.
 
     **An analysis must not be written into a collapsed layer**, and the reason
     is not tidiness. A vanished layer has no water in it, so nothing constrains
@@ -291,7 +321,7 @@ def increment_relaxation(config, cycle):
     return first + (1.0 - first) * (cycle - 1) / (cycles - 1)
 
 
-def place(target, field, mask, values, limit=None, relaxation=1.0):
+def place(target, field, mask, values, limit=None, relaxation=1.0, alive=None):
     """Write *values* into one variable of an open restart, ocean cells only.
 
     Separate from `apply_analysis` because the values do not always come from an
@@ -338,7 +368,10 @@ def place(target, field, mask, values, limit=None, relaxation=1.0):
             f"restart the forecast cannot read past."
         )
 
-    change = values[where] - view[where]
+    # The increment as a field, so the vertical fill below can see a column.
+    change = values - view
+    if alive is not None and change.ndim == alive.ndim:
+        change = fill_down(change, alive)
 
     # Bounded against the *background*, so the limit is on the increment and
     # not on the state: a temperature is not wrong for being 30 degrees, it is
@@ -361,17 +394,15 @@ def place(target, field, mask, values, limit=None, relaxation=1.0):
     # Relaxation first, then the bound. Scaling is the shape-preserving part and
     # should act on what the filter actually produced; the bound is the tail
     # guard and belongs on what is about to be written.
+    change = change * relaxation
     beyond = 0
-    if relaxation != 1.0 or limit is not None:
-        change = change * relaxation
-        if limit is not None:
-            beyond = int((np.abs(change) > limit).sum())
-            change = limit * np.tanh(change / limit)
-        values = values.copy()
-        values[where] = view[where] + change
+    if limit is not None:
+        beyond = int((np.abs(change[where]) > limit).sum())
+        change = limit * np.tanh(change / limit)
 
-    view[where] = values[where]
+    view[where] = view[where] + change[where]
     target.variables[io][0] = data
+    change = change[where]
 
     # The claim the file makes about itself is now false for this variable, and
     # only for this variable. See the module docstring.
