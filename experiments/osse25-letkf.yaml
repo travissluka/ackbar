@@ -8,7 +8,7 @@
 # It is not a one-layer difference the way the variational three are, and the
 # two places it is not are worth naming rather than discovering:
 #
-# 1. **It has an ensemble**, eighteen members plus the control, which the others
+# 1. **It has an ensemble**, twenty members plus the control, which the others
 #    do not. That is the solver, not a confound: an ensemble filter without an
 #    ensemble is not a thing. But it means this experiment carries an initial
 #    condition the others do not have, and two LETKFs given different ensembles
@@ -21,9 +21,9 @@
 #    left out.
 #
 # **The ensemble is real ocean states, not perturbations.** One GLORYS year per
-# member, 1994 to 2013, each integrated a day under this domain's own boundary
-# and forcing, recentred onto the control, then settled by one more free day.
-# `tools/ensemble-ic-lagged.sh` says why that beats drawing from the static
+# member, 1993 to 2013 and 2016, each integrated a day under this domain's own
+# boundary and forcing, settled by one more free day, then recentred onto the
+# control. `tools/ensemble-ic-lagged.sh` says why that beats drawing from the static
 # background error, and the short version is two-fold: static perturbations
 # carry B's correlation scales rather than the ocean's flow structure, and B
 # says nothing about velocity at all, so every member would have an identical
@@ -31,10 +31,26 @@
 # at 1.32 in surface temperature and 0.74 in sea surface height, where the
 # static-B ensemble it replaces was low by a factor of twelve.
 #
-# Eighteen rather than twenty because two of the twenty could not be integrated
-# at all, freely, with no analysis involved. They are dropped rather than
-# repaired: a member is a sample, and there is nothing to recover from one the
-# model rejects. The ensemble's README records which, and the mapping back.
+# Twenty two years are drawn for twenty members, because the settle drops the
+# ones the model will not integrate freely, and 2014 and 2015 are skipped: the
+# first is the control's own year and the second is the nature run's. A dropped
+# member is not repaired, since a member is a sample and there is nothing to
+# recover from one the model rejects. The ensemble's `provenance.txt` maps each
+# number back to the year behind it.
+#
+# **Settle first, recentre last, and both halves of that are load bearing.** A
+# member arrives from the 24 hour cold start still carrying the interpolation
+# shock, and cannot take an analysis increment until it has shed it; recentring
+# afterwards would leave the ensemble mean a free day ahead of the control rather
+# than on it, which is 0.40 degC and 0.07 m/s here, the latter further off centre
+# than the members are from each other. The filter cannot tell that from
+# information. In this order the mean sits on the control to machine precision in
+# every field, sea surface height included, with the spread untouched.
+#
+# The recentring moves the sea surface through the mass field, which is not a
+# detail: under Z* a column's height *is* `sum(h) - D`, and `ave_ssh` is a
+# diagnostic MOM6 recomputes from it, so shifting the diagnostic alone moves what
+# SOCA reads and not the ocean.
 #
 # **Under-dispersed in sea surface height and velocity is the thing to watch.**
 # Those ratios below one are in exactly the fields the altimeter constrains, so
@@ -73,7 +89,7 @@ vars:
   obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
 ensemble:
-  size: 18
+  size: 20
   # The control is `mem000`, and in a pure LETKF its analysis is the posterior
   # mean, which the filter computes anyway and `config/soca/letkf.yaml` asks
   # for explicitly. Everything scored against the other three experiments is
@@ -81,7 +97,7 @@ ensemble:
   control: true
   source: offline
   on_missing_member: replace_from_mean
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble18-settled
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
 
 forecast:
   # Identical to `osse25-3dvar` and `osse25-3dfgat`, and it has to be: the

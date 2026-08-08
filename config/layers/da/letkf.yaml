@@ -95,29 +95,43 @@ solver:
   # tightening it did not remove the last two, it only changed which members
   # died. A bound acts per point and non-linearly, so it flattens peaks and
   # changes the *shape* of the increment field, and shape is what the model
-  # responds to. Two things fixed it: settling the recentred ensemble with a
-  # free forecast before it is ever used, which is the larger half and lives in
-  # `experiments/osse25-ensemble-settle.yaml`, and relaxing the increment, which
-  # scales every gradient by one number and invents none.
+  # responds to. What fixed it was the ensemble: the members had been recentred
+  # while still carrying the cold start's interpolation shock, and building them
+  # in the other order, one free day and then the recentring, is what made the
+  # increment survivable. `experiments/osse25-ensemble-settle.yaml` carries the
+  # reasoning.
   #
-  # A ramp rather than a constant, because what is left is a spin-up transient.
-  # Cycle 1's background is the ensemble's initial condition, ocean states from
-  # different years, so its innovation is the largest the experiment will see;
-  # every later background is a 24 hour forecast from an analysis that has
-  # already seen the observations. `osse25-3dvar` kept all 45 of its writeback
-  # logs and shows the shape directly: increment rms 0.332 at cycle 1, about
-  # 0.15 by cycle 5, 0.11 from cycle 20 on. A constant low enough to survive
-  # cycle 1 would tax forty cycles for a transient confined to the first few.
+  # **There is no relaxation here, and the reason there does not need to be is
+  # the divergence limit below.** A ramp from 0.25 to 1.0 over five cycles used
+  # to sit here, added while the ensemble was still built in the wrong order.
+  # Removing it showed what it had been hiding: at full strength members die in
+  # `btstep: eta has dropped below bathyT`, in a thin column, every time.
+  # Relaxing the whole increment to buy stability there taxes every correction
+  # everywhere to pay for a handful of cells.
   #
-  # **The right fix is IAU**, which spreads the increment across the forecast
-  # instead of applying all of it between two timesteps, and removes the
-  # violence rather than the correction. MOM6 already implements it, in
-  # `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and `ODA_INCUPD_UV`. The
-  # relaxation goes back to 1.0 when that is wired.
-  increment relaxation:
-    first: 0.25
-    cycles: 5
+  # `ackbar.writeback` still reads `increment relaxation` if an experiment sets
+  # one, which is the escape hatch if a domain turns out to need it.
+  #
+  # **IAU is better than any of this**, and is not wired yet. It spreads the
+  # increment across the forecast instead of applying all of it between two
+  # timesteps, so it removes the violence rather than the correction. MOM6 already
+  # implements it in `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and
+  # `ODA_INCUPD_UV`. These bounds can loosen further when it lands.
 
+  # The velocity increment may not move a column's free surface by more than 0.5%
+  # of that column's own depth in an hour.
+  #
+  # **A bound on divergence rather than on shallow water**, which is the same
+  # question asked properly. Depth is only a proxy: what empties a column is the
+  # divergence of the transport the increment implies, so a strong alongshore
+  # increment on the shelf is harmless and a weak convergent one is not. Scaling
+  # by the column's own depth is what lets a single number cover a 10 m shelf
+  # cell and a 3000 m basin.
+  #
+  # Per hour because that is the timescale the failure has: the column drains
+  # and the model dies inside the first hour, before anything else has responded.
+  # `ackbar.writeback` reports how many faces it reduced, every cycle.
+  increment divergence limit: 0.005
   increment limits:
     sea_water_potential_temperature: 10.0
     sea_water_salinity: 5.0

@@ -10,9 +10,10 @@
 # no observer measures a current and a static B says nothing about one.
 #
 # It is also the test of how much damping is actually needed. The ensemble is
-# settled before use, the staggered outer face is written, and the bounds are
-# loose enough to touch very few cells, so what remains under test is the
-# relaxation ramp alone.
+# recentred through the mass field and settled before use, the staggered outer
+# face is written, and the bounds are loose enough to touch very few cells, so
+# what is under test is whether the increment can now be applied at full
+# strength, with no relaxation at all.
 #
 # **The bar is the 3DVar run, not the free run.** A variational analysis writes
 # no velocity increment and still has substantial velocity skill, because the
@@ -65,8 +66,8 @@ vars:
   obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
 ensemble:
-  # Eighteen members, `mem001` through `mem018`, plus the control at `mem000`.
-  size: 18
+  # Twenty members, `mem001` through `mem020`, plus the control at `mem000`.
+  size: 20
   # The control's analysis in a pure LETKF is the posterior mean, which the
   # filter computes anyway; `config/soca/letkf.yaml` asks for it explicitly.
   control: true
@@ -80,8 +81,8 @@ ensemble:
   # a free forecast. Not `tools/ensemble-ic.sh`: perturbations drawn from the
   # static B carry none of the ocean's flow structure and are identical in
   # velocity, which would make the question above unanswerable. The README
-  # beside it says how it was built and why it is eighteen and not twenty.
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble18-settled
+  # beside it says how it was built and which years the settle dropped.
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
 
 cleanup:
   # Two, so both cycles' analysis directories survive the run: `ana` under
