@@ -10,6 +10,10 @@ Reads `<ensemble dir>/mem*/MOM.res.nc`, writes `<output>/mem*/` with the whole
 restart set copied and the recentred variables replaced. Default output is the
 ensemble directory with `-recentred` appended.
 
+**This is the last step of the ensemble build, after the settle**, and the order
+is load bearing: see `tools/ensemble-ic-lagged.sh` for why running it first
+leaves the mean a free day ahead of the control instead of on it.
+
 ## What it does, in one line
 
 `member += control - mean`, per variable, over every point.
@@ -27,12 +31,23 @@ the same before and after. What changes is only which state the ensemble is an
 ensemble *around*. This is worth being explicit about, because "recentring" is
 easy to hear as something that damages the ensemble.
 
-## What is recentred, and what is not
+## What is recentred
 
-`Temp`, `Salt`, `ave_ssh`, `u`, `v`. Named here rather than read from an
-experiment's `solver.analysis variables`, because at the time an initial
-condition is built there is no experiment: the ensemble is an input to one, and
-several experiments may share it.
+The ocean state: `Temp`, `Salt`, `u`, `v`, and the free surface. Named here
+rather than read from an experiment's `solver.analysis variables`, because at the
+time an initial condition is built there is no experiment: the ensemble is an
+input to one, and several experiments may share it.
+
+**One step of memory is left alone**, and that is a decision rather than an
+omission. The restart also carries `u2` and `v2`, the auxiliary velocities,
+`ubtav` and `vbtav`, the time mean barotropic pair, and the accelerations `CAu`,
+`CAv`, `diffu`, `diffv`. Shifting them was tried. It changes nothing that
+survives a timestep, because the model rebuilds all of them from the state above,
+and on this domain it changed which member fell over: the free surface fix below
+and a shifted `u2`/`v2` together killed a member that either alone left standing,
+at a point where the sea surface was 0.08 m above an 11 m sea floor. A recipe
+whose extra terms are washed out within a step and whose only measurable effect
+is on the marginal columns is a recipe with fewer terms.
 
 `ave_ssh` is included even though MOM6 overwrites it within a timestep, because
 SOCA reads it as `sea_surface_height_above_geoid`. It is the DA's sea surface
@@ -40,11 +55,38 @@ height even when it is not the model's, and an ensemble whose SSH was centred
 somewhere its temperature was not would give the filter an inconsistent
 background.
 
-**`h` is not recentred**, so each member keeps its own layer structure. Under
-Z* that is the member's own free surface, which is what the model will actually
-integrate. Shifting the mass field to match a shifted `ave_ssh` the model
-discards would be inventing a column no member had, and it is the same choice
-`ensemble.replace_from_mean` makes for the same reason.
+## The free surface is moved through `h`, not through `ave_ssh`
+
+An earlier version of this shifted `ave_ssh` and left `h` alone, on the argument
+that each member should keep its own layer structure. The argument is right and
+the conclusion was wrong, because under Z* the mass field *is* the free surface:
+a column's sea surface height is `sum(h) - D` and nothing else, and `ave_ssh` is
+a diagnostic MOM6 recomputes from `h` within a timestep. Shifting it alone
+therefore moves the number SOCA reads and does not move the ocean at all: the
+sample's `h` mean sat 0.26 m rms off the control before that recipe and 0.26 m
+rms off it after.
+
+That matters most now that recentring is the last step before an experiment
+starts. Nothing runs afterwards to reveal the difference, so an ensemble whose
+sea surface height is centred only in the diagnostic is one whose first model
+step un-centres it, in the field the altimeter constrains.
+
+So `h` is recentred, by scaling each column by `(total + delta) / total` rather
+than by adding `control - mean` layer by layer. The two differ in what they do
+to the member:
+
+- Adding the offset per layer drives 0.8% of this domain's cells negative, which
+  is the `implied h<0` crash the domain is already prone to. It also rewrites the
+  interface positions, which are the member's own stratification.
+- Scaling the column moves exactly the column integral, which is exactly the sea
+  surface height, and leaves every interface at the same fraction of the column.
+  The factor is within 2% of one here and cannot change sign, so positivity is
+  preserved by construction rather than by a clip.
+
+`sfc` and `ave_ssh` then take the same `delta` additively, which keeps
+`sum(h) - D = sfc` true for every member if it was true before. The residual `h`
+difference from the control after this is deep layer structure, and it is the
+member's own: leaving it is the point.
 
 ## Every point, including land and the staggered edge
 
@@ -70,8 +112,16 @@ import numpy as np
 #: whatever each member's own year had.
 RESTART = "MOM.res.nc"
 
-#: What gets shifted. See the module docstring for why this is a literal.
-VARIABLES = ("Temp", "Salt", "ave_ssh", "u", "v")
+#: What gets `control - mean` added to it. See the module docstring for why this
+#: is a literal, and for why the second velocity registers are not in it.
+VARIABLES = ("Temp", "Salt", "u", "v")
+
+#: The layer thicknesses, which carry the free surface and are moved by scaling
+#: rather than by adding.
+THICKNESS = "h"
+
+#: The two fields that have to agree with `sum(h) - D` afterwards.
+SURFACE = ("sfc", "ave_ssh")
 
 
 def members(root):
@@ -102,6 +152,29 @@ def mean(paths, name):
     return total / len(paths)
 
 
+def column(thickness):
+    """A column's height, which under Z* is its depth plus its sea surface."""
+    return thickness.sum(axis=1)
+
+
+def surface_offset(paths, control):
+    """How far each column has to move for the ensemble's free surface to centre.
+
+    Taken from the mass field rather than from `sfc`, because the mass field is
+    the one MOM6 believes. Anything that disagrees with it is overwritten on the
+    first step.
+    """
+    return column(read(control, THICKNESS)) - mean_column(paths)
+
+
+def mean_column(paths):
+    total = None
+    for path in paths:
+        values = column(read(path, THICKNESS))
+        total = values if total is None else total + values
+    return total / len(paths)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
@@ -126,24 +199,50 @@ def main():
     out.mkdir(parents=True)
 
     print(f"ensemble-recenter: {len(sources)} member(s) onto {args.control.name}")
+    restarts = [p / RESTART for p in sources]
     offsets = {}
     for name in VARIABLES:
-        offsets[name] = read(control, name) - mean([p / RESTART for p in sources], name)
+        offsets[name] = read(control, name) - mean(restarts, name)
         size = float(np.sqrt(np.mean(offsets[name] ** 2)))
         print(f"  {name:8} shifted by rms {size:.5g}")
+
+    delta = surface_offset(restarts, control)
+    print(f"  {'surface':8} shifted by rms {float(np.sqrt(np.mean(delta ** 2))):.5g}"
+          f", through {THICKNESS} and {' and '.join(SURFACE)}")
 
     for source in sources:
         target = out / source.name
         shutil.copytree(source, target)
         with netCDF4.Dataset(target / RESTART, "r+") as data:
             data.set_auto_mask(False)
-            for name in VARIABLES:
-                data.variables[name][:] = read(source / RESTART, name) + offsets[name]
+
+            def put(name, values):
+                data.variables[name][:] = values
                 # The file's claim about itself is now false for this variable.
                 # Same rule as `ackbar.writeback.place`, and for the same reason:
                 # MOM6 refuses a restart whose checksum disagrees with its data.
                 if "checksum" in data.variables[name].ncattrs():
                     data.variables[name].delncattr("checksum")
+
+            for name in VARIABLES:
+                put(name, read(source / RESTART, name) + offsets[name])
+
+            thickness = read(source / RESTART, THICKNESS)
+            height = column(thickness)
+            scale = (height + delta) / height
+            # A guard rather than a clip. A non-positive factor means this
+            # sample's mean column is further from the control than the column
+            # is deep, and a state built by flooring it would be a state no
+            # member had, silently, in the one variable the model is least
+            # forgiving about.
+            if not np.all(scale > 0):
+                sys.exit(f"ensemble-recenter: {source.name} would recentre to a "
+                         f"column of zero or negative height (factor "
+                         f"{float(scale.min()):.4g}); the sample is not one this "
+                         f"control sits inside")
+            put(THICKNESS, thickness * scale[:, np.newaxis])
+            for name in SURFACE:
+                put(name, read(source / RESTART, name) + delta)
 
     (out / "README.md").write_text(
         f"# Recentred ensemble\n\n"
@@ -151,8 +250,12 @@ def main():
         f"by `tools/ensemble-recenter.py`. Every perturbation, and therefore the\n"
         f"whole sample covariance, is unchanged: only the state the ensemble is\n"
         f"an ensemble around is different.\n\n"
-        f"Recentred: {', '.join(VARIABLES)}. Not `h`, so each member keeps its\n"
-        f"own layer structure; see the tool's docstring.\n\n"
+        f"Recentred: {', '.join(VARIABLES)}, and the free surface, which moves\n"
+        f"by scaling each column of `{THICKNESS}` and shifting\n"
+        f"{' and '.join(f'`{name}`' for name in SURFACE)} to match. Under Z* the\n"
+        f"mass field is the sea surface height, so recentring the diagnostic\n"
+        f"alone is undone by the model on the first step; see the tool's\n"
+        f"docstring for the measurement.\n\n"
         f"Rebuild with:\n\n"
         f"    tools/ensemble-recenter.py {args.ensemble} {args.control}\n")
     print(f"ensemble-recenter: wrote {len(sources)} member(s) to {out}")

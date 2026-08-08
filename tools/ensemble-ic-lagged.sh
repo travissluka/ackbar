@@ -1,12 +1,18 @@
 #!/bin/bash
 # Build an ensemble initial condition from the same calendar date in other years.
 #
-#   tools/ensemble-ic-lagged.sh <domain> <control ic> <first year> <last year>
+#   tools/ensemble-ic-lagged.sh <domain> <control ic> <year>...
 #   tools/ensemble-ic-lagged.sh gom_25km \
-#       $ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00 1994 2013
+#       $ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00 \
+#       $(seq 1993 2013) 2016
 #
 # Writes `<control ic>/lagged<N>/mem001..N/`, beside the state the members are
 # an ensemble around, which is what `ensemble.initial_condition` names.
+#
+# The years are listed rather than given as a range because the useful set is
+# never a range: the control's own year and the nature run's year both have to
+# come out of the middle of it, and a sample has to be over-drawn because some
+# members do not survive the settle that follows.
 #
 # ---------------------------------------------------------------------------
 # Why this and not `tools/ensemble-ic.sh`
@@ -60,32 +66,42 @@
 # beforehand; the domain's own is the one the control was built from.
 #
 # ---------------------------------------------------------------------------
-# Two directories, and only one of them is the product
+# This is the first of three steps, and its output is not the product
 #
 # `lagged<N>/` is the raw sample: N years of ocean, whose mean is a climatology
-# of this date and not the control. `ensemble<N>/` is that sample recentred onto
-# the control, and it is what an experiment names with
-# `ensemble.initial_condition`. The conventional name is the product on purpose;
-# the intermediate is the one that has to be read twice.
+# of this date and not the control. Two steps follow it, and neither belongs
+# here:
 #
-# Recentring is `tools/ensemble-recenter.py`, run at the end of this rather than
-# folded into it, because it is arithmetic over restart files and this is a
-# fetch-and-integrate loop. It adds `control - mean` to every member, which
-# moves the mean onto the control and leaves every perturbation, and therefore
-# the whole sample covariance, exactly as it was.
+#     experiments/osse25-ensemble-settle.yaml   one free day, then
+#     tools/ensemble-collect.sh                 renumber the survivors, then
+#     tools/ensemble-recenter.py                move the mean onto the control
 #
-# `lagged<N>/` is kept rather than reaped: it is the input recentring runs on,
-# so keeping it makes a re-centre free where rebuilding it costs N downloads.
-# It is derived data and safe to delete once the ensemble is in use.
+# **The recentring is last on purpose.** It used to run at the end of this
+# script, before the settle, and that leaves the ensemble mean one free day
+# ahead of the control rather than on it: measured on this domain, 0.40 degC in
+# temperature and 0.07 m/s in velocity, the latter further off centre than the
+# members are from each other. An ensemble filter cannot tell that offset from
+# information and writes it into the control on the first cycle.
+#
+# The settle cannot move either, because its whole job is to shed the shock this
+# script's 24 hour leg leaves behind, and a member has to be a state the model
+# will integrate before it is worth recentring.
+#
+# `lagged<N>/` is kept rather than reaped: it is what the settle runs on, and
+# each member records its year, so adding a year to the draw later re-downloads
+# only the year that was added. It is derived data and safe to delete once the
+# ensemble is in use.
 set -euo pipefail
 
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
-DOMAIN=${1:?usage: ensemble-ic-lagged.sh <domain> <control ic> <first year> <last year>}
-CONTROL=${2:?usage: ensemble-ic-lagged.sh <domain> <control ic> <first year> <last year>}
-FIRST=${3:?usage: ensemble-ic-lagged.sh <domain> <control ic> <first year> <last year>}
-LAST=${4:?usage: ensemble-ic-lagged.sh <domain> <control ic> <first year> <last year>}
+USAGE="usage: ensemble-ic-lagged.sh <domain> <control ic> <year>..."
+DOMAIN=${1:?$USAGE}
+CONTROL=${2:?$USAGE}
+shift 2
+[ $# -gt 0 ] || { echo "$USAGE" >&2; exit 1; }
+YEARS=("$@")
 
 [ -d "$CONTROL" ] || { echo "ensemble-ic-lagged: $CONTROL does not exist" >&2; exit 1; }
 
@@ -97,12 +113,17 @@ TARGET=${STAMP:0:4}-${STAMP:4:2}-${STAMP:6:2}     # 2015-07-12
 START=$(date -u -d "$TARGET - 1 day" +%Y-%m-%d)   # 2015-07-11
 MONTHDAY=$(date -u -d "$START" +%m-%d)            # 07-11
 
-MEMBERS=$((LAST - FIRST + 1))
+# What the members were integrated over, so a domain whose sea floor has changed
+# cannot reuse them. `cksum` rather than a modification time, because copying the
+# domain in changes the latter and not the water.
+TOPOGRAPHY=$(cksum "$ACKBAR_STATIC_ROOT/domain/$DOMAIN/INPUT/ocean_topog.nc" | cut -d" " -f1)
+
+MEMBERS=${#YEARS[@]}
 OUT=$CONTROL/lagged$MEMBERS
 INPUT=$ACKBAR_STATIC_ROOT/domain/$DOMAIN/INPUT
 SAVED=$INPUT/ic.nc.ensemble-ic-lagged.saved
 
-echo "ensemble-ic-lagged: $MEMBERS member(s), GLORYS $MONTHDAY of $FIRST..$LAST"
+echo "ensemble-ic-lagged: $MEMBERS member(s), GLORYS $MONTHDAY of ${YEARS[*]}"
 echo "ensemble-ic-lagged: integrated $START -> $TARGET, written to $OUT"
 
 # Put the domain back the way it was found, however this exits. The trap is set
@@ -119,10 +140,21 @@ cp -a "$INPUT/ic.nc" "$SAVED"
 
 mkdir -p "$OUT"
 MEMBER=0
-for YEAR in $(seq "$FIRST" "$LAST"); do
+for YEAR in "${YEARS[@]}"; do
     MEMBER=$((MEMBER + 1))
     NAME=$(printf "mem%03d" "$MEMBER")
     SLUG=lagged-$YEAR
+
+    # The year a member already holds, if it holds one, *and* the sea floor it
+    # was integrated over. Re-running this to add a year to a draw would
+    # otherwise re-download every year already in it, and the download is the
+    # only slow part; keying on the year alone would silently keep members built
+    # over a bathymetry the domain no longer has, which is a restart whose layer
+    # thicknesses do not sum to the column they claim.
+    if [ "$(cat "$OUT/$NAME/year" 2>/dev/null)" = "$YEAR $TOPOGRAPHY" ]; then
+        echo "ensemble-ic-lagged: $NAME is already GLORYS $YEAR-$MONTHDAY"
+        continue
+    fi
 
     echo "ensemble-ic-lagged: $NAME from GLORYS $YEAR-$MONTHDAY"
     env -u PYTHONPATH "$ACKBAR_ROOT/.venv-data/bin/python" \
@@ -137,36 +169,43 @@ for YEAR in $(seq "$FIRST" "$LAST"); do
     rm -rf "$OUT/$NAME"
     cp -a "$ACKBAR_STATIC_ROOT/ic/$DOMAIN/$SLUG/$STAMP" "$OUT/$NAME"
     rm -rf "${ACKBAR_STATIC_ROOT:?}/ic/$DOMAIN/$SLUG"
+    # Written last, so a member interrupted part way through is rebuilt rather
+    # than believed. The restart itself records the GLORYS day it came from, but
+    # not in anything cheap to read, and the member index is a position in this
+    # ensemble rather than a year.
+    echo "$YEAR $TOPOGRAPHY" > "$OUT/$NAME/year"
 done
 
 cat > "$OUT/README.md" <<EOF
 # Lagged ensemble initial condition (the raw sample)
 
-$MEMBERS members for \`$DOMAIN\`, valid at $TARGET, one per year from $FIRST to
-$LAST. Each is GLORYS12V1 for $MONTHDAY of its own year, asserted to be an
-estimate of $START and integrated 24 hours to $TARGET under this domain's own
-boundary and forcing, exactly as the control beside this was.
+$MEMBERS members for \`$DOMAIN\`, valid at $TARGET, one per year: ${YEARS[*]}.
+Each is GLORYS12V1 for $MONTHDAY of its own year, asserted to be an estimate of
+$START and integrated 24 hours to $TARGET under this domain's own boundary and
+forcing, exactly as the control beside this was.
 
-Each member's \`MOM.res.nc\` records the GLORYS day it came from; the ensemble
-order is year order, so \`mem001\` is $FIRST.
+Each member holds the year it was drawn from, and a checksum of the topography it
+was integrated over, in \`year\`. The ensemble order is the order the years were
+given, so \`mem001\` is ${YEARS[0]}.
 
-**Not recentred, and therefore not the one to run.** The mean here is a
-$MEMBERS year climatology of $MONTHDAY, not the control. The product is
-\`../ensemble$MEMBERS\`, which is this sample with \`control - mean\` added to
-every member; that moves the mean onto the control and leaves every
-perturbation, and the whole sample covariance, unchanged.
+**Neither settled nor recentred, and therefore not the one to run.** The mean
+here is a $MEMBERS year climatology of $MONTHDAY, not the control, and every
+member still carries the shock of being interpolated from a z-level field a day
+ago. Two steps follow, in this order:
 
-This directory is kept because recentring runs on it. It is derived data and
-safe to delete once the ensemble beside it is in use.
+    ackbar create experiments/osse25-ensemble-settle.yaml
+    ackbar start osse25-ensemble-settle
+    tools/ensemble-collect.sh <that run's rst dir> $(basename "$OUT") <output dir> <count>
+    tools/ensemble-recenter.py <output dir> $CONTROL
 
-Rebuild both with:
+This directory is kept because the settle runs on it. It is derived data and
+safe to delete once the ensemble is in use, and re-running the command below
+reuses whatever of it is still here rather than downloading it again.
 
-    tools/ensemble-ic-lagged.sh $DOMAIN $CONTROL $FIRST $LAST
+Rebuild with:
+
+    tools/ensemble-ic-lagged.sh $DOMAIN $CONTROL ${YEARS[*]}
 EOF
 
-echo "ensemble-ic-lagged: recentring onto $(basename "$CONTROL")"
-env -u PYTHONPATH "$ACKBAR_ROOT/.venv-data/bin/python" \
-    "$ACKBAR_ROOT/tools/ensemble-recenter.py" "$OUT" "$CONTROL" \
-    --output "$CONTROL/ensemble$MEMBERS"
-
-echo "ensemble-ic-lagged: name it with  ensemble.initial_condition: $CONTROL/ensemble$MEMBERS"
+echo "ensemble-ic-lagged: wrote $MEMBERS member(s) to $OUT"
+echo "ensemble-ic-lagged: settle them next, with experiments/osse25-ensemble-settle.yaml"

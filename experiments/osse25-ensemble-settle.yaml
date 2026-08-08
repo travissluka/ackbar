@@ -1,23 +1,30 @@
-# One cycle of free forecast, to settle the recentred ensemble.
+# One cycle of free forecast, to settle the lagged ensemble before it is
+# recentred.
 #
 # Not a science experiment. Its only product is `run/<cycle>/rst/mem###`, which
-# becomes the ensemble every LETKF experiment actually starts from.
+# `tools/ensemble-collect.sh` renumbers and `tools/ensemble-recenter.py` then
+# recentres into the ensemble every LETKF experiment actually starts from.
 #
-# **Why it exists.** `tools/ensemble-recenter.py` adds `control - mean` to every
-# member. That leaves the ensemble covariance bit-identical, which is the
-# property the filter cares about, and it says nothing at all about whether each
-# member is still a state the model is comfortable integrating. It is not: the
-# shift is rms 0.8 degC in temperature, applied instantaneously to a balanced
-# ocean, and what comes out the other side is balanced only to the accuracy that
-# a common additive offset happens to preserve.
-#
-# The symptom is precise and was expensive to find. A recentred member
-# integrates perfectly well on its own, and dies in
+# **Why it exists.** A member arrives here having been interpolated from a
+# z-level GLORYS field and integrated 24 hours by `coldstart-ic.sh`, which is
+# the shortest run that writes a self-consistent restart set and not long enough
+# to shed the interpolation shock. The symptom is precise and was expensive to
+# find: such a member integrates perfectly well on its own and dies in
 # `MOM_regridding: adjust_interface_motion() - implied h<0` when handed an
 # analysis increment whose maximum is under 1 degC, which is *smaller* than what
-# `osse25-3dvar` writes into the control every cycle without trouble. So the
-# members are not broken, they are marginal: stable when undisturbed, and out of
-# room when nudged. A day of free integration is what gives them that room back.
+# `osse25-3dvar` writes into the control every cycle without trouble. The members
+# are not broken, they are marginal: stable when undisturbed and out of room when
+# nudged. A second free day gives them that room back.
+#
+# **It runs before the recentring, and the order is the point.** Recentring adds
+# `control - mean` to every member, so a settle that runs *after* it hands back a
+# mean that is one free day ahead of the control rather than on it, and measured
+# here that is 0.40 degC in temperature and 0.07 m/s in velocity, the latter
+# further off centre than the members are from each other. The filter cannot tell
+# that offset from information and writes it into the control as an increment on
+# the first cycle. Recentring last costs nothing and removes it exactly: the
+# members are balanced by then, so the shift lands on a settled ocean rather than
+# on a shock.
 #
 # It has to be an experiment rather than a step inside `ensemble-ic-lagged.sh`
 # because `coldstart-ic.sh` initializes from a z-level `ic.nc` and there is no
@@ -41,14 +48,21 @@ cycle:
   count: 1
 
 ensemble:
-  size: 20
+  # Twenty two, for an ensemble of twenty. The draw is over-sized because this
+  # is the run that decides which members exist: a member that cannot be
+  # integrated freely for one day is not a sample of anything and is dropped,
+  # and which member that is has moved every time the recentring recipe changed
+  # at all. The failures are all in ten to twenty five metre columns on the
+  # shelf, where this domain's sea floor is close enough to the surface that a
+  # shifted state is occasionally a state MOM6 will not take.
+  size: 22
   control: true
   source: none
   # Every member matters here, because every member is the product. A member
   # rebuilt from the mean would be a state with no independent information
   # sitting in an ensemble whose whole purpose is to carry some.
   on_missing_member: fail_cycle
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/lagged22
 
 cleanup:
   # Nothing may be reaped: the restarts are the product.

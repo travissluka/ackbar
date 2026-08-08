@@ -169,12 +169,22 @@ wrong makes the experiment look better than it is:
   side.
 - **The control is not the truth at the DA start date**, which is where the
   initial error comes from. It is the whole reason there is anything to correct.
-- **Recentred states are not model states.** The sum is imbalanced, and salinity
-  and layer thickness can leave their physical range. The recentring step
-  therefore has to clip thickness and salinity and report how much it clipped;
-  a silent clip is a spread that is not the spread that was sampled. One cycle
-  of forecast reconciles most of the imbalance, which is why cycle 1's analysis
-  is not the one to read.
+- **Recentred states are not model states.** The sum is imbalanced, and layer
+  thickness can leave its physical range. `tools/ensemble-recenter.py` therefore
+  moves the free surface by scaling each column of `h` rather than by adding an
+  offset layer by layer, which keeps thickness positive by construction instead
+  of by a clip; a silent clip is a spread that is not the spread that was
+  sampled. What remains is settled by one free forecast before the ensemble is
+  used at all, in `experiments/osse25-ensemble-settle.yaml`, because a recentred
+  member integrates fine alone and dies on an increment smaller than one a
+  variational run writes every cycle.
+
+- **Recentre the mass field, not a diagnostic of it.** Under Z* a column's sea
+  surface height is `sum(h) - D` and nothing else, so recentring `ave_ssh` while
+  leaving `h` alone recentres a number MOM6 recomputes on its first step. Doing
+  that here left the ensemble mean further from the control in velocity than the
+  members were from each other, which the filter then wrote into the control as
+  an increment it mistook for information.
 
 ### D. Observations
 
