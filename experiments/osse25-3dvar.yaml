@@ -70,10 +70,40 @@ vars:
   # would score as ordinary observation error.
   obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
+forecast:
+  # Five day forecasts off every cycle, which is the lead axis the cycling
+  # comparison does not have. The background scored against the truth every
+  # cycle is a 24 hour forecast, so without this the whole experiment answers
+  # at one lead and says nothing about whether a correction persists.
+  #
+  # `every: PT24H` rather than a coarser cadence because these runs are twenty
+  # minutes: the extra integration is five times the cycling and still under an
+  # hour. Note what it does *not* buy. Forecasts launched a day apart share
+  # almost their whole initial state and the mesoscale decorrelation time here
+  # is several days, so forty-five launches over forty-five days are worth
+  # closer to ten independent samples. What the density does buy is a paired
+  # difference against `osse25-3dfgat`, same launches and same valid times, in
+  # which the autocorrelation is common to both and largely cancels.
+  extended:
+    length: P5D
+    every: PT24H
+    # Which leads a full state is kept at, and therefore where the skill curve
+    # has points: F024 through F120. Without it the run keeps one state, at the
+    # end, and a curve with one point on it is not a curve.
+    keep_states: PT24H
+    # What the model writes for the departures, which wants to be finer than
+    # the kept states and is set to the truth archive's own cadence. A five day
+    # forecast crosses five diurnal cycles, and the surface temperature result
+    # this experiment exists to measure is a timing result; see `docs/osse.md`
+    # section G.
+    slots: PT6H
+
 cleanup:
   # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
   # `post.state`, so nothing has to be held for a promotion step at the end;
-  # see `tools/local/promote-truth.sh` and the note it carries.
+  # see `tools/local/promote-truth.sh` and the note it carries. The long
+  # forecast's kept states are products under `fcst/` and are not reaped with
+  # the restarts that produced them.
   keep_cycles: 1
 
 model:

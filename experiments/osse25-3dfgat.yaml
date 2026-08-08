@@ -1,0 +1,88 @@
+# The quarter degree OSSE's 3D-FGAT.
+#
+# `osse25-3dvar` with the window changed and nothing else, in the same sense
+# that `osse25-3dvar` is `osse25-noda` with the solver changed: same domain,
+# same dates, same initial condition, same thirteen observers, same observation
+# archive, same background error. What differs is *when* each departure is
+# computed, and that is the whole comparison.
+#
+# 3DVar compares every observation in a 24 hour window against one state at the
+# window's centre. The observations in this archive are not at the centre: the
+# altimeter tracks span 10 to 13 hours, the SST swaths 13 to 16, SMAP 23, and
+# the in-situ platforms sit on the truth's own 6 hourly stamps across 18. So
+# each one currently carries up to 12 hours of ocean evolution as if it were
+# observation error. FGAT computes it against the slot nearest its own time
+# instead, and solves the same single increment at the centre.
+#
+# **What this cannot claim.** FGAT's O-B is better than 3DVar's partly by
+# construction, because a departure taken at the right time is a smaller
+# departure whether or not the analysis is better. The referee is
+# `tools/local/osse-state-error.py` against the 12km truth, not the O-B table.
+# Report both, and say which is which.
+#
+# **What it costs.** The window's far half lies after the next analysis time and
+# only this cycle's forecast can produce it, so the forecast integrates 36 hours
+# per cycle instead of 24. One MOM6 run, not a chain, but half again the model
+# time; see `forecast_overshoot` in `ackbar/config/jobtime.py`.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/corr_vt_cycled
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-3dfgat
+  description: OSSE, gom_25km 3D-FGAT against the gom_12km truth
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 45
+
+solver:
+  window:
+    type: 'fgat'
+
+forecast:
+  # Six hourly, because that is the cadence of the truth the observations were
+  # drawn from. `tools/obs-archive-osse.py`'s `TruthRun` samples the truth state
+  # *nearest* each observation's time rather than interpolating between the two
+  # that bracket it, so an observation's synthetic value already carries up to
+  # three hours of representativeness error and no trajectory resolved finer
+  # than six hours can remove it. PT3H slots would double the model output and
+  # the analysis's read for a resolution the observations do not have. If the
+  # truth is ever re-promoted at 3 hourly, this is the line to change.
+  #
+  # Four states inside the 24 hour window, plus the background at its start.
+  slots: PT6H
+
+  # Identical to `osse25-3dvar`'s, and it has to be: the point of the pair is a
+  # paired difference at each lead, so the launches and the valid times must
+  # match. That file carries the reasoning for the cadences.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

@@ -246,6 +246,59 @@ It reads each experiment's verification output and produces one table and one
 figure set. It is the stated premise of the repository and it does not exist
 yet; see [What has to be built](#what-has-to-be-built).
 
+### G. The diurnal trap in a 3D window
+
+**A 3D window aliases the diurnal SST cycle into a bias at the analysis hour,
+and it is large enough to reverse the sign of the SST result.** This is a
+property of the configuration and not of the covariance, and it is worth
+stating here because every diagnostic that could catch it points the wrong way.
+
+3DVar compares every observation in the window against one state at the
+window's centre. The SST observations are not at the centre: a swath crosses
+this domain over a dozen hours and the network's times are spread across the
+whole window, so their mean is near the *daily* mean. The analysis is valid at
+the centre. Assimilating them as if they were all valid there pulls the
+analysis from the centre's SST toward the daily mean, every cycle, in the same
+direction, and the cycling makes it persistent.
+
+The size of the offset is not a free parameter. It is the truth's own
+domain-mean SST at the analysis hour minus its daily mean, which is measured
+from the truth archive directly:
+
+```python
+# domain-mean SST by UTC hour, over the promoted truth
+for path in sorted(truth.glob("2015*.nc")):
+    hour = path.stem[9:11]                       # 20150712T0600.nc
+    with netCDF4.Dataset(path) as source:
+        by_hour[hour].append(np.nanmean(source["temperature"][0]))
+```
+
+Run that before reading any SST skill number from a 3D experiment. If the
+spread across hours is comparable to the SST error being claimed, the claim is
+about the window and not about the analysis.
+
+Three things follow, and all three are counter-intuitive:
+
+- **The state-space SST error can rise while every SST O-B falls.** The cold
+  background fits observations whose mean is the daily mean *better* than a
+  correct one does. Both numbers are right; they are answering different
+  questions.
+- **The de-biased error is the diagnostic**, not the rms. A 3D run's SST
+  pattern error can beat the free run's while its rms loses to it, and the rms
+  is the number a reader takes.
+- **FGAT is the fix and not a tuning knob.** `da/variational` with
+  `solver.window.type: fgat` and a `forecast.slots` cadence compares each
+  observation against the state nearest its own time and solves the same single
+  increment at the centre. Nothing about the background error changes.
+
+Two bounds on how well it can be shown. `tools/obs-archive-osse.py` samples the
+truth state *nearest* each observation rather than interpolating, so an
+observation carries up to half the truth's cadence of ocean evolution as
+representativeness error, and in a diurnally varying field that is a floor
+under any SST score. And `forecast.slots` finer than the truth's cadence buys
+nothing: it resolves time the observations do not carry. Promote the truth at
+the cadence the diurnal cycle needs, then set the slots to match it.
+
 ## What has to be built
 
 In dependency order. Items 1 to 3 are workflow bodies that are currently
