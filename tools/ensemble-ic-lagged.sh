@@ -88,9 +88,13 @@
 # will integrate before it is worth recentring.
 #
 # `lagged<N>/` is kept rather than reaped: it is what the settle runs on, and
-# each member records its year, so adding a year to the draw later re-downloads
-# only the year that was added. It is derived data and safe to delete once the
-# ensemble is in use.
+# each member records its year and the sea floor it was integrated over, so
+# re-running this only redoes what actually changed. The fetched GLORYS fields
+# are cached separately, under `ic/<domain>/glorys-ic-cache`, because they depend
+# on the horizontal grid and not on the bathymetry: changing the sea floor
+# invalidates every member's restart and none of its input, and re-drawing then
+# costs seconds of cold start rather than an hour of downloads. Both are derived
+# data and safe to delete once the ensemble is in use.
 set -euo pipefail
 
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -121,6 +125,7 @@ TOPOGRAPHY=$(cksum "$ACKBAR_STATIC_ROOT/domain/$DOMAIN/INPUT/ocean_topog.nc" | c
 MEMBERS=${#YEARS[@]}
 OUT=$CONTROL/lagged$MEMBERS
 INPUT=$ACKBAR_STATIC_ROOT/domain/$DOMAIN/INPUT
+CACHE=$ACKBAR_STATIC_ROOT/ic/$DOMAIN/glorys-ic-cache
 SAVED=$INPUT/ic.nc.ensemble-ic-lagged.saved
 
 echo "ensemble-ic-lagged: $MEMBERS member(s), GLORYS $MONTHDAY of ${YEARS[*]}"
@@ -156,10 +161,25 @@ for YEAR in "${YEARS[@]}"; do
         continue
     fi
 
-    echo "ensemble-ic-lagged: $NAME from GLORYS $YEAR-$MONTHDAY"
-    env -u PYTHONPATH "$ACKBAR_ROOT/.venv-data/bin/python" \
-        "$ACKBAR_ROOT/tools/fetch-glorys.py" ic "$DOMAIN" \
-        "$YEAR-$MONTHDAY" --valid-at "$START" >/dev/null
+    # The fetched field is cached, because it does not depend on the sea floor
+    # and re-drawing the ensemble usually does. `fetch-glorys.py ic` reads
+    # `ocean_hgrid.nc` and never `ocean_topog.nc`, so a smoothing change
+    # invalidates every member's *restart* and none of its input, and the
+    # download is minutes where the cold start that follows is seconds.
+    CACHED=$CACHE/$YEAR-$MONTHDAY-valid-$START.nc
+    if [ -s "$CACHED" ]; then
+        echo "ensemble-ic-lagged: $NAME from GLORYS $YEAR-$MONTHDAY (cached)"
+        cp -a "$CACHED" "$INPUT/ic.nc"
+    else
+        echo "ensemble-ic-lagged: $NAME from GLORYS $YEAR-$MONTHDAY"
+        env -u PYTHONPATH "$ACKBAR_ROOT/.venv-data/bin/python" \
+            "$ACKBAR_ROOT/tools/fetch-glorys.py" ic "$DOMAIN" \
+            "$YEAR-$MONTHDAY" --valid-at "$START" >/dev/null
+        mkdir -p "$CACHE"
+        # Written under a temporary name and moved, so an interrupted copy is
+        # not a cache entry that looks complete.
+        cp -a "$INPUT/ic.nc" "$CACHED.partial" && mv "$CACHED.partial" "$CACHED"
+    fi
 
     # Named for the year it came from rather than for the member index, because
     # the index is a position in this ensemble and the year is what the state
