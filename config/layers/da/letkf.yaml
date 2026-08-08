@@ -101,16 +101,31 @@ solver:
   # increment survivable. `experiments/osse25-ensemble-settle.yaml` carries the
   # reasoning.
   #
-  # **There is no relaxation here, and the reason there does not need to be is
-  # the divergence limit below.** A ramp from 0.25 to 1.0 over five cycles used
-  # to sit here, added while the ensemble was still built in the wrong order.
-  # Removing it showed what it had been hiding: at full strength members die in
+  # **There is no relaxation here, and no divergence bound either. The sea floor
+  # is what makes that safe.** A ramp from 0.25 to 1.0 over five cycles used to
+  # sit here, added while the ensemble was still built in the wrong order.
+  # Removing it showed what it had been hiding: at full strength members died in
   # `btstep: eta has dropped below bathyT`, in a thin column, every time.
-  # Relaxing the whole increment to buy stability there taxes every correction
-  # everywhere to pay for a handful of cells.
   #
-  # `ackbar.writeback` still reads `increment relaxation` if an experiment sets
-  # one, which is the escape hatch if a domain turns out to need it.
+  # An `increment divergence limit` replaced the ramp and did keep every member
+  # alive, which made it look like the answer. It was treating the symptom. The
+  # columns were draining because `gom_25km`'s imported bathymetry put a 3.5 m
+  # cell against a 4083 m one, and once `tools/smooth-topography.py` capped the
+  # steepness at r <= 0.9 the bound stopped being necessary: five analysed cycles
+  # at full strength with it disabled, twenty one of twenty one forecasts every
+  # cycle. `docs/domains.md` has the measurements.
+  #
+  # Removing it is not tidiness. Measured on a real analysis it was cutting the
+  # velocity increment at 16% of wet cells, by a median factor of 0.48, and more
+  # than half of those cells were deeper than 200 m rather than the thin ones it
+  # was justified by. That is 17% of the depth-weighted velocity increment
+  # removed every cycle, and the count per cycle plateaued rather than decaying,
+  # so it was a standing constraint on the analysis and not a spin-up guard.
+  #
+  # `ackbar.writeback` still reads both `increment relaxation` and `increment
+  # divergence limit` if an experiment sets one. `divergence_scaling` is tested
+  # and stays: a domain whose sea floor cannot be capped is exactly what it is
+  # for. Do not switch it on without measuring what it removes.
   #
   # **IAU is better than any of this**, and is not wired yet. It spreads the
   # increment across the forecast instead of applying all of it between two
@@ -118,20 +133,10 @@ solver:
   # implements it in `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and
   # `ODA_INCUPD_UV`. These bounds can loosen further when it lands.
 
-  # The velocity increment may not move a column's free surface by more than 0.5%
-  # of that column's own depth in an hour.
-  #
-  # **A bound on divergence rather than on shallow water**, which is the same
-  # question asked properly. Depth is only a proxy: what empties a column is the
-  # divergence of the transport the increment implies, so a strong alongshore
-  # increment on the shelf is harmless and a weak convergent one is not. Scaling
-  # by the column's own depth is what lets a single number cover a 10 m shelf
-  # cell and a 3000 m basin.
-  #
-  # Per hour because that is the timescale the failure has: the column drains
-  # and the model dies inside the first hour, before anything else has responded.
-  # `ackbar.writeback` reports how many faces it reduced, every cycle.
-  increment divergence limit: 0.005
+  # A guard against a single wild point, not a control on the analysis. Measured
+  # over a cycle these touch 0.09% of live velocity points, with the 99.9th
+  # percentile of the increment at 0.487 m/s against the 0.5 bound, so they clip
+  # the tail rather than the shoulder. That is what a limit here should cost.
   increment limits:
     sea_water_potential_temperature: 10.0
     sea_water_salinity: 5.0

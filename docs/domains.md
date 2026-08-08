@@ -134,24 +134,32 @@ Which resolutions carry a smoothed field is a property of the data, not of this
 file: `ocean_topog.nc.unsmoothed` sits beside the field it replaced wherever the
 tool has run, and the file it writes records the cap in a `smoothed` attribute.
 
-**The cap and the divergence limit are one decision, not two.** `gom_25km`
-survives at 0.8 with no protection on the increment at all, and at 0.9 with
-`increment divergence limit` doing the rest. The looser cap is chosen because it
-moves less sea floor, 343 cells rather than 468, and the limiter carries the
-remainder.
+**The cap replaced the divergence bound rather than sharing the work with it.**
+The two arrived together, which made it impossible to tell which one was keeping
+members alive, so they were separated: at r <= 0.9 with `increment divergence
+limit` disabled entirely, five analysed cycles ran twenty one of twenty one
+forecasts with every job completing. The bound is not what the domain needs. The
+sea floor is.
 
-It carries it permanently, not just through spin-up. The count halves from the
-first analysis to the second, about a thousand face pairs per member down to six
-hundred, and then flattens rather than continuing down. So a few hundred faces per
-member are being held back every cycle for as long as the experiment runs. That is
-accepted here rather than tuned away: what the domain has to demonstrate is a
-stable cycling LETKF, and the analysis it produces is not a result anyone reads.
-The one quantity that does keep falling is the count of cells the limiter cannot
-bring under the bound within its ten passes.
+That matters because the bound was not cheap. Measured on a real analysis with
+`writeback.divergence_scaling` itself, it cut the velocity increment at 16% of
+wet cells by a median factor of 0.48, and more than half of those cells were
+deeper than 200 m rather than the thin ones the bound was justified by. Summed,
+17% of the depth-weighted velocity increment, every cycle, consistently across
+every member. And it was not a spin-up guard: the count per cycle drops by half
+from the first analysis to the second and then sits between 500 and 650 for as
+long as the experiment runs.
 
-Do not carry the acceptance forward. The trade is only defensible because
-`gom_25km` is the plumbing domain, and the reason to expect it to evaporate at
-finer resolution is the same reason the cliff is there in the first place.
+Contrast the per-point `increment limits`, which stay. Those touch 0.09% of live
+velocity points, with the increment's 99.9th percentile at 0.487 m/s against
+their 0.5 bound, so they clip a tail. That is the cost a guard should have.
+
+Two traps this left behind, both worth naming. Judging a rung of the sweep by
+counting surviving `rst` directories reads a healthy run as a dead one, because
+`cleanup.keep_cycles` removes an older cycle's restarts on schedule; count
+`submitted.*` and `sacct` states instead. And three cycles is not enough to call
+a trend: the fire count looked like it had flattened at cycle 3, fell 10% at
+cycle 4, then held. Nine cycles is what showed the shape.
 
 **`MINIMUM_DEPTH` was not changed and probably does not need to be.** It is 10 m
 in `gom/common/MOM_input` for every Gulf resolution, and the imported topography
