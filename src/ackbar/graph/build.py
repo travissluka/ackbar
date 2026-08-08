@@ -577,9 +577,13 @@ def _check_ensemble_window(config):
     while its B stays at the analysis time. That asymmetry between the two
     columns is a fact about what each solver can express, not an oversight.
 
-    Refused at graph build rather than left to the analysis, which is where it
-    would otherwise land: `letkf_config` never reads `solver.window.type`, so
-    `fgat` today is accepted in full and silently runs `3d`.
+    Refused at graph build rather than left to the analysis, and that placement
+    is what the split filter's shape makes necessary. The observer half reads
+    the window type to decide whether a member's trajectory is its sub-window
+    states or one background entered at both ends, and either answer is a
+    complete, runnable configuration. `fgat` would take the second branch and
+    run a correct `3d` filter under a name that says otherwise, which is exactly
+    the failure this exists to make loud.
     """
     if (config.get("solver") or {}).get("name") != "letkf":
         return

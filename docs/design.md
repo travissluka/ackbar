@@ -857,9 +857,54 @@ The last row is the one to state carefully when results are reported. It matches
 timing, which is the axis that has actually moved a number here (see `docs/osse.md` section G,
 where it is the whole of the 3DVar to 3D-FGAT surface temperature result), and differs in whether
 the ensemble covariance is per-slot: `fgat` carries one set of perturbations at the analysis time
-(`member_states` in `ackbar/soca.py`) where `4d` carries one per sub-window
-(`member_trajectories`). Pairing it against `3d` instead would differ in the departure timing,
+(`member_states` in `ackbar/soca.py`) where `4d` samples the ensemble at each sub-window. Pairing
+it against `3d` instead would differ in the departure timing,
 which is worse, because that is the axis known to matter.
+
+### The ensemble filter is split into an observer and a solver
+
+`soca_letkf.x` can compute its own ensemble departures, and doing so is what makes a
+four-dimensional ensemble filter expensive: `oops::LocalEnsembleDA` holds the whole background
+`StateSet`, so twenty members over a four-slot window is a hundred states resident before the
+solve starts. That is the thing that will not fit on a real domain, and it is a cost the method
+does not actually require.
+
+So ACKBAR runs the two halves separately, inside the one `da` job:
+
+1. `soca_ensmeanandvariance.x` once per sub-window, building the prior mean trajectory;
+2. `soca_hofx.x` on that mean, then once per member, serially;
+3. a merge into one file per observer, holding every member's H(x);
+4. `soca_letkf.x` with `driver: read HX from disk`, reading those files.
+
+**The consequence is that a 4D-LETKF costs the solver exactly what a 3D one costs it.** The
+weights are solved in ensemble space and applied to the perturbations at the analysis time, so the
+solver reads one state per member whatever the window is: the four dimensions live entirely in the
+departures. That is Hunt et al.'s 4D-LETKF and not an approximation of it, and it means there is
+one analysis to write back rather than one per sub-window. It also means `member_trajectories` in
+`ackbar/soca.py` is read by the *observer* for an ensemble filter and by the *solver* for a
+4D-Ens-Var, which is the one place the two methods' plumbing differs while their answers agree.
+
+Three things about the split are easy to get wrong and are pinned by tests:
+
+- **`ObsError` in the merged file is the assimilation mask.** The solver runs no filters, so
+  `_solver_observers` strips them; what reaches it instead is the observation error left after the
+  filters ran on H(mean(Xb)), whose missing values `oops` reads as "not assimilated". This is why
+  the mean trajectory is computed at all: matching the state `oops` evaluates QC against is what
+  makes the split reproduce the monolithic filter rather than merely resemble it.
+- **The merge is by row, and nothing in the files says that is safe.** ioda writes rank-major
+  order with no index to join on. It is deterministic given the same input, distribution and rank
+  count, which every member run has, so `ensemble_hofx` asserts identical observation metadata
+  across the members and refuses rather than producing a quietly wrong analysis.
+- **The observer takes `RoundRobin` and the solver `Halo`.** The observer is global; the solver
+  needs every rank to hold a halo as wide as its localization. Both read the same observer layer,
+  which is why `GLOBAL_DISTRIBUTION` is set per application and never by a layer.
+
+What the split gives up is `oman` in a four-dimensional window. The posterior observer evaluates a
+single analysis state, so against an `ombg` taken over a whole trajectory it is a different
+operator rather than a worse number, and `config/soca/letkf.yaml` turns it off for `fgat` and `4d`
+rather than writing a pair that does not pair. The honest replacement is FGAT's own, the background
+trajectory plus the posterior mean increment at every slot evaluated by a second four-dimensional
+observer run, and it is not built.
 
 Two solvers, and the variational one is parameterized. The configuration layers carry the
 parameterization, so there is no mode dispatch in the code.

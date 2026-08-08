@@ -17,6 +17,11 @@ dependencies = [
     # recipe fails to collect a third of the suite anywhere spack-stack is not
     # already on the path, which is exactly the machine it is addressed to.
     "netCDF4",
+    # `ensemble_hofx.py` merges the split filter's per-member departures, and
+    # netCDF4 cannot open an ioda observation file for append: it declines to
+    # reopen ioda's HDF5 for writing and says only "Can't write file". h5py
+    # opens the same file without complaint.
+    "h5py",
     "numpy",
 ]
 

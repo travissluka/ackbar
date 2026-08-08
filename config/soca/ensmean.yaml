@@ -1,0 +1,25 @@
+# soca_ensmeanandvariance.x: the ensemble's mean state at one time.
+#
+# See `config/soca/hofx.yaml` for the rules this file follows. Every $(SLOT) is
+# filled by `ensemble_mean_config` in `ackbar/soca.py`.
+#
+# Run by the ensemble filter's observer step, once per sub-window, to build the
+# state its quality control is evaluated against. `oops::LocalEnsembleSolver`
+# takes the observation error and the QC flags from H(mean(Xb)) and from nothing
+# else, so with the observer split out of the solver that mean has to exist as a
+# file rather than as something the application forms in memory.
+#
+# The variance and standard deviation this application can also write are not
+# requested. The prior spread ACKBAR keeps comes from the filter itself, which
+# writes it over the same ensemble at the analysis time; a second copy computed
+# here would be the same number under a different name at every sub-window.
+
+geometry: $(GEOMETRY)
+
+# One entry per member, an explicit list rather than `members from template`.
+# See `member_states` for why: `oops::DataSetBase` numbers members by position,
+# and a template that skips an absent member renumbers every member after it.
+ensemble:
+  members: $(MEMBER_STATES)
+
+mean output: $(MEAN_OUTPUT)

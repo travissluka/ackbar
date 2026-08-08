@@ -6,6 +6,7 @@ wrong value in this document is discovered by an application that has already
 been allocated eight nodes.
 """
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -590,9 +591,17 @@ def ens(config):
     return dict(config, solver=dict(LETKF))
 
 
-def letkf_document(ens, members=(1, 2, 3)):
-    return soca.letkf_config(ens, 1, [observer()],
-                             backgrounds=Path("/out/e/rst/0"), members=members)
+#: What `ensemble_departures` hands the solver: one merged file per observer,
+#: holding every member's H(x). The solver reads its departures from these
+#: rather than computing them, so a document built without them is one that
+#: would run the observer twice.
+DEPARTURES = {"adt_3a": Path("/scratch/1/da/departures/e.adt.nc4")}
+
+
+def letkf_document(ens, members=(1, 2, 3), departures=None):
+    return soca.letkf_config(
+        ens, 1, [observer()], backgrounds=Path("/out/e/rst/0"), members=members,
+        departures=DEPARTURES if departures is None else departures)
 
 
 def test_the_ensemble_is_a_list_of_members_and_not_a_template(ens):
@@ -687,11 +696,160 @@ def test_an_empty_ensemble_is_refused_rather_than_configured(ens):
         letkf_document(ens, members=())
 
 
+# --- the split: the solver reads departures it did not compute ---------------
+
+def test_the_solver_reads_the_merged_departures_and_not_the_archive(ens):
+    """The observer already ran, so the input is its output.
+
+    That file is a copy of the observation file with each member's H(x) added,
+    which is what `driver.read HX from disk` needs to find. Pointed at the
+    archive instead the solver reads the same observations, finds no `hofx0_1`,
+    and aborts inside the job.
+    """
+    document = letkf_document(ens)
+    space = document["observations"]["observers"][0]["obs space"]
+    assert space["obsdatain"]["engine"]["obsfile"] == str(DEPARTURES["adt_3a"])
+    assert document["driver"]["read HX from disk"] is True
+
+
+def test_an_observer_with_no_merged_file_is_refused(ens):
+    """Silent otherwise, and wrong in the direction that looks like it worked.
+
+    The solver would read the raw observations for that one platform, find no
+    ensemble in them, and the analysis would either abort deep inside oops or
+    assimilate a platform through departures that are not its own.
+    """
+    with pytest.raises(ModelError, match="no merged departure file"):
+        letkf_document(ens, departures={})
+
+
+def test_the_solver_runs_none_of_the_filters_the_observer_ran(config):
+    """They ran once, and their verdict arrived in `ObsError`.
+
+    Running them again here would apply a background check against a state the
+    observer never used, rejecting on a second and different basis than the one
+    the departures in the file were screened by.
+    """
+    record = observer()
+    record["config"]["obs filters"] = [{"filter": "Background Check"}]
+    document = soca.letkf_config(
+        dict(config, solver=dict(LETKF)), 1, [record],
+        backgrounds=Path("/out/e/rst/0"), members=(1, 2),
+        departures=DEPARTURES)
+    assert "obs filters" not in document["observations"]["observers"][0]
+
+
+def test_the_posterior_observer_runs_only_where_it_means_something(config):
+    """`oman` from a single analysis state, against `ombg` over a trajectory.
+
+    In a 3D window those are the same comparison and the pair is the analysis
+    fit. In a 4D window `ombg` came from the whole trajectory and this would
+    come from one state at the centre, so the two would not be a pair at all.
+    """
+    three = soca.letkf_config(dict(config, solver=dict(LETKF)), 1, [observer()],
+                              backgrounds=Path("/out/e/rst/0"), members=(1, 2),
+                              departures=DEPARTURES)
+    assert three["driver"]["do posterior observer"] is True
+
+    four = dict(config, solver=dict(LETKF, window={"type": "4d"}))
+    document = soca.letkf_config(four, 1, [observer()],
+                                 backgrounds=Path("/out/e/rst/0"),
+                                 members=(1, 2), departures=DEPARTURES)
+    assert document["driver"]["do posterior observer"] is False
+
+
+def test_the_background_is_one_state_per_member_whatever_the_window(config):
+    """Where 4D-LETKF gets its cost back.
+
+    The four dimensions are entirely in the departures: the weights are solved
+    in ensemble space and applied to the state at the analysis time. So the
+    solver reads exactly what a 3D one reads, and a four-dimensional filter does
+    not cost `slots` times the memory or leave `slots` analyses to choose
+    between.
+    """
+    four = dict(config, solver=dict(LETKF, window={"type": "4d"}))
+    document = soca.letkf_config(four, 1, [observer()],
+                                 backgrounds=Path("/out/e/rst/0"),
+                                 members=(1, 2), departures=DEPARTURES)
+    members = document["background"]["members"]
+    assert len(members) == 2
+    assert all("states" not in entry for entry in members)
+    assert {entry["date"] for entry in members} == {"2018-04-15T00:00:00Z"}
+
+
+# --- the observer half --------------------------------------------------------
+
+#: Cycle 2's window end for the fixture config: daily cycles from 2018-04-15,
+#: window centred on the analysis time.
+WINDOW_END = datetime(2018, 4, 16, 12)
+
+def test_a_three_dimensional_window_enters_its_one_state_at_both_ends(config):
+    """`oops::HofX4D` refuses an observation window outside its forecast window.
+
+    A 3D window's background is valid at the *centre*, so there is no honest way
+    to write it as a forecast from the start. Declaring the one state at the
+    start and at the end says what 3D-Var assumes, and the departures come out
+    identical to the three-dimensional application's.
+    """
+    state = Path("/out/e/rst/0/mem001/MOM.res.nc")
+    document = soca.member_hofx_config(
+        dict(config, solver=dict(LETKF)), 2, [observer()],
+        initial=state, states={WINDOW_END: state}, tstep=timedelta(hours=24))
+    assert document["initial condition"]["basename"] == "/out/e/rst/0/mem001/"
+    assert document["initial condition"]["ocn_filename"] == "MOM.res.nc"
+    assert len(document["model"]["states"]) == 1
+    assert document["model"]["states"][0]["basename"] == "/out/e/rst/0/mem001/"
+
+
+def test_the_observer_step_is_read_off_the_trajectory_not_the_cadence(config):
+    """Cycle 1 of a 4D experiment is why this is not `forecast.slots`.
+
+    Nothing ran before it, so its window holds the staged initial condition
+    entered at both ends. Handed the slot cadence, the pseudo model would step
+    six hours into a list whose only entry is a day away, and fail inside the
+    job. `soca.cost_template` makes the same allowance for the variational
+    solver.
+    """
+    day = datetime(2015, 7, 12)
+    assert soca.observer_step({day: "a", day + timedelta(hours=24): "b"}) \
+        == timedelta(hours=24)
+    stepped = {day + timedelta(hours=6 * n): n for n in range(5)}
+    assert soca.observer_step(stepped) == timedelta(hours=6)
+
+
+def test_an_unevenly_spaced_trajectory_is_refused(config):
+    """`oops::PseudoModel` advances by one duration and checks each date.
+
+    So an uneven trajectory does not interpolate or skip, it fails on a date
+    comparison partway through the window, which is a long way from the cause.
+    """
+    day = datetime(2015, 7, 12)
+    with pytest.raises(ModelError, match="not evenly spaced"):
+        soca.observer_step({day: "a", day + timedelta(hours=6): "b",
+                            day + timedelta(hours=24): "c"})
+
+
+def test_the_observer_takes_the_cheap_distribution(config):
+    """RoundRobin here, Halo in the solver, and they must not be one value.
+
+    The observer is a global operation and every rank can hold any observation;
+    the solver needs each rank to hold a halo as wide as its localization. Both
+    read the same observer layer, so ACKBAR sets this per application.
+    """
+    state = Path("/out/e/rst/0/mem001/MOM.res.nc")
+    document = soca.member_hofx_config(
+        dict(config, solver=dict(LETKF)), 2, [observer()],
+        initial=state, states={WINDOW_END: state}, tstep=timedelta(hours=24))
+    space = document["observations"]["observers"][0]["obs space"]
+    assert space["distribution"] == {"name": "RoundRobin"}
+
+
 def test_the_shipped_letkf_layers_produce_a_document_soca_would_accept(tmp_path):
     repo, merged = shipped("tier3_letkf.yaml")
     document = soca.letkf_config(merged, 1, [observer()],
                                  backgrounds=Path("/out/e/rst/0"),
-                                 members=(1, 2, 3, 4, 5, 6))
+                                 members=(1, 2, 3, 4, 5, 6),
+                                 departures=DEPARTURES)
     reread = yaml.safe_load(yaml.safe_dump(document))
     assert reread["geometry"]["fields metadata"].startswith(str(repo))
     assert len(reread["background"]["members"]) == 6
@@ -715,7 +873,7 @@ def test_the_shipped_eakf_layers_change_the_solver_and_nothing_structural():
     _, merged = shipped("eakf_om1deg.yaml")
     document = yaml.safe_load(yaml.safe_dump(soca.letkf_config(
         merged, 1, [observer()], backgrounds=Path("/out/e/rst/0"),
-        members=(1, 2, 3))))
+        members=(1, 2, 3), departures=DEPARTURES)))
 
     assert document["local ensemble DA"]["solver"] == "EAKF"
     # Inherited unchanged, and deliberately: retuning inflation per solver is
@@ -1169,7 +1327,8 @@ def test_the_shipped_hybrid_layers_produce_a_document_soca_would_accept():
         "/static/static/gom_25km/diffusion/loc_hz"
 
     filter_document = yaml.safe_load(yaml.safe_dump(soca.letkf_config(
-        merged, 1, [observer()], backgrounds=Path("/out/e/rst/0"), members=(1, 2))))
+        merged, 1, [observer()], backgrounds=Path("/out/e/rst/0"), members=(1, 2),
+        departures=DEPARTURES)))
     assert filter_document["local ensemble DA"]["solver"] == "Deterministic LETKF"
     space = filter_document["observations"]["observers"][0]["obs space"]
     assert space["distribution"]["halo size"] == 500000

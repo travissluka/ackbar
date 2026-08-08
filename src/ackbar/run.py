@@ -1210,15 +1210,61 @@ def _ensemble_analysis(config, site, paths, cycle, task, observers):
         stamp=restart_stamp(config))
 
     beside = task == "da.ens"
+    departures = {}
+    if observers:
+        trajectories = {member: _member_trajectory(config, paths, cycle, member)
+                        for member in members}
+        mean = soca.ensemble_mean(config, site, paths, cycle, task,
+                                  trajectories=trajectories)
+        print(f"ackbar: {cycle}.{task}: prior mean over {len(mean)} sub-window(s)")
+        departures = soca.ensemble_departures(
+            config, site, paths, cycle, task, observers,
+            trajectories=trajectories, mean=mean)
+        print(f"ackbar: {cycle}.{task}: {len(members)} member(s) evaluated "
+              f"against {len(departures)} observer(s)")
+
     return soca.letkf(
         config, site, paths, cycle, task,
         backgrounds=paths.cycle_out("rst", cycle - 1),
         observers=observers,
         members=members,
-        departures=soca.ENSEMBLE_PRODUCTS if beside else None,
+        departures=departures,
+        obs_out=soca.ENSEMBLE_PRODUCTS if beside else None,
         target=lambda member: (ensemble_dir(paths, cycle) if beside and not member
                                else analysis_dir(paths, cycle, member)),
     )
+
+
+def _member_trajectory(config, paths, cycle, member):
+    """One member's states over the assimilation window, by valid time.
+
+    Two shapes, and which one comes back is the whole of what "4D-LETKF" means
+    here.
+
+    A four-dimensional window reads the previous cycle's sub-window states, the
+    same set 4D-Ens-Var reads: the forecast overshoots by half a window and
+    writes at `forecast.slots` on the way, so cycle *n-1* leaves exactly cycle
+    *n*'s window behind it.
+
+    A three-dimensional window has one background, valid at the window's centre,
+    and it is entered at both ends. `oops::HofX4D` refuses an observation window
+    that is not inside its forecast window, so there is no way to hand it a
+    state at the centre and nothing else; declaring the one state at the start
+    and at the end says what 3D-Var assumes, which is that a single state stands
+    in for the whole window. The departures are then identical to the
+    three-dimensional application's against that state.
+
+    Cycle 1 of a four-dimensional experiment takes the same path, for the reason
+    `soca.cost_template` gives: nothing ran before it, so its background is the
+    staged initial condition and its window holds one state.
+    """
+    restart = _require_restart(config)
+    begin, end = window_bounds(config, cycle)
+    trajectory = analysis_trajectory(config, paths, cycle, member)
+    if trajectory is None:
+        state = analysis_background(paths, cycle, member) / restart
+        return {begin: state, end: state}
+    return {when: directory / restart for when, directory in trajectory.items()}
 
 
 def _recenter(config, site, paths, cycle, task):

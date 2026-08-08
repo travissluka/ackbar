@@ -1,0 +1,58 @@
+# soca_hofx.x: one ensemble member's departures over the assimilation window.
+#
+# See `config/soca/hofx.yaml` for the rules this file follows. Every $(SLOT) is
+# filled by `member_hofx_config` in `ackbar/soca.py`.
+#
+# This is the observer half of a split LETKF. `soca_letkf.x` can compute the
+# ensemble's departures itself, and then it holds every member at every
+# sub-window at once: twenty members over a four-slot window is a hundred states
+# resident, which is the thing that will not fit on a real domain. Run here
+# instead, one member at a time, the peak is one member's trajectory, and the
+# solver reads the departures back from disk and holds only the states it
+# updates. `docs/design.md` has the whole argument.
+#
+# **RoundRobin, not Halo.** The observer is a global operation and takes the
+# cheap distribution; the solver needs every rank to hold a halo as wide as its
+# localization. That the two applications disagree is fine and is why
+# `GLOBAL_DISTRIBUTION` is set by ACKBAR per application rather than stated by
+# an observer layer.
+
+geometry: $(GEOMETRY)
+
+# The trajectory, as states already on disk. `PseudoModel` does not integrate:
+# it hands out the state at each step in turn, which is what the previous
+# cycle's forecast left behind at `forecast.slots`.
+#
+# **A 3D window arrives here with one distinct state, declared twice**: once
+# below as the initial condition at the window's start, and once as this list's
+# only entry at the window's end. That is not a workaround for the application.
+# `oops::HofX4D` refuses an observation window that is not inside its forecast
+# window, and a 3D window's background is valid at the *centre*, so there is no
+# honest way to write it as a forecast from the start. Declaring the one state
+# at both ends says exactly what 3D-Var assumes, which is that a single state
+# stands in for the whole window; the departures it produces are bit-identical
+# to `soca_hofx3d.x` against the same state.
+model:
+  name: PseudoModel
+  tstep: $(TSTEP)
+  states: $(STATES)
+
+# Where the trajectory starts. `$(INITIAL_DIR)` carries a trailing separator,
+# because SOCA concatenates basename and filename without one.
+initial condition:
+  read_from_file: 1
+  basename: $(INITIAL_DIR)
+  ocn_filename: $(RESTART_FILE)
+  date: '{{window_begin}}'
+  state variables: $(STATE_VARIABLES)
+
+# The cycle's own window, and the forecast covers exactly it: every observation
+# the solver will assimilate has to be evaluated here, because the solver will
+# not evaluate any of them.
+time window:
+  begin: '{{window_begin}}'
+  length: '{{window_length}}'
+forecast length: '{{window_length}}'
+
+observations:
+  observers: $(OBSERVERS)

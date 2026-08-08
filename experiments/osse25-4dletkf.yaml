@@ -1,0 +1,98 @@
+# The quarter degree OSSE's 4D LETKF.
+#
+# `osse25-letkf` with the window changed and nothing else, in the same sense
+# that `osse25-3dfgat` is `osse25-3dvar` with the window changed: same domain,
+# same dates, same control initial condition, same ensemble initial condition,
+# same thirteen observers and the same observation archive. The two LETKFs are a
+# paired difference on departure timing alone.
+#
+# **What changes, and it is one word.** A 3D LETKF compares every observation in
+# a 24 hour window against one background at the window's centre. The
+# observations in this archive are not at the centre: they carry their own
+# times, spread across the whole window, and the Loop Current moves under them.
+# 3D-FGAT bought the variational pair its largest single result on exactly that
+# axis, so this is the experiment that says whether an ensemble filter gets the
+# same thing.
+#
+# **What it does not change is what the solver reads.** A 4D-LETKF's four
+# dimensions live entirely in the departures: the weights are solved in ensemble
+# space against observations evaluated at their own times, and applied to the
+# ensemble perturbations at the analysis time. So `soca_letkf.x` reads one state
+# per member here exactly as it does in the 3D experiment, and there is one
+# analysis to write back rather than one per sub-window. What carries the extra
+# dimension is the observer, which runs `soca_hofx.x` over each member's
+# trajectory before the solver starts. `docs/design.md` has the split.
+#
+# **What it costs is the forecast, not the analysis.** Half of a centred window
+# lies after the next analysis time, so the cycling forecast overshoots by
+# twelve hours and that half is re-integrated next cycle: 1.5x the model. The
+# observer adds one hofx per member per cycle, which at `gom_25km` is seconds
+# and on a real domain is the item to watch.
+#
+# The ensemble, its provenance, and why there is no `da/corr_vt_cycled` are all
+# in `osse25-letkf.yaml`, which this is otherwise a copy of. Read that file
+# first; nothing about the ensemble is restated here.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf
+  description: OSSE, gom_25km 4D LETKF against the gom_12km truth
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 30
+
+solver:
+  window:
+    type: '4d'
+
+forecast:
+  # Six hourly, the same cadence and for the same reason as `osse25-3dfgat`:
+  # the truth the observations were drawn from is six hourly, and the archive
+  # samples the nearest state rather than interpolating, so no trajectory
+  # resolved finer than that can remove the representativeness error already in
+  # the observations. That file carries the full argument.
+  #
+  # Four states inside the 24 hour window, plus the background at its start.
+  slots: PT6H
+
+  # Identical to the other four experiments'. The comparison at each lead is a
+  # paired difference, so the launches and the valid times have to match.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

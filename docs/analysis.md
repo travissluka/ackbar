@@ -4,13 +4,14 @@ Up to four tasks, and the last one carries the risk.
 
 | Task | Runs | Present when | Produces |
 |---|---|---|---|
-| `da` | `soca_var.x` or `soca_letkf.x` | there is a solver | the control's analysis, the increment, `ombg` and `oman` |
-| `da.ens` | `soca_letkf.x` | `ensemble.source: letkf` beside a variational solver | every member's analysis, and the ensemble's own departures |
+| `da` | `soca_var.x`, or the ensemble filter's chain below | there is a solver | the control's analysis, the increment, `ombg` and `oman` |
+| `da.ens` | the ensemble filter's chain | `ensemble.source: letkf` beside a variational solver | every member's analysis, and the ensemble's own departures |
 | `recenter` | `soca_ensrecenter.x` | the covariance reads an ensemble | every member's analysis, moved onto the control's |
 | `writeback` | python | there is a solver | the restart set the next forecast starts from |
 
-`da`, `da.ens` and `recenter` are each one MPI job for the whole cycle;
-`writeback` is a member array. The handoff between them is
+`da`, `da.ens` and `recenter` are each one MPI *job* for the whole cycle;
+`writeback` is a member array. An ensemble filter's job runs several
+applications inside that one job rather than a single one: see below. The handoff between them is
 `run/<date>/ana/mem###/analysis/`, and the handoff out of `writeback` is
 `run/<date>/ana/mem###/` itself, which the forecast reads exactly as it reads a restart
 set the model wrote.
@@ -129,8 +130,30 @@ the three its own subsection. Without the nesting the writer reports a missing
 
 ## The document `soca_letkf.x` reads
 
-The same construction, from `config/soca/letkf.yaml` and the same builder, with
-one structural difference: the background is an ensemble. oops takes that either
+**`soca_letkf.x` is the second half of `da`, not the whole of it.** The ensemble
+filter runs its observer separately, in the same job, before the solver starts:
+`soca_ensmeanandvariance.x` once per sub-window for the prior mean,
+`soca_hofx.x` on that mean and then once per member, a merge into one file per
+observer, and only then the solver with `driver: read HX from disk`.
+
+The reason is memory. `oops::LocalEnsembleDA` holds its whole background
+`StateSet` for the duration, so computing the departures inside it means twenty
+members times every sub-window resident before the solve begins. Run outside,
+the peak is one member's trajectory, and the solver reads one state per member
+whatever the window type is, because a 4D-LETKF's four dimensions live entirely
+in the departures. `docs/design.md` has the argument, what the merged file has to
+contain, and the three ways the merge can be quietly wrong.
+
+Two consequences show up in this document rather than in that one. The observers
+here carry **no `obs filters`**: they ran in the observer, and their verdict
+arrives in the merged file's `ObsError`, whose missing values are what the solver
+reads as "not assimilated". And `obsdatain` is the merged file rather than the
+archive, which is what `driver: read HX from disk` expects to find an ensemble
+in.
+
+What follows is the solver's document. The same construction, from
+`config/soca/letkf.yaml` and the same builder as the variational one, with one
+structural difference: the background is an ensemble. oops takes that either
 as `members from template` (its own sense of the word: a `%mem%` pattern and a
 zero padding) or as `members`, an explicit list. ACKBAR builds the list, and the
 reason is worth knowing before anyone "simplifies" it back.
@@ -147,12 +170,22 @@ file nobody hand-edits, and it buys every member's background being a path
 
 Three things are ACKBAR's rather than a layer's:
 
-**The driver.** `do posterior observer` computes `oman`; without it the cycle
-produces departures against the background only. `save posterior mean` is what
-gives the control member an analysis at all. `save posterior ensemble` is the
-analysis. `LocalEnsembleDA` throws by name when a flag is set and its output
-block is missing, which makes this the one part of the document that fails
-loudly.
+**The driver.** `save posterior mean` is what gives the control member an
+analysis at all. `save posterior ensemble` is the analysis. `LocalEnsembleDA`
+throws by name when a flag is set and its output block is missing, which makes
+this the one part of the document that fails loudly.
+
+`do posterior observer` computes `oman`, and it is **on for a 3D window and off
+for a four-dimensional one**. The posterior observer evaluates the analysis,
+which this application holds as a single state at the window's centre. In a 3D
+window that is the same comparison `ombg` got and the pair is the analysis fit.
+In a 4D window `ombg` came from the whole trajectory, so the two would be
+different operators and would read as an analysis that had degraded the fit at
+the ends of the window when nothing of the sort had happened. oops flags the
+same trap in `LocalEnsembleDA.h`. So a four-dimensional filter has no `oman`
+yet; the honest one is FGAT's own, the background trajectory plus the posterior
+mean increment at every slot through a second observer run, and it is not built.
+`post.obs` omits the `oma` key rather than failing.
 
 **The spread.** Prior and posterior variance are written every cycle. An
 ensemble filter fails in two ways that look identical in any single analysis:

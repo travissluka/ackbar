@@ -685,19 +685,48 @@ localization gains a time dimension in its own configuration. `da.ens`, `recente
 and the graph are untouched, because what a 4DEnVar writes back is still one analysis at one
 time per member.
 
-### 4DLETKF: the smallest change of the three
+### 4DLETKF: not the smallest change, and the reason is memory
 
-An LETKF is already a 4D filter when its observations are distributed through a window: the
-solver interpolates each member to the observation's time, which is what `letkf.yml` does
-against `letkf3d.yml` in the bundle. So the ensemble filter needs the same per-member slot states
-4DEnVar needs and nothing else at all: no cost function, no pseudo model, no minimizer.
+This section predicted the smallest change of the three: an LETKF is already a 4D filter when its
+observations are distributed through a window, `letkf.yml` against `letkf3d.yml` in the bundle is
+the whole difference, so hand it the per-member slot states 4DEnVar needs and there is no cost
+function, no pseudo model and no minimizer to add.
 
-Which means the ordering inside phase 9 is not the ordering in the title. Build the slot states
-first, on the free run, where they are cheap and where the only question is whether SOCA can read
-what MOM6 wrote. Then 4DLETKF, which consumes them and adds no other machinery. Then 3D-FGAT,
-which adds the pseudo model and the window placement. Then 4DEnVar, which is the second of those
-crossed with phase 8's covariance, and 4DVar last if at all, since it needs a linear model that
-does not exist for this model.
+That is true of the *method* and false of the *application*. `oops::LocalEnsembleDA` holds the
+entire background `StateSet` for the duration, so handing it trajectories multiplies its resident
+memory by the number of sub-windows before the solve begins: twenty members over a four-slot window
+is a hundred states. At `gom_25km` that is nothing and at `OM4_025` it is the thing that decides
+whether the phase is runnable at all. It also produces an analysis at every sub-window, which
+leaves the workflow choosing which of them to write back.
+
+So the change is a split rather than a config value, and it is the one thing in phase 9 that was
+not predicted. The observer runs outside the solver: `soca_ensmeanandvariance.x` per sub-window for
+the prior mean, `soca_hofx.x` on that mean and then once per member, a merge into one file per
+observer, and `soca_letkf.x` with `driver: read HX from disk`. All of it inside the one `da` job,
+because the intermediates are scratch and because a single node has no spare ranks to run a second
+member on while the first is using all of them.
+
+What that buys is the point: **the solver reads one state per member whatever the window is.** The
+weights are solved in ensemble space and applied to the perturbations at the analysis time, so the
+four dimensions live entirely in the departures. 4D costs the solver what 3D costs it, and there is
+one analysis to write back. `docs/design.md` has the mechanism, the three things about the merge
+that are easy to get wrong, and what the split gives up, which is `oman` in a four-dimensional
+window.
+
+The split is also its own test. Applied to a **3D** window it is the same analysis by a different
+route, so it has to reproduce the monolithic filter, and against SOCA's own 4-member ctest ensemble
+it does: the posterior mean increment agrees to 2e-5 in temperature against an 11 K increment, a
+relative 2e-6, which is float32 round-trip through the observation file and nothing else. That gate
+is what the ensemble mean trajectory exists for. `oops` takes its observation error and QC flags
+from H(mean(Xb)) alone, so reproducing it means computing the same mean rather than substituting
+the control, which would be defensible and would not be the same analysis.
+
+The ordering inside phase 9 still is not the ordering in the title. Slot states first, on the free
+run, where they are cheap and the only question is whether SOCA can read what MOM6 wrote. Then
+3D-FGAT, which adds the pseudo model and the window placement, and which turned out to be the
+cheaper of the two. Then 4DLETKF, which reuses that pseudo model in the observer. Then 4DEnVar,
+which is FGAT crossed with phase 8's covariance, and 4DVar last if at all, since it needs a linear
+model that does not exist for this model.
 
 ### What phase 9 does not need
 

@@ -47,6 +47,7 @@ from .config.jobtime import (FOUR_D, cycle_time, member_dir, slot_length,
                              window_bounds, window_type)
 from .config.jobtime import render as render_jobtime
 from .config.jobtime import symbols
+from . import ensemble_hofx
 from .config.template import fill
 from .duration import format_duration, format_instant
 from .duration import ISO_INSTANT
@@ -102,6 +103,14 @@ APPLICATIONS = {
     # the name is what makes that answerable from the trace afterwards.
     "var4d": "soca_var.x",
     "letkf": "soca_letkf.x",
+    # The observer half of the split ensemble filter. The same executable as
+    # `hofx4d` and a separate entry for the same reason `varfgat` is separate
+    # from `var`: the key names a *document*, and `hofx_ens.mem003.yaml` beside
+    # its log is what says which member's departures a trace belongs to.
+    "hofx_ens": "soca_hofx.x",
+    # The state the split filter's quality control is evaluated against. See
+    # `config/soca/ensmean.yaml`.
+    "ensmean": "soca_ensmeanandvariance.x",
     "recenter": "soca_ensrecenter.x",
     # The vertical half of the background error's correlation, recalibrated
     # against the cycle's own background. The same executable the offline
@@ -277,7 +286,8 @@ def traces(name):
     return (f"{name}.yaml", f"{name}.log")
 
 
-def run_application(name, config, site, paths, cycle, task, document):
+def run_application(name, config, site, paths, cycle, task, document,
+                    label=None):
     """Run one SOCA application to completion, and keep its two traces.
 
     The shape every task in this module has. A run directory holding the case's
@@ -287,17 +297,24 @@ def run_application(name, config, site, paths, cycle, task, document):
     What differs between the four is the document they build and what they
     commit afterwards, which is exactly why those stay with the caller and this
     does not. Returns the run directory, since the caller's products are in it.
+
+    *label* names the trace files when one task runs an application more than
+    once. The ensemble filter's observer step runs one hofx per member in a
+    single job, and without a distinct label every member after the first would
+    overwrite the config and log of the one before it, leaving one trace for
+    twenty runs and no way to tell which member's it was.
     """
+    label = label or name
     run = paths.scratch(cycle, task)
     stage(config, run, cycle)
-    _write(run / f"{name}.yaml", yaml.safe_dump(document, sort_keys=False))
+    _write(run / f"{label}.yaml", yaml.safe_dump(document, sort_keys=False))
 
     try:
         launch(config, site, run, task, APPLICATIONS[name],
-               f"{name}.yaml", f"{name}.log")
+               f"{label}.yaml", f"{label}.log")
     finally:
         keep_traces(run, paths.log_dir(cycle), task, None,
-                    names=traces(name))
+                    names=traces(label))
     return run
 
 
@@ -455,8 +472,168 @@ def calibrate_vt(config, site, paths, cycle, task, *, background, scales,
     return commit([(written, target)], move=True)[0]
 
 
+def ensemble_mean(config, site, paths, cycle, task, *, trajectories):
+    """The ensemble's mean state at each sub-window, as files on disk.
+
+    *trajectories* maps a member to that member's own trajectory, itself a map
+    from a valid time to the state file at it. Returns the same shape of map for
+    the mean: a valid time to the file holding it.
+
+    One run of `soca_ensmeanandvariance.x` per sub-window, because the
+    application averages one time. That is the smallest unit it comes in and it
+    is also the right unit for memory: the peak is one slot's worth of members,
+    never the whole ensemble over the whole window.
+
+    This exists for quality control and nothing else.
+    `oops::LocalEnsembleSolver` takes the observation error and the QC flags
+    from H(mean(Xb)), and having split the observer out of the solver, the mean
+    has to be a state on disk before anything can evaluate it. Which state that
+    is decides what the filter assimilates, so it is the ensemble mean and not
+    the control: matching what the monolithic filter uses is what makes the two
+    the same analysis rather than two defensible ones.
+    """
+    slots = sorted({when for trajectory in trajectories.values()
+                    for when in trajectory})
+    run = paths.scratch(cycle, task)
+    variables = list(_require(config["solver"], "background variables"))
+
+    mean = {}
+    # A 3D window's trajectory is one background entered at both ends of the
+    # window, so both sub-windows are the same set of files and their mean is
+    # the same state. Averaging twenty members twice to get it is the sort of
+    # waste that is invisible at `gom_25km` and is half of this step's cost.
+    done = {}
+    for when in slots:
+        missing = [member for member, trajectory in trajectories.items()
+                   if when not in trajectory]
+        if missing:
+            raise ModelError(
+                f"cycle {cycle}: member(s) "
+                f"{', '.join(member_dir(m) for m in sorted(missing))} have no "
+                f"state at {when:%Y-%m-%dT%H:%M:%SZ} and other members do. "
+                f"Every member's trajectory has to cover the same sub-windows, "
+                f"or the mean at this one is the mean of a different ensemble "
+                f"from the mean at the next.")
+        key = tuple(str(trajectories[member][when]) for member in sorted(trajectories))
+        if key in done:
+            mean[when] = done[key]
+            continue
+        run_application(
+            "ensmean", config, site, paths, cycle, task,
+            ensemble_mean_config(
+                config, cycle, when=when, templates=paths.templates,
+                states=member_states(lambda member: trajectories[member][when],
+                                     sorted(trajectories), date=format_instant(when),
+                                     variables=variables)),
+            label=f"ensmean.{when:%Y%m%dT%H%M%S}")
+        written = run / "out" / prior_mean_name(when)
+        if not written.exists():
+            raise ModelError(
+                f"soca_ensmeanandvariance.x exited zero and wrote no "
+                f"{written.name}. The name is built by `soca_genfilename` from "
+                f"the writer's `exp`, `type` and reference date, so a mismatch "
+                f"here means one of those three changed.")
+        mean[when] = done[key] = written
+    return mean
+
+
+def observer_step(trajectory):
+    """The pseudo model's step, read off the trajectory it will step through.
+
+    Not `forecast.slots`, and the difference is a case that would otherwise fail
+    inside a job: cycle 1 of a four-dimensional experiment has no trajectory,
+    because nothing ran before it to write one, so its window holds the staged
+    initial condition entered at both ends. Handed the slot cadence, the pseudo
+    model would step six hours into a list whose only entry is twenty-four hours
+    away. `soca.cost_template` makes the same allowance for the variational
+    solver; this is the observer's half of it.
+
+    Equal spacing is asserted rather than assumed. `oops::PseudoModel` steps by a
+    single duration and matches each state's date against its own clock, so an
+    uneven trajectory fails on a date comparison well inside the run.
+    """
+    times = sorted(trajectory)
+    if len(times) < 2:
+        raise ModelError(
+            "a trajectory of one state has no step, so there is nothing for the "
+            "pseudo model to advance through. Even a three-dimensional window "
+            "arrives here with the background at both ends of the window.")
+    steps = {later - earlier for earlier, later in zip(times, times[1:])}
+    if len(steps) > 1:
+        raise ModelError(
+            f"the trajectory is not evenly spaced: "
+            f"{', '.join(format_duration(step) for step in sorted(steps))}. "
+            f"`oops::PseudoModel` advances by one duration and matches each "
+            f"state's date against its own clock, so an uneven one fails on a "
+            f"date comparison partway through the window.")
+    return steps.pop()
+
+
+def ensemble_departures(config, site, paths, cycle, task, observers, *,
+                        trajectories, mean):
+    """Run the observer half of the split filter, and merge what it wrote.
+
+    One `soca_hofx.x` per member plus one for the ensemble mean, serially, and
+    then one merged file per observer for the solver to read. Returns a map from
+    observer name to that file.
+
+    Serial, in the same job, and both halves of that are deliberate. Serial is
+    what bounds the memory: the whole reason the observer is not inside the
+    solver is that the solver would hold every member at every sub-window at
+    once, and running the members in parallel would put that back. One job is
+    because none of these files outlive the cycle and nothing outside reads
+    them, so twenty scheduler round trips would buy twenty chances to fail and
+    no concurrency: a single node has no spare ranks to run a second member on
+    while the first is using all of them.
+    """
+    run = paths.scratch(cycle, task)
+    staging = run / "hofx"
+
+    def evaluate(tag, trajectory):
+        # A copy, because the records are the ones the solver's own
+        # `_redirect_output` will point at `out/` afterwards, and these runs
+        # must not leave their scratch paths behind in them.
+        local = copy.deepcopy(observers)
+        # ioda creates the file and not the directory under it, and the failure
+        # when it is missing is `H5Fcreate failed` with no path in it.
+        (staging / tag).mkdir(parents=True, exist_ok=True)
+        staged = _redirect_output(local, staging / tag)
+        written = {record["name"]: path
+                   for record, (path, _) in zip(local, staged)}
+        begin = min(trajectory)
+        run_application(
+            "hofx_ens", config, site, paths, cycle, task,
+            member_hofx_config(
+                config, cycle, local, tstep=observer_step(trajectory),
+                initial=trajectory[begin],
+                states={when: path for when, path in trajectory.items()
+                        if when != begin},
+                templates=paths.templates),
+            label=f"hofx_ens.{tag}")
+        for name, path in written.items():
+            if not path.exists():
+                raise ModelError(
+                    f"cycle {cycle}: {tag}'s hofx exited zero and wrote no "
+                    f"departures for observer {name}")
+        return written
+
+    reference = evaluate("mean", mean)
+    members = [evaluate(member_dir(member), trajectories[member])
+               for member in sorted(trajectories)]
+
+    merged = {}
+    for name, path in reference.items():
+        try:
+            merged[name] = ensemble_hofx.merge(
+                path, [written[name] for written in members],
+                run / "departures" / path.name)
+        except ensemble_hofx.MergeError as error:
+            raise ModelError(f"cycle {cycle}: observer {name}: {error}") from error
+    return merged
+
+
 def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
-          target, departures=None):
+          target, departures, obs_out=None):
     """Assimilate every member of one cycle's ensemble.
 
     One MPI job for the whole ensemble, which is what an LETKF is: the analysis
@@ -468,6 +645,14 @@ def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
     from a member index to where that member's analysis goes, because the
     application writes all of them into one directory and they belong in
     different ones.
+
+    *departures* is `ensemble_departures`'s answer: one merged file per
+    observer, holding every member's H(x). This application reads them rather
+    than computing them, so it is the solver half only.
+
+    *obs_out* names a subdirectory of the observer layer's own output directory
+    and exists for the hybrid, whose ensemble filter is a diagnostic beside a
+    control analysis that already wrote departures under that name.
     """
     if not observers:
         print(f"ackbar: {cycle}.{task} has no observers with input files; the "
@@ -475,11 +660,12 @@ def letkf(config, site, paths, cycle, task, *, backgrounds, observers, members,
         return []
 
     products = _redirect_output(observers, paths.scratch(cycle, task) / "out",
-                                into=departures)
+                                into=obs_out)
     run = run_application(
         "letkf", config, site, paths, cycle, task,
         letkf_config(config, cycle, observers, backgrounds=backgrounds,
-                     members=members, templates=paths.templates))
+                     members=members, departures=departures,
+                     templates=paths.templates))
 
     when = cycle_time(config, cycle)
     name = analysis_file(config, cycle)
@@ -693,6 +879,81 @@ def hofx4d_config(config, cycle, observers, *, initial, states, tstep, begin,
         "STATE_VARIABLES": list(_require(model, "state variables")),
         "WINDOW_BEGIN": format_instant(begin),
         "WINDOW_LENGTH": format_duration(length),
+        "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
+    }, templates=templates)
+
+
+#: The mean state the split filter's quality control is evaluated against, one
+#: per sub-window. `ensmean` rather than a word with a dot in it, because `exp`
+#: becomes a dot-separated field of the filename SOCA builds.
+PRIOR_MEAN = ("ensmean", "fc")
+
+
+def prior_mean_name(when):
+    """The mean state `ensemble_mean` writes for one sub-window.
+
+    `soca_genfilename` forms an `fc` name as `ocn.<exp>.fc.<date>.<offset>.nc`,
+    where the offset is the duration between the writer's configured reference
+    date and the state's own time. Both are this slot's time here, so the offset
+    is zero, and oops formats a zero duration as `PT0S`. The date is colon-free
+    because `_written` asks for that, the same as every other product.
+    """
+    exp, type_ = PRIOR_MEAN
+    return f"ocn.{exp}.{type_}.{when.strftime(FILE_DATE)}.PT0S.nc"
+
+
+def ensemble_mean_config(config, cycle, *, states, when, templates=None):
+    """The whole `soca_ensmeanandvariance.x` YAML. See `config/soca/ensmean.yaml`.
+
+    *states* is one member state per member, valid at *when*, and the mean of
+    them is what comes out. Run once per sub-window rather than once per cycle:
+    the observer this feeds compares each observation against the state nearest
+    its own time, so a single mean at the analysis time would put a 4D window's
+    quality control back on one state, which is the thing the split exists to
+    stop doing.
+    """
+    return build_document("ensmean", config, cycle, {
+        "GEOMETRY": _geometry(config["model"]),
+        "MEMBER_STATES": states,
+        "MEAN_OUTPUT": _written(PRIOR_MEAN,
+                                date=format_instant(when)),
+    }, templates=templates)
+
+
+def member_hofx_config(config, cycle, observers, *, initial, states, tstep,
+                       templates=None):
+    """The whole `soca_hofx.x` YAML for one member. See `config/soca/hofx_ens.yaml`.
+
+    *initial* is the state file at the window's start and *states* maps each
+    later slot's valid time to the file holding it. Those two together are the
+    trajectory; see the template for why a 3D window arrives here with the same
+    file in both.
+
+    Files rather than directories, unlike every other trajectory in this module,
+    because the ensemble mean's slots are several files in one directory rather
+    than one filename in several directories: they come out of a single run of
+    `soca_ensmeanandvariance.x` per slot, and `soca_genfilename` puts the time
+    in the name.
+    """
+    initial = Path(initial)
+    return build_document("hofx_ens", config, cycle, {
+        "GEOMETRY": _geometry(config["model"]),
+        "TSTEP": format_duration(tstep),
+        "STATES": [{
+            "read_from_file": 1,
+            "date": format_instant(when),
+            "basename": _basename(Path(path).parent),
+            "ocn_filename": Path(path).name,
+        } for when, path in sorted(states.items())],
+        "INITIAL_DIR": _basename(initial.parent),
+        "RESTART_FILE": initial.name,
+        # The *solver's* background variables and not the model's state
+        # variables, which is the difference between this and every other hofx
+        # in the workflow. This state is the one the monolithic filter would
+        # have read as a member background, so it has to be the same list, and
+        # they are not the same list: `da/letkf` adds the velocities the model
+        # layer leaves out.
+        "STATE_VARIABLES": list(_require(config["solver"], "background variables")),
         "OBSERVERS": _observers(observers, GLOBAL_DISTRIBUTION),
     }, templates=templates)
 
@@ -914,7 +1175,7 @@ def _trajectory(config, cycle, trajectory, restart):
 
 
 def letkf_config(config, cycle, observers, *, backgrounds, members,
-                 templates=None):
+                 departures, templates=None):
     """The whole `soca_letkf.x` YAML. See `config/soca/letkf.yaml`.
 
     The same construction as `var_config`, with one structural difference: the
@@ -923,6 +1184,14 @@ def letkf_config(config, cycle, observers, *, backgrounds, members,
     *members* is the ensemble, which is every member index except the control.
     The control's analysis is the ensemble mean, and the driver is what asks for
     it.
+
+    *departures* is where `ensemble_hofx.merge` put each observer's ensemble
+    H(x), keyed by observer name. The solver reads them rather than computing
+    them, so the background here is **one state per member at the analysis
+    time** whatever the window type is: a 4D-LETKF's four dimensions live
+    entirely in those departures, and the weights they produce are applied to
+    the state at the analysis time. That is what makes 4D cost the same solver
+    memory as 3D, and it is why there is no trajectory in this function.
     """
     model = config["model"]
     solver = config["solver"]
@@ -946,16 +1215,52 @@ def letkf_config(config, cycle, observers, *, backgrounds, members,
     return build_document("letkf", config, cycle, {
         "GEOMETRY": _geometry(model),
         "MEMBER_BACKGROUNDS": states,
-        "OBSERVERS": _observers(observers,
-                                _require(solver, "ensemble distribution"),
-                                solver.get("ensemble localization"),
-                                localize=True),
+        "OBSERVERS": _solver_observers(
+            observers, departures,
+            _require(solver, "ensemble distribution"),
+            solver.get("ensemble localization")),
         "LOCAL_ENSEMBLE_DA": _require(solver, "local ensemble DA"),
+        "POSTERIOR_OBSERVER": window_type(config) == "3d",
         "ANALYSIS_OUTPUT": _written(ANALYSIS, type=ENSEMBLE_TYPE, date=date),
         "INCREMENT_OUTPUT": _written(INCREMENT, date=date),
         "SPREAD_PRIOR_OUTPUT": _written(SPREAD_PRIOR, date=date),
         "SPREAD_POSTERIOR_OUTPUT": _written(SPREAD_POSTERIOR, date=date),
     }, templates=templates)
+
+
+def _solver_observers(observers, departures, distribution, localization):
+    """The observer bodies for the solver half of a split ensemble filter.
+
+    Two changes to what every other application reads, and both follow from the
+    observer having already run.
+
+    **The input is the merged departure file, not the archive.** That file is a
+    copy of the observation file with each member's H(x) added, so the
+    observations and their metadata are the same ones; what it also carries is
+    the ensemble the solver is here to weight.
+
+    **The filters are dropped.** They ran in the observer, and their verdict
+    reached the solver in the merged file's `ObsError`, whose missing values are
+    what `oops::LocalEnsembleSolver` reads as "not assimilated". Leaving them
+    here would run a background check against a state the solver has and the
+    observer did not use, and reject on a second, different basis.
+    """
+    bodies = []
+    rendered = _observers(observers, distribution, localization, localize=True)
+    for record, body in zip(observers, rendered):
+        name = record["name"]
+        if name not in departures:
+            raise ModelError(
+                f"observer {name} has no merged departure file, so the solver "
+                f"would read the raw observations and find no ensemble H(x) in "
+                f"them")
+        space = dict(body["obs space"])
+        space["obsdatain"] = {"engine": {"type": "H5File",
+                                         "obsfile": str(departures[name])}}
+        body = dict(body, **{"obs space": space})
+        body.pop("obs filters", None)
+        bodies.append(body)
+    return bodies
 
 
 def recenter_config(config, cycle, *, center, ensemble, members, templates=None):
