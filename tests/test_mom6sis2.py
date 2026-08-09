@@ -288,6 +288,84 @@ def test_the_override_is_read_because_ackbar_puts_it_in_the_parameter_list(env):
     assert "parameter_filename = 'SIS_input', 'SIS_override'" in text
 
 
+# --- per-member inputs -------------------------------------------------------
+
+@pytest.fixture
+def boundaries(tmp_path):
+    """What `tools/obc-lagged.py` leaves behind: one boundary file per member."""
+    target = tmp_path / "obc-lagged"
+    target.mkdir(parents=True)
+    for member in range(3):
+        (target / f"mem{member:03d}.nc").write_bytes(f"boundary {member}\n".encode())
+    return target
+
+
+def with_inputs(config, boundaries, name="obc.nc"):
+    config["ensemble"] = {
+        "size": 2, "control": True,
+        "inputs": {name: str(boundaries / "{{member_dir}}.nc")},
+    }
+
+
+def test_a_member_reads_its_own_input_and_not_the_domains(env, boundaries, data):
+    # The whole point: the run directory is identical for every member except
+    # for which file this name resolves to.
+    config, _, _ = env
+    (data / "obc.nc").write_bytes(b"the domain's shared boundary\n")
+    with_inputs(config, boundaries)
+    for member in (0, 1, 2):
+        run_dir = staged(env, member=member)
+        link = run_dir / "INPUT" / "obc.nc"
+        assert link.is_symlink()
+        assert link.read_text() == f"boundary {member}\n"
+
+
+def test_the_control_gets_one_too(env, boundaries, data):
+    # mem000 is a member, not a parallel concept, and its boundary is the
+    # unperturbed one rather than the domain's by accident.
+    config, _, _ = env
+    with_inputs(config, boundaries)
+    assert (staged(env, member=0) / "INPUT" / "obc.nc").read_text() == "boundary 0\n"
+
+
+def test_an_experiment_with_no_inputs_configured_stages_what_it_always_did(env, data):
+    (data / "obc.nc").write_bytes(b"the domain's shared boundary\n")
+    run_dir = staged(env, member=1)
+    assert (run_dir / "INPUT" / "obc.nc").read_text() == "the domain's shared boundary\n"
+
+
+def test_a_member_the_offline_stage_never_built_stops_the_run(env, boundaries):
+    # The alternative is falling back to the domain's copy, which is a member
+    # with no perturbation whose only symptom is slightly less spread.
+    config, _, _ = env
+    with_inputs(config, boundaries)
+    with pytest.raises(mom6sis2.ModelError) as error:
+        staged(env, member=7)
+    assert "mem007" in str(error.value)
+
+
+def test_an_input_the_restart_set_would_overwrite_is_refused(env, boundaries):
+    # Restarts are staged last so that `INPUT/coupler.res` comes from the set
+    # being resumed. A per-member file by the same name would be built, linked,
+    # overwritten and never read.
+    config, _, _ = env
+    with_inputs(config, boundaries, name="MOM.res.nc")
+    with pytest.raises(mom6sis2.ModelError) as error:
+        staged(env, member=1)
+    assert "MOM.res.nc" in str(error.value)
+
+
+def test_the_restart_set_still_wins_the_files_it_owns(env, boundaries, data):
+    # The overlay sits between the domain and the restarts, not on top of them.
+    config, _, _ = env
+    (data / "coupler.res").write_bytes(b"the domain's cold start date\n")
+    with_inputs(config, boundaries)
+    source = restart_set(Path(env[2].member_out("rst", 0, 1)))
+    (source / "coupler.res").write_text("the previous cycle's date\n")
+    run_dir = staged(env, member=1, source=source)
+    assert (run_dir / "INPUT" / "coupler.res").read_text() == "the previous cycle's date\n"
+
+
 # --- stochastic physics ------------------------------------------------------
 
 SPPT = {"seed": 20150712,

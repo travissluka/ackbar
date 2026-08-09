@@ -1247,13 +1247,58 @@ divergence rate could be subtracted rather than counted:
 |---|---|---|
 | ensemble atmospheric forcing | mixed layer, and still growing at day 5 | 0.84 degC |
 | stochastic physics, oSPPT | the whole column, stationary | 0.21 degC |
+| open boundary | inward from the segments, still growing at day 30 | 0.07 degC |
 | perturbed parameters | nowhere much; a fixed offset that does not grow | at most 0.18 degC |
 
-Only the first two are implemented. `ensemble.stochastic` is the second, and it is *stochastic*
+The boundary's day 5 entry understates it more than any other row, and the column is kept as it
+is rather than widened, because a single horizon cannot be fair to all four. A boundary
+perturbation has to be advected in: Counillon and Bertino (2009) measured, on this basin,
+anomalies entering at the inflow, travelling around the Loop Current at about 30 km/day and
+taking roughly three weeks to mature. The same ensemble reaches 0.14 degC of surface temperature
+spread by day 30 and is still rising, its temperature spread peaks below the thermocline rather
+than at the surface, and two thirds of its sea surface height spread is more than 200 km from
+any segment. `tools/obc-lagged.py` carries the measurements.
+
+Three of the four are implemented: `ensemble.stochastic` is the model-internal one, and the
+other two arrive as files through `ensemble.inputs` (below). Stochastic physics is *stochastic*
 rather than a perturbed-parameter ensemble on purpose: a member with its own parameter values is
 a different model every cycle, so the ensemble covariance stops being the covariance of anything
 and the mean is biased by whatever the parameter offsets do. A stochastic scheme draws afresh
 each cycle, and its members stay exchangeable.
+
+**Spread that arrives as a file arrives through one mechanism.** `ensemble.inputs` maps a name
+inside the model's `INPUT/` to a path template carrying `{{member_dir}}`, and `mom6sis2.stage`
+links each member's file in between the domain's shared archive and the incoming restart set.
+That ordering is the whole design: a per-member input replaces the domain's copy of that file,
+and both lose to the restart set, because `coupler_main` reads `INPUT/coupler.res` from a
+hardcoded path and a cycle whose date came from anywhere else integrates the right state from
+the wrong time. A name that appears in both is refused rather than silently overwritten.
+
+The key is the name the model opens and the value is where that file's ensemble lives, and those
+two are deliberately independent, so a boundary ensemble and an atmospheric one can be built by
+different offline stages with different layouts and staged by the same code. Every member
+resolves to a file, including the control and including a source with only one realization,
+which materializes as N symlinks to that one file; so `readlink INPUT/atm.nc` inside a member's
+run directory always answers what that member read. A missing file is refused rather than
+falling back to the domain's copy, and `ackbar validate` step 3 names it before anything is
+submitted, because the fallback is a member with no perturbation whose only symptom is an
+ensemble slightly less spread than it should be.
+
+**Sea surface height is the exception, and it is an observation-operator fact rather than a
+tuning choice.** `ufo::ObsADT::simulateObs` computes `offset = mean(H(x) - y)` over the
+observation space and subtracts it from `H(x)`, and `ObsADTTLAD` does the same in the tangent
+linear and the adjoint. Altimetry is therefore assimilated as an anomaly about its own domain
+mean, so a member whose sea level is uniformly high carries an error no observation reports and
+neither an LETKF nor a variational solver can remove. A boundary ensemble that carries one is
+charged for spread in a direction the increment cannot reach, and every spread-versus-error
+diagnostic is flattered by it. `tools/obc-lagged.py` removes each member's boundary-wide `zeta`
+before writing, and only `zeta`: a domain-wide temperature or salinity offset is observed, by
+profiles and by SST, and removing it would remove uncertainty the filter can act on.
+
+The domain makes that mode worse rather than better, which is why it is worth the code. Measured
+on `gom_25km`, the boundary-wide component is 12% of the boundary perturbation's variance and
+47% of the interior sea surface height spread it produces, because FLATHER hands a boundary-wide
+head straight to the basin while structured boundary anomalies mostly radiate back out.
 
 **Writeback is one node with one contract:** produce the restart set the next forecast reads.
 Direct restart write is the first implementation. IAU is then an alternate implementation

@@ -497,6 +497,31 @@ properties:
       # where it is a filter with nothing to work with. `tools/ensemble-ic.sh`
       # builds one.
       initial_condition: { type: string }
+      # Per-member replacements for the domain's shared input files: the model
+      # reads a different `obc.nc` or `atm.nc` per member, and everything else
+      # about the run directory stays identical. This is where spread from
+      # outside the model enters, as opposed to `stochastic`, which is spread
+      # the model generates internally.
+      #
+      # The key is the name the file takes *inside `INPUT/`*, and the value is a
+      # path template carrying `{{member_dir}}`. Those two are deliberately
+      # independent: the name is what MOM6 opens, the path is where that file's
+      # ensemble lives, and separating them is what lets a boundary ensemble and
+      # an atmospheric one be built by different offline stages with different
+      # layouts and staged by the same code. See `mom6sis2.member_inputs`.
+      #
+      # Every member resolves to a file, including the control and including a
+      # source that has only one realization, which materializes as N symlinks
+      # to the one file. So `readlink INPUT/obc.nc` inside a member's run
+      # directory always answers what that member read, and a missing file is an
+      # error rather than a silent fall back to the domain's copy.
+      #
+      # A name that is also in the restart set is refused: restarts are staged
+      # last and would win, so the per-member file would be built, linked,
+      # overwritten and never read.
+      inputs:
+        type: object
+        additionalProperties: { type: string }
       # A missing member is routine once members are array elements, so the
       # policy is per experiment and is stated rather than defaulted silently.
       on_missing_member:

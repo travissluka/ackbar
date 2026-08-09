@@ -49,7 +49,7 @@ import subprocess
 from pathlib import Path
 
 from . import stochastic
-from .config.jobtime import cycle_time, member_dir, symbols
+from .config.jobtime import cycle_time, member_dir, render, symbols
 
 #: A fourth MOM6 parameter file, written per member and read only by the
 #: forecast, holding that member's stochastic physics switches. Read last, so it
@@ -182,9 +182,10 @@ def forecast(config, site, paths, cycle, task, member, *, source, target,
 def stage(config, run, cycle, task, *, source, member=None):
     """Build the run directory. Every input is a symlink, every config a file.
 
-    *member* only decides the stochastic physics, and only when the experiment
-    configured any. Everything else about a run directory is the same for every
-    member by construction, which is what makes the ensemble an ensemble.
+    *member* decides the stochastic physics and which inputs are staged, and
+    only when the experiment configured either. Everything else about a run
+    directory is the same for every member by construction, which is what makes
+    the ensemble an ensemble.
     """
     model = config["model"]
     base = _path(model, "base")
@@ -226,7 +227,8 @@ def stage(config, run, cycle, task, *, source, member=None):
     # produced.
     _fresh(run / "RESTART")
 
-    _input_dir(run, _path(model, "input"), source)
+    _input_dir(run, _path(model, "input"), source,
+               overlay=member_inputs(config, cycle, member))
 
     # The stochastic physics, which is the one thing in a run directory that
     # differs between members. Both halves are written together or neither is:
@@ -269,13 +271,68 @@ def link_override(config, run, names=OVERRIDE):
         _link(run / name, source)
 
 
-def _input_dir(run, data, source):
-    """`INPUT/`: the domain's data, then this cycle's restarts over the top.
+def member_inputs(config, cycle, member):
+    """This member's own copies of the domain's inputs, as `(name, path)` pairs.
+
+    `ensemble.inputs` maps a name *inside `INPUT/`* to a path template carrying
+    `{{member_dir}}`. The two halves are deliberately independent: the name is
+    what the model opens, the path is where that file's ensemble lives, and
+    keeping them apart is what lets a boundary ensemble and an atmospheric one
+    be built by different offline stages with different layouts and staged by
+    the same three lines here. Neither stage has to know what the other calls
+    its files, and this function does not have to know what either produced.
+
+    Every member resolves to a path, including the control. A source with only
+    one realization is not a special case: `tools/obc-lagged.py` writes the
+    unperturbed `mem000.nc` beside the perturbed ones, and a deterministic
+    source materializes every member as a symlink to its single file, so
+    `readlink INPUT/atm.nc` answers what member seven actually read whether or
+    not member seven had anything of its own.
+
+    That is also why a missing file raises rather than falling back to the
+    domain archive's copy. The fallback is a member with no perturbation, and
+    its only symptom is an ensemble slightly less spread than it should be,
+    which is indistinguishable from the scheme being weaker than it is.
+    """
+    inputs = (config.get("ensemble") or {}).get("inputs") or {}
+    if not inputs:
+        return []
+    if member is None:
+        raise ModelError(
+            "ensemble.inputs is set, but this run was staged without a member, "
+            "so {{member_dir}} has nothing to resolve against. A run that "
+            "stages per-member inputs is a member."
+        )
+
+    resolved = []
+    for name, path in sorted(render(inputs, symbols(config, cycle, member)).items()):
+        path = Path(path)
+        if not path.exists():
+            raise ModelError(
+                f"ensemble.inputs['{name}'] resolves to {path} for "
+                f"{member_dir(member)}, which does not exist. The offline stage "
+                f"behind it writes one file per member, so this is most often "
+                f"an experiment configured with more members than that stage "
+                f"was run for."
+            )
+        resolved.append((name, path))
+    return resolved
+
+
+def _input_dir(run, data, source, overlay=()):
+    """`INPUT/`: the domain's data, this member's own, then this cycle's restarts.
 
     *data* is a directory the domain layer names, not `base/INPUT`, because the
     two halves of a case live apart: text in the repository, grids and initial
     conditions in the static root. For `OM_1deg` they happen to coincide, since
     MOM6-examples ships its own `INPUT` of symlinks into a dataset mirror.
+
+    The three layers are in that order for two reasons. *overlay* is after
+    *data* because a per-member input is a replacement for the domain's shared
+    copy of that file, which is exactly what a perturbed `obc.nc` is. Both are
+    before *source* because `coupler_main` reads `INPUT/coupler.res` from a
+    hardcoded path and the restart set has to win it: a cycle whose date came
+    from anywhere else integrates the right state from the wrong time.
 
     Rebuilt from nothing every attempt rather than updated in place. A healed
     forecast whose previous attempt left a stale `coupler.res` here would resume
@@ -284,6 +341,17 @@ def _input_dir(run, data, source):
     target = _fresh(run / "INPUT")
     for entry in sorted(os.scandir(data), key=lambda e: e.name):
         _link(target / entry.name, entry.path)
+    for name, path in overlay:
+        _link(target / name, path)
+    restarts = {entry.name for entry in os.scandir(source)}
+    shadowed = sorted(name for name, _ in overlay if name in restarts)
+    if shadowed:
+        raise ModelError(
+            f"{', '.join(shadowed)} is both an ensemble.inputs name and a file "
+            f"in the restart set {source}. The restart set is staged last and "
+            f"would win, so the per-member file would be built, linked, "
+            f"overwritten and never read."
+        )
     for entry in sorted(os.scandir(source), key=lambda e: e.name):
         _link(target / entry.name, entry.path)
 

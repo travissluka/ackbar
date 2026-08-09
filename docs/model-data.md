@@ -100,6 +100,39 @@ a layout uses `MASKTABLE` to drop all-land processors. To fix, replace the
 `/data/mom6-datasets/OM4_025` symlink with a real directory and unpack the current
 `OM4_025.tgz` into it.
 
+## Ocean state: the fetchers and the environment they need
+
+The GFDL datasets above are the model's own inputs. A domain's ocean state, its
+initial condition and its open boundary, comes from a reanalysis instead, and two
+are wired:
+
+| tool | source | reach |
+|---|---|---|
+| `tools/fetch-glorys.py` | GLORYS12V1 via the Copernicus Marine toolbox | 1/12 degree daily means, global |
+| `tools/fetch-hycom.py` | HYCOM GOFS 3.1 via HYCOM's THREDDS server | 1/12 degree 3-hourly snapshots, global |
+
+Both write the same two shapes, `ic.nc` and `obc.nc`, through the shared
+`tools/obc_grid.py`, so a domain does not know which produced its files beyond
+the `:source` attribute each stamps. Having two is not redundancy: it is what
+makes a fraternal twin possible at the boundary, and what `tools/obc-lagged.py`
+turns into an ensemble. See [`domains.md`](domains.md).
+
+**They run in `.venv-data`, not the project venv, and with `PYTHONPATH` cleared.**
+The Copernicus toolbox needs a newer `typing_extensions` than spack-stack puts on
+`PYTHONPATH`, and inheriting that path is an import error rather than a version
+warning. So every invocation is:
+
+```bash
+env -u PYTHONPATH .venv-data/bin/python tools/fetch-glorys.py ...
+```
+
+To build it: a virtualenv on the system Python holding `copernicusmarine`,
+`xarray`, `netCDF4` and `gsw`. The last is TEOS-10 and is there for one reason:
+HYCOM's `water_temp` is in-situ temperature where MOM6 wants potential, so
+`fetch-hycom.py` converts, and a source that skipped the conversion would arrive
+warm at depth and read as a model bias. `netCDF4` reaches THREDDS over OPeNDAP
+directly, so nothing else is needed for HYCOM.
+
 ## SOCA-era data already on this machine
 
 Separate from the GFDL datasets, `/data/OLD` holds the data the previous SOCA experiments

@@ -28,6 +28,17 @@ It is **not** a benchmark. Three reasons, all structural:
 - **The DA settings are not tuned.** The background error values are the pinned
   bundle's defaults, because v2's tuning lived in `BkgErrGODAS` and does not map
   onto `SOCAParametricOceanStdDev`. See [Settle these](#settle-these).
+- **The open boundary is shared too, and it is exactly right.** `gom_12km` and
+  `gom_25km` carry the same GLORYS slice, so the truth run and every experiment
+  are held to the same edge. That is a constraint no real regional system has:
+  whatever the analysis gets wrong in the interior, the boundary keeps pulling
+  back towards the state the observations were generated from, most strongly
+  near the segments and in the barotropic mode. It flatters every skill number
+  and it flatters the Loop Current inflow in particular, since the Yucatan
+  transport is prescribed identically in both. `tools/fetch-hycom.py` exists to
+  end this: an independent product on the same dates gives truth a boundary the
+  experiments do not have, which is what "fraternal" should mean at the edge as
+  well as in the resolution.
 
 It is a *fraternal* twin, which is the one structural thing that came out right:
 truth is `gom_12km` and every experiment is `gom_25km`, so model error is real
