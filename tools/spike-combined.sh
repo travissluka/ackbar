@@ -22,10 +22,10 @@ OUT=${1:?usage: spike-combined.sh <out-dir>}
 GEFS=${GEFS:-/data/ackbar/spike/gefs}
 IC=${IC:-$ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00}
 DAYS=${DAYS:-5}
-EXE=${SPIKE_EXE:-/data/ackbar/spike/build-stoch/coupler_main}
+EXE=${SPIKE_EXE:-$ACKBAR_ROOT/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main}
 TABLE=$ACKBAR_ROOT/config/model/mom6sis2/domain/gom/common/data_table.gefs
 
-[[ -x $EXE ]] || { echo "spike-combined: $EXE does not exist; run tools/spike-build-stochastic.sh" >&2; exit 1; }
+[[ -x $EXE ]] || { echo "spike-combined: $EXE does not exist; run ./build-model.sh" >&2; exit 1; }
 
 MEMBERS=(c00 p01 p02 p03 p04)
 SEEDS=(101 202 303 404 505)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Sweep the NOAA-PSL ocean stochastic physics schemes, as seed ensembles.
 
-    tools/spike-stochastic.py --out /data/ackbar/spike/stochastic \
-        --exe /data/ackbar/spike/build-stoch/coupler_main
+    tools/spike-stochastic.py --out /data/ackbar/spike/stochastic
     tools/spike-stochastic.py --list
 
-Needs the executable `tools/spike-build-stochastic.sh` produces. The stock
-build refuses these settings rather than ignoring them.
+Runs against the checkout's own `coupler_main`, which carries the pattern
+generator: `build-model.sh` compiles `pkg/stochastic_physics` into it, and with
+no scheme switched on the executable is bit for bit a stock build.
 
 **Every group here is five seeds of one configuration, not five values of one
 parameter.** That is the difference between this and `tools/spike-sweep.py` and
@@ -157,7 +157,7 @@ def main():
     ap.add_argument("--out", type=Path)
     ap.add_argument("--exe", type=Path,
                     default=os.environ.get("SPIKE_EXE",
-                                           "/data/ackbar/spike/build-stoch/coupler_main"))
+                                           str(ROOT / "pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main")))
     ap.add_argument("--ic", type=Path,
                     default=Path(os.environ.get("ACKBAR_STATIC_ROOT", "/data/ackbar/static"))
                     / "ic" / DOMAIN / "osse-control-25km" / "20150712T00")
@@ -186,7 +186,7 @@ def main():
     if not Path(args.exe).exists():
         sys.exit(f"spike-stochastic: {args.exe} does not exist. The stock "
                  f"coupler_main cannot run these; build it with "
-                 f"tools/spike-build-stochastic.sh")
+                 f"./build-model.sh")
 
     args.out.mkdir(parents=True, exist_ok=True)
     scratch = args.out / "namelists"
