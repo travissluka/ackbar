@@ -22,16 +22,33 @@
 # quarter of what an ensemble atmosphere produced, and unlike the ensemble
 # atmosphere it needs nothing downloaded. The report is `site/monitor/spread/`.
 #
-# **Where oSPPT puts the spread, measured on this experiment's own ensemble.**
-# One cycle, from `osse25-letkf`'s last analysis, every member integrated 24
-# hours twice. Surface temperature spread went from 0.066 to 0.199 degC and
-# mixed layer depth from 0.73 to 1.62 m, so a threefold and a twofold gain in
-# the two fields the surface observations constrain. Column temperature went
-# from 0.340 to 0.365, seven percent. **Sea surface height and salinity did not
-# move at all**, 0.0102 m and 0.115 psu either way, and those are exactly the
-# fields `osse25-letkf` records as under-dispersed. So this addresses the
-# surface temperature half of the problem and not the altimetric half, which
-# needs perturbed open boundaries or an ensemble atmosphere.
+# **What five cycles of this configuration did.** `osse25-letkf-stoch5` is this
+# experiment cut to five cycles with the extended forecast dropped, run against
+# `osse25-letkf`'s own first five. Prior surface temperature spread, in degC:
+#
+#     cycle        1       2       3       4       5
+#     without   0.276   0.217   0.199   0.166   0.153
+#     with      0.365   0.319   0.304   0.253   0.257
+#     gain      1.32x   1.47x   1.53x   1.52x   1.68x
+#
+# **The contribution is additive, not multiplicative.** It puts back about 0.10
+# degC every cycle, within a tenth of that at every cycle measured, while the
+# run without it decays. So the ratio climbs on its own, and on the cycle 31
+# ensemble, measured separately, the same 0.10 degC is a *tripling*: 0.066 to
+# 0.199, with mixed layer depth spread 0.73 to 1.62 m. The worse the collapse,
+# the more this is worth, which is the right shape for the problem.
+#
+# **It offsets the decay rather than arresting it.** The perturbed run still
+# loses spread cycle on cycle, 0.365 to 0.257 over five. This buys roughly six
+# cycles' worth of decay, not a new equilibrium.
+#
+# **It does nothing for sea surface height or salinity.** The spread ratio over
+# those five cycles was 1.00, 1.01, 1.00, 1.00, 0.99 in sea surface height and
+# the same in salinity, and those are exactly the fields `osse25-letkf` records
+# as under-dispersed. oSPPT scales the *diabatic* tendency, and over a day the
+# diabatic change in column mass and in salt is small, so it reaches temperature
+# and the mixed layer and nothing else. The altimetric half of the
+# under-dispersion needs perturbed open boundaries or an ensemble atmosphere.
 #
 # **What to read, and in what order.** The prior and posterior variance
 # `config/soca/letkf.yaml` writes every cycle, against `osse25-letkf`'s, which
