@@ -96,6 +96,25 @@ for pair in ${SPIKE_LINK:-}; do
     ln -sfn "$(readlink -f "$path")" "INPUT/$name"
 done
 cp "$OVERRIDE/MOM_override" "$OVERRIDE/SIS_override" .
+
+# `SPIKE_SIS` is a fourth SIS parameter file, read after SIS_override, and it
+# travels with the data table for the same reason the data table travels with
+# the file it names: `ADD_DIURNAL_SW` synthesizes a diurnal cycle on the
+# assumption that the shortwave it is handed is a daily mean, so it is a property
+# of how often the *forcing* reports and not of the domain. An hourly atmosphere
+# read with it on carries the diurnal cycle twice.
+#
+# Appended rather than replacing SIS_override, because the domain's SIS_override
+# is where NIGLOBAL and NJGLOBAL live and a run without them is a run on the
+# wrong grid. Always written, empty when unset, so the namelist below can name it
+# unconditionally.
+: > SIS_forcing
+echo "! written by tools/spike-forecast.sh" >> SIS_forcing
+if [[ -n ${SPIKE_SIS:-} ]]; then
+    [[ -e $SPIKE_SIS ]] || {
+        echo "spike-forecast: $SPIKE_SIS does not exist" >&2; exit 1; }
+    cat "$SPIKE_SIS" >> SIS_forcing
+fi
 ln -s "$EXE" coupler_main
 
 # The perturbation, as its own parameter file so that what a member changed is
@@ -164,8 +183,9 @@ group("coupler_nml", {"months": 0, "days": days, "hours": 0,
 # one the sweep is about.
 group("MOM_input_nml", {"parameter_filename": "'MOM_input', 'MOM_override', 'MOM_sweep'",
                         "input_filename": "'r'"})
-group("SIS_input_nml", {"parameter_filename": "'SIS_input', 'SIS_override'",
-                        "input_filename": "'r'"})
+group("SIS_input_nml",
+      {"parameter_filename": "'SIS_input', 'SIS_override', 'SIS_forcing'",
+       "input_filename": "'r'"})
 sys.stdout.write(text)
 PYEOF
 
