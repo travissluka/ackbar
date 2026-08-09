@@ -147,6 +147,44 @@ and reconfigure rather than trusting the cache. An already-linked `coupler_main`
 after a move; only incremental rebuilds break. Check with `make -n coupler_main` in the build
 directory, which names the stale path if there is one.
 
+## Stochastic physics
+
+The executable is always built against **NOAA-PSL/stochastic_physics**, vendored at
+`pkg/stochastic_physics`, and every scheme is off unless an experiment asks for one
+(`ensemble.stochastic`; see `src/ackbar/stochastic.py`). With none on, the executable is bit
+for bit the one a stock build produces, which is why there is one build and not two.
+
+MOM6 carries the *interface* to ocean stochastic physics in
+`src/parameterizations/stochastic/MOM_stochastics.F90` and not the pattern generator behind
+it. What it ships is `config_src/external/stochastic_physics`, seventy lines that return a
+nonzero code for any scheme, which the interface turns into a FATAL. So a stock build can read
+`DO_SPPT` and cannot run it.
+
+The join is not a port. `configure.ice_ocean.ac` appends `$EXTRA_SRC_DIRS` to the directories
+makedep walks, so the generator's sources compile alongside MOM6's own. `build-model.sh`
+arranges three things around that:
+
+- **The stub is skipped**, with `makedep -s`, because it defines the same module. Skipped
+  rather than deleted, which would leave the model submodule permanently dirty.
+- **`EXTRA_SRC_DIRS` is appended to, not replaced.** `ice_ocean_SIS2/Makefile` already sets it
+  to SIS2 and the coupler, and a `make` command line assignment overrides a makefile's own, so
+  the script reads upstream's value back out with `make --eval` rather than restating it. A
+  restated copy goes stale the next time the model submodule moves, and the symptom is a link
+  error a long way from the cause.
+- **BLAS is linked**, because the generator's spectral transforms call `esmf_dgemm`, ESMF's
+  name for the BLAS routine, and this build links neither ESMF nor BLAS.
+  `tools/stochastic-shim/esmf_dgemm.F90` supplies the name over openblas, which `pkg-config`
+  locates. The alternative, `-DCESMCOUPLED`, is global to a build that also compiles MOM6 and
+  SIS2.
+
+Precision lines up without being made to: MOM6's autoconf adds `-fdefault-real-8
+-fdefault-double-8`, exactly what the generator's own CMake sets for its 64-bit path. A 32-bit
+MOM6 build would break that silently, because the arguments still match by name and by rank.
+
+SOCA's MOM6 is a different one and does not have the generator. Nothing configures it to: the
+switches live in `MOM_stochastic`, a per-member parameter file the forecast reads and SOCA
+does not.
+
 ## Smoke test
 
 A 12-hour `OM_1deg` cold start on 8 PEs, which exercises the executable, the `.datasets`

@@ -1,0 +1,104 @@
+# `osse25-letkf` with stochastic physics in the members' forecasts.
+#
+# One layer different from `osse25-letkf`, and deliberately: same domain, same
+# dates, same control initial condition, same ensemble, same thirteen observers,
+# same observation archive, same `rtps`. What differs is that every member but
+# the control integrates a perturbed model.
+#
+# **What it exists to answer.** `osse25-letkf`'s ensemble loses spread every
+# cycle: the filter removes it and a free forecast from one atmosphere puts back
+# almost none, so the covariance narrows towards a mean the observations cannot
+# then move. Relaxation to prior spread is the usual answer and is already on at
+# `rtps: 0.95`, but it can only rescale the spread that is there; it cannot
+# create structure the ensemble does not carry. Stochastic physics is the other
+# lever, and this is whether it is enough.
+#
+# **What was measured before this was written.** Five day forecasts from one
+# state at this resolution, against a control ensemble whose members differed by
+# two parts in a billion so that the model's own divergence rate could be
+# subtracted. oSPPT at amplitude 0.8 was the strongest scheme available without
+# new data: 0.21 degC of surface temperature spread, of which 0.21 was in excess
+# of the divergence floor, and 0.11 degC through the column. That is about a
+# quarter of what an ensemble atmosphere produced, and unlike the ensemble
+# atmosphere it needs nothing downloaded. The report is `site/monitor/spread/`.
+#
+# **ePBL is available and is not used here.** It perturbs the boundary layer's
+# TKE budget, which is the right place for mixed layer spread, and at every
+# amplitude tried it produced nothing measurable above the divergence floor on
+# this domain. It is left out rather than carried at an amplitude that does
+# nothing.
+#
+# **What to read, and in what order.** The prior and posterior variance
+# `config/soca/letkf.yaml` writes every cycle, against `osse25-letkf`'s, which
+# is the whole point. Then the control's own error, because spread bought at the
+# cost of skill is not a trade this experiment is allowed to make silently: the
+# perturbation is a model error term and the members carry it, so a filter given
+# more spread than the error justifies will under-weight the observations.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-letkf-stoch
+  description: OSSE, gom_25km 3D LETKF with stochastic physics in the members
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 45
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  stochastic:
+    # The experiment's own draws. The cycle date, so that it is a fact about
+    # this experiment rather than a number, and so that a second run of the same
+    # experiment reproduces the first.
+    seed: 20150712
+    sppt:
+      # The strongest of the three amplitudes measured, and near the top of what
+      # the scheme can mean: MOM6 clips the multiplier into [0, 2], so above
+      # about 1.0 the clipping is doing the work and the perturbation is no
+      # longer the distribution it claims to be.
+      amplitude: 0.8
+      # Metres. Twenty cells at 25 km, which is the eddy scale here rather than
+      # the grid scale; 150 km and 1500 km were both measured and neither beat
+      # this.
+      length_scale: 500000.0
+      # A quarter of a cycle, so a member's perturbation is a sequence of draws
+      # over the forecast rather than one offset held constant. Doubling it to
+      # 24 hours was measured and produced less.
+      timescale: PT6H
+
+forecast:
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

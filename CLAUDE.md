@@ -53,6 +53,7 @@ in its own config file as "the regional hack", is not the model to follow.
 | `~/work/soca-science-v3` | reference: unfinished Python rewrite |
 | `~/work/soca-science-v3.test` | its test experiment dir; has a 1deg `model_data/` tree |
 | `~/work/ackbar/pkg/mom6sis2` | our clone of `NOAA-GFDL/MOM6-examples` (branch `dev/gfdl`), `.datasets` wired to `/data/mom6-datasets` |
+| `~/work/ackbar/pkg/stochastic_physics` | `NOAA-PSL/stochastic_physics`, the pattern generator MOM6 ships only a stub of. Always compiled into `coupler_main`; see `docs/model-build.md` |
 | `~/work/ackbar/pkg/jedi` | the vendored JEDI bundle, one submodule per repo. `build-jedi.sh` builds it |
 | `~/work/ackbar/pkg/jedi/build/bin` | the `soca_*.x` ACKBAR runs. `graph/tasks.py` names this path and no other |
 | `~/work/ackbar/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
@@ -282,10 +283,11 @@ job ids; a requeued batch script reruns from its first line, so the submitter ne
 `--no-requeue` plus an `O_EXCL` marker; and `afterok` edges cannot be attached to a job that
 ended more than `MinJobAge` ago.
 
-**`pkg/` is where everything ackbar builds lives**, and both halves are there: `pkg/mom6sis2`
-for the forecast model and `pkg/jedi` for the JEDI bundle, one submodule per repo. Nothing in
-ACKBAR reaches outside the checkout for an executable, which is what makes "which build
-produced this experiment" answerable from the experiment.
+**`pkg/` is where everything ackbar builds lives**: `pkg/mom6sis2` for the forecast model,
+`pkg/stochastic_physics` for the pattern generator compiled into it, and `pkg/jedi` for the
+JEDI bundle, one submodule per repo. Nothing in ACKBAR reaches outside the checkout for an
+executable, which is what makes "which build produced this experiment" answerable from the
+experiment.
 
 ## Open decisions
 
@@ -307,6 +309,14 @@ Closed, and recorded here because the reasoning is easy to reopen by mistake:
   drop the open-boundary fields the forecast restarts from.
 - **`srun` launches MPI here.** `site/rancor.sh` sets `ACKBAR_LAUNCHER="srun --mpi=pmi2"`, so
   job steps and per-task accounting match production. `docs/slurm.md` has the how.
+- **Ensemble spread comes from stochastic physics, not from perturbed parameters.** A member
+  given its own parameter values is a different model from every other member, so the ensemble
+  covariance stops being the covariance of anything and the mean carries whatever bias the
+  offsets produce. It was measured as well as argued: seventeen parameter groups swept five
+  ways each, and all of them produce a fixed offset that does not grow, most of it sitting on
+  the model's own divergence floor. `ensemble.stochastic` (oSPPT and ePBL) is the implemented
+  answer, and ensemble atmospheric forcing is the larger one still to build. The full
+  measurement is `site/monitor/spread/report.html`.
 - **The back-compat pins are dropped.** Every domain's `MOM_override` sets
   `ENABLE_BUGS_BY_DEFAULT = False`, so the model runs the corrected physics and no state spun
   up under the old defaults is reusable. `docs/model-build.md` and `docs/domains.md` have the

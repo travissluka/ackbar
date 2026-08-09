@@ -48,10 +48,21 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import stochastic
 from .config.jobtime import cycle_time, member_dir, symbols
 
+#: A fourth MOM6 parameter file, written per member and read only by the
+#: forecast, holding that member's stochastic physics switches. Read last, so it
+#: wins, and separate from `MOM_override` because that file is the domain's and
+#: SOCA reads it too: SOCA links a MOM6 that carries the same interface with the
+#: stub behind it, and would fail on a switch this file turns on. See
+#: `ackbar/stochastic.py`.
+STOCHASTIC = "MOM_stochastic"
+
 #: Files the run directory owns outright and writes fresh. Everything else in
-#: the base case directory is linked through untouched.
+#: the base case directory is linked through untouched. `STOCHASTIC` is owned
+#: too but is not here, because it is written only for a perturbed member, and
+#: this is the list of what every run has.
 OWNED = ("input.nml", "diag_table")
 
 #: Files the base case ships that ACKBAR replaces with its own, linked from the
@@ -155,7 +166,7 @@ def forecast(config, site, paths, cycle, task, member, *, source, target,
     """
     run = paths.scratch(cycle, task, member)
     logs = paths.log_dir(cycle)
-    stage(config, run, cycle, task, source=source)
+    stage(config, run, cycle, task, source=source, member=member)
     try:
         launch(config, site, run, task)
     finally:
@@ -168,8 +179,13 @@ def forecast(config, site, paths, cycle, task, member, *, source, target,
 
 # --- the run directory -------------------------------------------------------
 
-def stage(config, run, cycle, task, *, source):
-    """Build the run directory. Every input is a symlink, every config a file."""
+def stage(config, run, cycle, task, *, source, member=None):
+    """Build the run directory. Every input is a symlink, every config a file.
+
+    *member* only decides the stochastic physics, and only when the experiment
+    configured any. Everything else about a run directory is the same for every
+    member by construction, which is what makes the ensemble an ensemble.
+    """
     model = config["model"]
     base = _path(model, "base")
     if not (source / STAMP).exists():
@@ -191,6 +207,11 @@ def stage(config, run, cycle, task, *, source):
     for entry in sorted(os.scandir(base), key=lambda e: e.name):
         if entry.name in OWNED or entry.name in OVERRIDE:
             continue
+        if entry.name == STOCHASTIC:
+            # Never linked even when this run writes none of its own. A base
+            # case is free to ship a file by that name, and linked through it
+            # would be read after ACKBAR's override and win.
+            continue
         if entry.name in ("INPUT", "RESTART"):
             continue
         if entry.name.startswith(GENERATED):
@@ -206,7 +227,21 @@ def stage(config, run, cycle, task, *, source):
     _fresh(run / "RESTART")
 
     _input_dir(run, _path(model, "input"), source)
-    _write(run / "input.nml", _namelist(base, config, cycle, task))
+
+    # The stochastic physics, which is the one thing in a run directory that
+    # differs between members. Both halves are written together or neither is:
+    # the parameter file switches the scheme on inside MOM6, the namelist group
+    # switches the pattern on inside the generator, and the generator fails the
+    # run when only one of them is set.
+    files, extra = _PARAMETER_FILES, ""
+    perturb = stochastic.settings(config)
+    if perturb and stochastic.perturbs(member):
+        _write(run / STOCHASTIC, stochastic.parameters(perturb))
+        files = dict(files)
+        files["MOM_input_nml"] = files["MOM_input_nml"] + (STOCHASTIC,)
+        extra = stochastic.namelist(perturb, member, cycle)
+
+    _write(run / "input.nml", _namelist(base, config, cycle, task, files) + extra)
     _write(run / "diag_table", _diag_table(config, model, cycle, task))
 
 
@@ -377,7 +412,7 @@ _PARAMETER_FILES = {
 _RESUME = "'r'"
 
 
-def _namelist(base, config, cycle, task):
+def _namelist(base, config, cycle, task, files=None):
     """`input.nml` with the run length, fallback date and parameter files set.
 
     `months`/`days` are zeroed as well as setting the rest, because a base case
@@ -385,7 +420,12 @@ def _namelist(base, config, cycle, task):
 
     *task* because the long forecast runs for a different length and writes at
     a different cadence, and both reach `coupler_nml` through the symbol table.
+
+    *files* is `_PARAMETER_FILES` for every run that is not perturbed, and that
+    list plus `MOM_stochastic` for one that is. Passed rather than decided here
+    so that a member's whole difference from the control is settled in one place.
     """
+    files = _PARAMETER_FILES if files is None else files
     table = symbols(config, cycle, task=task)
     coupler = {
         "months": 0,
@@ -412,9 +452,9 @@ def _namelist(base, config, cycle, task):
         coupler["dt_cpld"] = seconds
         coupler["dt_atmos"] = seconds
     updates = {"coupler_nml": coupler}
-    for group, files in _PARAMETER_FILES.items():
+    for group, names in files.items():
         updates[group] = {
-            "parameter_filename": ", ".join(f"'{name}'" for name in files),
+            "parameter_filename": ", ".join(f"'{name}'" for name in names),
             "input_filename": _RESUME,
         }
 

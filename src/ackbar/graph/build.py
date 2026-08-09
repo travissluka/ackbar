@@ -252,6 +252,7 @@ def _check_extended(config):
 def build_graph(config):
     """The whole experiment: every cycle, every task, every edge."""
     _check_ensemble_source(config)
+    _check_stochastic(config)
     _check_hours(config)
     _check_window(config)
     _check_four_d_covariance(config)
@@ -305,6 +306,27 @@ def build_graph(config):
     _check_roots(graph)
     graph.order()  # fail here rather than leaving Slurm to not notice
     return graph
+
+
+def _check_stochastic(config):
+    """Stochastic physics needs a model with physics in it.
+
+    A relation between `ensemble.stochastic` and `model.name`, so it is here
+    rather than in the schema for the same reason as the check above. Without
+    it a `persistence` experiment would stage a parameter file nothing opens
+    and report an ensemble whose members are perturbed when every one of them
+    is the same state handed forward.
+    """
+    if not (config.get("ensemble") or {}).get("stochastic"):
+        return
+    name = config["model"]["name"]
+    if name != "mom6sis2":
+        raise GraphError(
+            f"ensemble.stochastic is set and model.name is {name!r}. The "
+            f"schemes are MOM6's, read out of a MOM6 parameter file by a "
+            f"pattern generator compiled into `coupler_main`, so a {name!r} "
+            f"forecast would integrate exactly as it does without them."
+        )
 
 
 def _check_ensemble_source(config):

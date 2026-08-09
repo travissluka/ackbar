@@ -30,3 +30,7 @@
 	path = pkg/jedi/soca
 	url = ssh://git@github.com/jcsda-internal/soca.git
 	branch = develop
+[submodule "pkg/stochastic_physics"]
+	path = pkg/stochastic_physics
+	url = https://github.com/NOAA-PSL/stochastic_physics.git
+	branch = master
