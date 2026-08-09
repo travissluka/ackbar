@@ -130,11 +130,11 @@ is not reliably present on HPC, and a build that only works where Ninja is insta
 machine dependency wearing a different hat. A site file may opt into Ninja; nothing else may
 assume it.
 
-This is worth doing early rather than late, because the leaks accumulate quietly. Already
-present before any workflow code exists: `source ~/work/env.sh` in both build scripts, a
-`/data/...` dataset root reached through a symlink inside a submodule, `/data/ackbar` scratch
-paths in the Slurm smoke test, and a CMake generator exported by a personal environment file.
-None of those are wrong on rancor. All of them are wrong everywhere else.
+This is worth doing early rather than late, because the leaks accumulate quietly, and they
+are never wrong on the machine they were written on. A build script sourcing a personal
+environment file, a dataset root reached through a symlink inside a submodule, a scratch path
+in a test, a CMake generator exported by a shell profile: each is correct on rancor and wrong
+everywhere else. `site/` is where all of them belong.
 
 ### What Slurm actually does, as opposed to what is convenient to assume
 
@@ -839,7 +839,7 @@ different covariance or window settings. The real axes:
 | solver | `none`, `variational`, `letkf` |
 | covariance (variational only) | `static`, `ensemble`, `hybrid` |
 | window | `3d`, `fgat`, `4d`, each with its own length, defaulting to the cycle |
-| ensemble source | `letkf`, `none`, and the unimplemented `eda`, `offline`, `perturbation` |
+| ensemble source | `letkf`, `none`. `eda`, `offline` and `perturbation` are vocabulary the schema carries; `graph.build` refuses them when the *covariance* is drawn from the ensemble, and does not check them for an ensemble filter, which maintains its own members |
 
 So v2's modes map as: `3dvar` = variational+static+3d, `3denvar` = variational+ensemble+3d,
 `3dhyb` = variational+hybrid+3d, `3dfgat` = variational+static+fgat, `4denvar` and `4dhyb` are
@@ -1254,13 +1254,6 @@ regional last.
   based on v2's `soca_domom6_action.py` is the fallback, and v2's `socaincr2mom6` is the
   starting point for IAU. Resolve by spike test during implementation, not on paper, and run
   the spike before milestone 3 rather than inside it.
-- **MOM6 back-compat parameter pins.** Whether SOCA configs keep `EQN_OF_STATE = "WRIGHT"`
-  and friends or drop them for corrected physics. See `docs/model-build.md`. Coupled to
-  spinup: dropping them invalidates any initial condition produced under the old physics, so
-  decide before generating one.
-- **Packaging.** Python package versus scripts. Layered config with schema validation and
-  generated task graphs effectively forces python for the workflow itself; the question is
-  really how much lives in the package versus in job scripts it emits.
 - **Ensemble geometry on rancor.** 8 cores total against an 8-PE model run means real-model
   member parallelism requires fewer PEs per member or oversubscription. The stub model removes
   this from the critical path for testing the workflow, but a small real configuration running
@@ -1290,11 +1283,12 @@ regional last.
   `da` for the first of them meant no existing shape's graph, paths or sentinels moved. The
   edge between them is an ordering rather than a data dependency: exactly one job may apply the
   divergence policy, since `replace_from_mean` rebuilds a member's restart set.
-- **Which application calibrates vertical B per cycle**, if a separate one does at all. The
-  task exists in the graph with no executable named. `soca_sqrtvertloc.x` is not it: that is
-  vertical *localization* for an ensemble covariance, a different quantity from the vertical
-  correlation scales of the static B. Settled in the variational phase, where the DA task
-  itself is built and it becomes clear whether this is a task or a saber block inside one.
+- ~~**Which application calibrates vertical B per cycle.**~~ **Settled: it is
+  `soca_error_covariance_toolbox.x`, as `b.corr_vt`.** An experiment opts in with
+  `config/layers/da/corr_vt_cycled.yaml`, which rebuilds the vertical scales from that cycle's
+  own background and blends them into a rolling average; without it the offline calibration
+  seeds every cycle. `soca_sqrtvertloc.x` was never it: that is vertical *localization* for an
+  ensemble covariance, a different quantity from the static B's correlation scales.
 
 ## Not carried forward
 

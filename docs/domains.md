@@ -141,25 +141,17 @@ limit` disabled entirely, five analysed cycles ran twenty one of twenty one
 forecasts with every job completing. The bound is not what the domain needs. The
 sea floor is.
 
-That matters because the bound was not cheap. Measured on a real analysis with
-`writeback.divergence_scaling` itself, it cut the velocity increment at 16% of
-wet cells by a median factor of 0.48, and more than half of those cells were
-deeper than 200 m rather than the thin ones the bound was justified by. Summed,
-17% of the depth-weighted velocity increment, every cycle, consistently across
-every member. And it was not a spin-up guard: the count per cycle drops by half
-from the first analysis to the second and then sits between 500 and 650 for as
-long as the experiment runs.
+That matters because the bound was not cheap. It reached a sixth of wet cells,
+most of them in deep water rather than the thin columns it was justified by, and
+took a substantial share of the depth-weighted velocity increment every cycle
+rather than only during spin-up. Contrast the per-point `increment limits`, which
+stay: those touch a tenth of a percent of live velocity points and clip a tail,
+which is the cost a guard should have.
 
-Contrast the per-point `increment limits`, which stay. Those touch 0.09% of live
-velocity points, with the increment's 99.9th percentile at 0.487 m/s against
-their 0.5 bound, so they clip a tail. That is the cost a guard should have.
-
-Two traps this left behind, both worth naming. Judging a rung of the sweep by
-counting surviving `rst` directories reads a healthy run as a dead one, because
-`cleanup.keep_cycles` removes an older cycle's restarts on schedule; count
-`submitted.*` and `sacct` states instead. And three cycles is not enough to call
-a trend: the fire count looked like it had flattened at cycle 3, fell 10% at
-cycle 4, then held. Nine cycles is what showed the shape.
+One trap worth naming, because it is easy to repeat. Judging a run by counting
+surviving `rst` directories reads a healthy experiment as a dead one, since
+`cleanup.keep_cycles` removes an older cycle's restarts on schedule. Count
+`submitted.*` and `sacct` states instead.
 
 **`MINIMUM_DEPTH` was not changed and probably does not need to be.** It is 10 m
 in `gom/common/MOM_input` for every Gulf resolution, and the imported topography
@@ -192,14 +184,26 @@ because those are `gom_12km` products, and that is what keeps the rebuild
 bounded. `gom_12km` needs the same treatment before it is used for DA, and doing
 it means regenerating the truth and the whole observation archive with it.
 
-**The open boundary is frozen.** Every `obc.nc` holds exactly one time record, a
-SODA 3.3.1 five-day mean valid 2015-01-04 13:00, and `ic.nc` is the same
-snapshot. Cycling for weeks against a stationary boundary means the interior
-relaxes toward whatever that one snapshot implies. Regenerating needs
-`PyCNAL_regridding`, which is defunct, and `/data/soda`, which is no longer on
-this machine, so replacing this is a project rather than a rerun of
-`common/gen_obc.py`. In the meantime it is a usable imperfect model: the boundary
-error is real error for an analysis to work against.
+**The open boundary is time varying on the two domains that run, and frozen on
+the other two.** `tools/fetch-glorys.py obc` built the first pair from a daily
+GLORYS12V1 reanalysis; `gom_8km` and `gom_4km` still carry the single SODA 3.3.1
+five-day mean the domains were imported with, and the SODA file is kept beside
+each as `obc.nc.soda`. Ask rather than trust this paragraph:
+
+```bash
+ncdump -h $ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/obc.nc | grep -E 'time = |:source'
+```
+
+A frozen boundary is usable but not neutral: cycling for weeks against one
+snapshot means the interior relaxes toward whatever that snapshot implies, and
+the resulting error is boundary error rather than the forecast error an analysis
+exists to correct.
+
+The GLORYS span is the constraint to know about, because a run outside it fails
+in `time_interp_external` at the first timestep. **Every tier 3 fixture starts
+2015-01-05, which is outside it.** That mismatch is open, and reconciling it
+means either extending the fetch backwards or restamping the smoke initial
+condition and moving the fixture dates.
 
 **The atmosphere is a climatology.** NCAR/CORE, staged once under
 `$ACKBAR_STATIC_ROOT/forcing/ncar-clim` and shared by every resolution. It has no
