@@ -459,20 +459,49 @@ until the free surface matches. Steric sea level here is something the model
   once as the density anomaly and again as the volume that anomaly implies.
   Skipping it is correct rather than merely harmless.
 
-- **An ensemble filter does lose something, and it is not small.** There is no
-  balance operator in an LETKF: the increment is whatever the sample covariance
-  says, `h` is in `background variables`, and `oops::LocalEnsembleDA` sets the
-  increment variables to the state variables when no `increment variables` key
-  is given, which ACKBAR's template does not give. So the filter genuinely
-  analyses the thickness. Measured on `osse25-4dletkf`, member 1: the analysis
-  file's `h` differs from the background's by up to **4.27 m**, and none of it
-  reaches the restart. That increment is a real mass redistribution the ensemble
-  inferred from altimetry, and it is discarded. The same omission means RTPS
-  never reaches the mass field: `h` spread decays from 0.233 to 0.116 over
-  twenty cycles with no inflation applied to it at all.
+- **An ensemble filter loses the barotropic part, and that needs stating
+  carefully, because the obvious version of the claim is wrong.** The ensemble
+  component carries no balance operator, only `covariance model`, `members` and
+  `localization`. It does not need one: localization here is horizontal and
+  there is no cross-variable localization, so the covariance is fully
+  multivariate and a member's sea level perturbation carries its correlation
+  with that member's temperature and salinity. It measures out. Over the twenty
+  members at 2015-07-31 the perturbations give `corr(sum(h), ave_ssh) = 0.87`
+  with spreads of 1.68 cm and 1.50 cm: the members are physically consistent
+  states and the covariance encodes the steric relationship empirically.
 
-- **A hybrid is a mixture**, and the ensemble half's contribution to the SSH
-  increment is the part that is lost.
+  So the filter's increment is coherent, and `h` is part of it: `h` is in
+  `background variables`, and `oops::LocalEnsembleDA` sets the increment
+  variables to the state variables when no `increment variables` key is given,
+  which ACKBAR's template does not give. Read `ocn.incr.incr.*.nc` rather than
+  differencing two states, and `osse25-4dletkf`'s control increment at
+  2015-08-01 is `Temp` 0.2546 rms, `Salt` 0.0628, **`h` 0.0660**, `ave_ssh`
+  0.0095. Summed over levels the thickness increment is **2.1 cm rms of sea
+  level against a 0.95 cm `ave_ssh` increment**, so the mass field carries more
+  than twice the sea level signal and it is the part discarded.
+
+  What that costs is *not* the whole sea level constraint, because the
+  temperature and salinity increment is written and the model regenerates the
+  steric response from it. It is the **barotropic residual**: the volume
+  redistribution the ensemble inferred, with no density anomaly behind it, which
+  nothing else reconstructs. The same omission also means RTPS never reaches the
+  mass field, whose spread decays from 0.233 to 0.116 over twenty cycles with no
+  inflation applied to it at all.
+
+- **A hybrid is a mixture**, and the ensemble half's barotropic contribution is
+  the part that is lost.
+
+The tempting next step is to blame this for the observation-space ranking, which
+over three shared cycles is monotone in how much of the covariance is static
+(`adt_hy2a` at +37.2%, +28.6% and +1.7% for 3D-FGAT, the hybrid and the EnVar,
+with the SST platforms retaining 65 to 72% of 3D-FGAT's skill where the
+altimeters retain 5 to 29%). **Do not.** Since the written temperature and
+salinity increment carries the steric response, altimetry does reach the ocean
+without `h`, and a twenty member ensemble that samples dense local SST covariance
+well and deep mass structure badly predicts the same ranking. The discriminating
+run is one short EnVar with `sea_water_cell_thickness` added to the analysis
+variables: if altimeter skill jumps it is the writeback, and if not it is the
+covariance.
 
 So the fix is not "add `sea_water_cell_thickness` to every analysis variable
 list". It is to add it to the *ensemble* solvers, where the increment exists and
