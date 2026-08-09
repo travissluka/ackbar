@@ -212,8 +212,8 @@ line, not a failure. Keyed off the stub's file name under a real model it refuse
 of every experiment, and the only symptom is a disk filling up over days.
 
 **A leaf with no implementation yet should run and do nothing; a task in the data path should
-not.** `post.state` and `verify` produce diagnostics nothing else reads, so a real-model
-experiment that skips them loses a diagnostic and can be told it did, from the sentinel.
+not.** `verify` produces a diagnostic nothing else reads, so a real-model experiment that skips
+it loses a diagnostic and can be told it did, from the sentinel.
 `writeback` doing nothing quietly means every later cycle forecasts from an unanalysed state
 while the experiment looks healthy throughout. The list is `DEFERRED` in `run.py` and shrinks as
 the science phases land. They stay in the graph rather than being cut from it, so that the phase
@@ -293,9 +293,9 @@ Static B and analysis-to-restart writeback.
   python direct write.
 - **Build:** the background error's correlation as an offline stage, the DA task, the writeback
   task, and `model: persistence`. The per cycle vertical B calibration is a measured
-  improvement on the offline one rather than a prerequisite for it, so it is not in this phase;
-  `b.corr_vt` is in the graph and deferred, and what closes it is the vertical `filepath` naming a
-  per-cycle file instead of a static one.
+  improvement on the offline one rather than a prerequisite for it, so it is not in this phase.
+  It landed later as `config/layers/da/corr_vt_cycled.yaml`, which points the vertical
+  `filepath` at a per-cycle file and puts `b.corr_vt` in the data path.
 - **Test:** tier 3, `tests/test_tier3_var.py`, two experiments at `gom_25km`. Tiers 0 through 2
   keep passing, plus `test_soca.py`, `test_writeback.py` and `test_persistence.py`.
 - **Order within the phase:** bring it up on `model: persistence` first. That gives the full DA
@@ -598,8 +598,8 @@ cycle of an ensemble is how a free run fills a disk (`docs/design.md`, Model and
 window needs it to write a state every *slot*, plus a place for those to go and a rule for
 reaping them.
 
-Items 1 to 4 below are **built**, on the free run, where the only open questions were about the
-model. Item 5 is what is left.
+All five below are **built**, the first four on the free run where the only open questions were
+about the model.
 
 1. **A slot cadence.** `forecast.slots`, a duration, validated in `graph/build.py` against the
    window, the cycle and the lead-in. Under `forecast` and not `solver` because the forecast is

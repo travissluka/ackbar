@@ -278,8 +278,8 @@ anywhere in the source tree and `LinearVariableChange/` holds only `Balance` and
 not a rename. v2 tuned `t_min`/`t_max`/`t_dz`/`t_efold` and `s_min`/`s_max`; the parametric
 block takes an SST error field, defaults for unbalanced salinity and ssh, and a per-variable
 minimum or fraction of background. Carrying v2's tuning across is a science decision rather
-than a transcription, so what is in `config/layers/da/variational.yaml` is the bundle's own
-defaults. They are known to run and are not known to be right.
+than a transcription, so `config/layers/da/variational.yaml` took the bundle's own defaults
+for most of them. They are known to run and are not known to be right.
 
 Two settings there are deliberate departures rather than inheritance:
 
@@ -292,8 +292,8 @@ Two settings there are deliberate departures rather than inheritance:
 - **`ninner: 20`** against v2's 50, and `gradient norm reduction: 1.0e-10` against its 1e-3.
   v2's solves stopped on the target; ACKBAR's stop on the count.
 
-The vertical correlation scales are calibrated once here rather than every cycle as v2 did.
-Per-cycle is a measured improvement to make later; what makes it optional is that the mixed
+The vertical correlation scales are calibrated once by default rather than every cycle as v2
+did; `da/corr_vt_cycled` opts into v2's behaviour. What makes it optional is that the mixed
 layer moves slowly compared to a DA cycle.
 
 ### The diffusion scales

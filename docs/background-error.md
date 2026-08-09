@@ -139,17 +139,24 @@ read the peak column.
 
 ## What is not calibrated
 
-The vertical scales come from the `MLD` field of whichever restart the
-calibration was given, so they describe that state's mixed layer. A cold start's
-mixed layer is thinner than a spun up one, and the resulting B is correspondingly
-tight in the vertical. soca-science v2 recalibrated the vertical every cycle,
-which is the measured improvement to make here; what makes it optional rather
+The vertical scales are computed by `ackbar.diffusion` from the density profile
+of whichever restart the calibration was given, so they describe that state's
+mixed layer. Not from the restart's own `MLD` field: MOM6's instantaneous `MLD`
+carries the diurnal layer, so on a summer afternoon it reports a few metres and
+the vertical correlation collapses to the floor over most of the domain. A cold
+start's mixed layer is thinner than a spun up one, and the resulting B is
+correspondingly tight in the vertical.
+
+Calibrated once by default. `config/layers/da/corr_vt_cycled.yaml` rebuilds the
+vertical every cycle from that cycle's own background and blends it into a
+rolling average, which is what soca-science v2 did; what makes it optional rather
 than required is that the mixed layer moves slowly compared to a DA cycle.
 
-The standard deviations in the variational layer are the bundle's defaults, not
-chosen values, and the sea surface height multiplier in `config/static/diffusion.yaml`
-is soca-science v2's. Both are decisions waiting to be made rather than settings
-that have been made.
+The standard deviations in the variational layer are mostly the bundle's
+defaults rather than chosen values, and the sea surface height multiplier in
+`config/static/diffusion.yaml` is soca-science v2's. Both are decisions waiting to
+be made. The exception is sea surface temperature, which reads a field derived
+for the domain by `tools/sst-bgerr.py`.
 
 ## The depth filter, and why it is off
 

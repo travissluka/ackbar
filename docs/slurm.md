@@ -21,8 +21,8 @@ All stages are idempotent.
 What it does:
 
 - **pkgs** - `slurm-wlm`, `slurmdbd`, `munge` from Ubuntu universe (23.11), plus
-  `mysql-server` if no MySQL/MariaDB server is installed. rancor already had a stock
-  MySQL 8.0 datadir in `/var/lib/mysql` with no user databases; the install adopts it.
+  `mysql-server` if no MySQL/MariaDB server is installed, and adopts an existing server
+  and datadir if one is.
 - **munge** - creates `/etc/munge/munge.key` if absent and verifies a round trip. Munge is
   Slurm's authentication; if it is down, every Slurm command fails with a credential error.
 - **dirs** - `/var/spool/slurmctld` and `/var/log/slurm` owned by `slurm`,
@@ -89,10 +89,10 @@ error anywhere and Slurm records the job `COMPLETED`. Verify with a hello-world 
 **Which launcher you use changes what `MaxRSS` means**, which is why `ackbar` records the
 launcher next to the numbers it harvests. The same 8-PE `OM_1deg` run under each:
 
-| | step row | `MaxRSS` | what the number is |
-|---|---|---|---|
-| `srun --mpi=pmi2` | `<job>.0`, named for the executable | ~1.4 G | one rank |
-| `mpiexec` | `<job>.batch` only | ~10.7 G | all 8 ranks on the node |
+| | step row | what `MaxRSS` is |
+|---|---|---|
+| `srun --mpi=pmi2` | `<job>.0`, named for the executable | one rank |
+| `mpiexec` | `<job>.batch` only | every rank on the node |
 
 Roughly a factor of ranks-per-node between them, so sizing `--mem` from one regime with numbers
 from the other is wrong by that factor in whichever direction hurts. srun also gets you a named

@@ -83,15 +83,13 @@ only 28 lines, all of which are back-compat pins for the defaults listed above
 `MASS_WEIGHT_IN_PRESSURE_GRADIENT_TOP = False`, `DRAG_DIFFUSIVITY_ANSWER_DATE`,
 `LOTW_BBL_ANSWER_DATE`, `NDIFF_ANSWER_DATE`).
 
-Those pins are effective: the `OM_1deg` smoke test below gives a bit-identical `ocean.stats`
-whether built from the `main` pin (2024 MOM6) or the `dev/gfdl` pin (2026 MOM6). So the
-branch choice buys us newer code without changing answers, and any answer change we do see
-later will be one we asked for.
+Those pins are what let the branch choice buy newer code without changing answers, so any
+answer change is one that was asked for.
 
-**Open question for later:** whether our SOCA configs keep those pins or drop them and run
-the corrected physics. For a new system dropping them is probably right, consistent with
-soca-science's existing habit of disabling bug-retention flags. Dropping them is a deliberate
-one-way step, so do it before spinning up, not mid-experiment.
+**Settled: ACKBAR drops them.** Every domain's `MOM_override` sets
+`ENABLE_BUGS_BY_DEFAULT = False`, so the model runs the corrected physics and no state spun up
+under the old defaults is reusable. It was a deliberate one-way step taken before spinup rather
+than mid-experiment. [`domains.md`](domains.md) has the reasoning and the flag count.
 
 ## Cloning
 

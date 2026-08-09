@@ -259,9 +259,11 @@ Three things an experiment states and one it never does:
   run free and only recentres them, which is cheaper and is a different
   experiment rather than a degraded one: that ensemble has flow dependence and
   no observation information of its own. The rest of the vocabulary (`eda`,
-  `offline`, `perturbation`) is refused by `ackbar/graph/build.py`, because a
-  covariance drawn from an ensemble that nothing updates loses its spread over a
-  few cycles and reports no error while it does.
+  `offline`, `perturbation`) is refused by `ackbar/graph/build.py` *when the
+  covariance is drawn from the ensemble*, because a covariance drawn from an
+  ensemble that nothing updates loses its spread over a few cycles and reports no
+  error while it does. An ensemble filter maintains its own members, so the check
+  does not apply to it and the value is unconstrained there.
 
 What an experiment never states is the members themselves. They are paths, one
 per member, under the previous cycle's `rst/`, and a layer naming them would be
@@ -350,15 +352,23 @@ restart set per member beside the state it perturbed. An experiment names it
 with `ensemble.initial_condition`; the control starts from
 `model.initial_condition`, unperturbed.
 
-That is the right starting point and the wrong ensemble. The perturbations are
+That is a usable starting point and the wrong ensemble. The perturbations are
 static: they carry B's correlation length scales and none of the flow structure
 of the ocean at that instant, so the ensemble has spread but no dynamical
 balance, and the first few cycles of any experiment started this way are
-spin-up. The spread is also whatever B claims, which at `gom_25km` is about
-0.09 K in surface temperature: an ensemble that confident gives observations
-very little weight. A better ensemble is a set of states from a long run,
-sampled far enough apart to be independent, which is what an OSSE nature run
-provides.
+spin-up. The spread is also whatever B claims, which is confident enough to give
+observations very little weight. It is what tier 3 uses, where the point is to
+exercise the path rather than to believe the answer.
+
+**A real experiment uses the lagged ensemble instead.**
+`tools/ensemble-ic-lagged.sh` draws each member from a different GLORYS year at
+the same time of year, so the spread is real ocean variability and every member
+is a dynamically balanced state. Three steps, and their order matters:
+`ensemble-ic-lagged.sh` builds the members, `experiments/osse25-ensemble-settle`
+gives them one free day to shed the initialization shock, and
+`tools/ensemble-recenter.py` moves the mean onto the control **last**, because
+recentring before the settle leaves the mean a free day ahead of the control and
+an ensemble filter cannot tell that offset from information.
 
 The stage hit the same omission the analysis did, from the other side. A
 covariance's `linear variable change` with no `output variables` produces an
@@ -481,16 +491,21 @@ finishes normally.
   so it must never run in place and the source has to survive until the
   destination is committed. Owed before production, not before a result.
 - **The standard deviations.** See [`background-error.md`](background-error.md).
-  They are the bundle's defaults, which is a decision waiting to be made rather
-  than one that has been.
+  Mostly the bundle's defaults, which is a decision waiting to be made rather
+  than one that has been. Sea surface temperature is the exception: it reads a
+  field derived for the domain by `tools/sst-bgerr.py`.
 
 ## What an ensemble here cannot yet show
 
 Two things about the ensemble are worth knowing before any result from an LETKF
 experiment is compared with a variational one.
 
-**The spread is drawn from the static B**, so it is whatever that covariance
-claims and carries none of the flow structure of the ocean at that instant.
+**The spread comes from lagged GLORYS years**, drawn by
+`tools/ensemble-ic-lagged.sh` and recentred onto the control. It is real ocean
+variability rather than a covariance model's idea of it, which is the better of
+the two available answers, but it is climatological spread and not the flow
+structure of the ocean at that instant. `tools/ensemble-ic.sh` builds the other
+kind, perturbing one state through the static B, and is what tier 3 uses.
 
 **Every member is forced by the same atmosphere.** The members differ only in
 their ocean state, and each cycle they are pushed towards a common solution by
