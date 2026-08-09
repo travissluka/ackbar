@@ -394,7 +394,8 @@ def main():
         print(f"{'':8s}{'days':>6s}"
               + "".join(f"{field:>10s}" for field in field_order(segments)))
         for name, lag, values in written:
-            write_member(f, args.out / f"{name}.nc", keep, values)
+            write_member(f, args.out / f"{name}.nc", keep, values,
+                         name, lag, args.amplitude)
             row = []
             for field in field_order(segments):
                 difference = np.concatenate(
@@ -424,7 +425,7 @@ def main():
     print(f"\nobc-lagged: wrote {len(written)} files to {args.out}")
 
 
-def write_member(source, path, keep, values):
+def write_member(source, path, keep, values, member, lag, amplitude):
     """One member, structurally identical to the file it came from.
 
     Everything not a segment data field is copied through: `dz_`, `lon`, `lat`,
@@ -436,8 +437,39 @@ def write_member(source, path, keep, values):
                  for segment, fields in segments_of(source).items()
                  for field, variable in fields.items()}
 
+    # Built from the fields rather than formatted: a NOLEAP axis comes back as a
+    # cftime object, which implements neither `__format__` nor `isoformat`.
+    time = source["time"]
+    calendar = getattr(time, "calendar", "standard")
+    covered = [
+        "{0.year:04d}-{0.month:02d}-{0.day:02d}T{0.hour:02d}:{0.minute:02d}:"
+        "{0.second:02d}Z".format(nc.num2date(value, time.units, calendar))
+        for value in (time[keep][0], time[keep][-1])]
+
     partial = path.with_suffix(".nc.partial")
     with nc.Dataset(partial, "w", format=source.data_model) as out:
+        # The source's own globals first, so `source` still says which GLORYS
+        # pull the water came from; then this tool's, because a member file
+        # otherwise cannot say what was done to it. A run staged from an archive
+        # is only reproducible if the archive records its own ladder: the
+        # directory name carries it by convention and conventions drift.
+        out.setncatts({key: source.getncattr(key) for key in source.ncattrs()})
+        out.setncatts({
+            "perturbation": (
+                f"lagged open boundary, {member}, lag {lag:+d} days, "
+                f"amplitude {amplitude}"),
+            "perturbation_form": (
+                "member(t) = base(t) + amplitude * (base(t + lag) - mean over "
+                "members); mem000 is base and its lag is 0"),
+            # ACDD names, and they earn their place: a ladder trims max|lag| off
+            # each end, so a member covers a shorter window than the file it came
+            # from and than `source` names. An experiment cycling past the end
+            # gets `time_interp_external ... is before/after range of list` from
+            # inside MOM6, minutes into a job, from whichever PE owns a segment.
+            # These two attributes are what makes that answerable from the file.
+            "time_coverage_start": covered[0],
+            "time_coverage_end": covered[-1],
+        })
         for name, dimension in source.dimensions.items():
             out.createDimension(name, None if dimension.isunlimited()
                                 else len(dimension))
