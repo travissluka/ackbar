@@ -160,6 +160,18 @@ solver:
   # rather than continuously perturbed, so every source of spread is the filter
   # relaxing what its own analysis removed. An LETKF here collapses without this
   # and does not announce that it has.
+  #
+  # **And it collapses with it, which is the thing to understand before reaching
+  # for a bigger coefficient.** RTPS relaxes the posterior spread back towards
+  # *the prior's*, and on a domain with no external spread source the prior is
+  # itself shrinking: the forecast between two analyses adds nothing, so each
+  # cycle's prior is the previous cycle's posterior. The relaxation is chasing a
+  # floor that moves down with it and the sequence decays geometrically for any
+  # coefficient below one. No relaxation coefficient is the fix. A spread source
+  # outside the filter is: per-member forcing, additive inflation from a
+  # climatological pool, per-member open boundaries. Until one exists, this
+  # number is holding back a collapse rather than preventing one, and tuning it
+  # is measuring the decay.
   local ensemble DA:
     solver: Deterministic LETKF
     inflation:
