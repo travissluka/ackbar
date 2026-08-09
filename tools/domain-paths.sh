@@ -22,8 +22,14 @@ domain_paths() {
         return 1
     }
 
+    # `$PYTHON` rather than `python3`, for the one caller that cannot use the
+    # one on PATH. `tools/fetch-*.py` run under `.venv-data` with `PYTHONPATH`
+    # unset, which the Copernicus toolbox requires and which also takes
+    # spack-stack's `yaml` off the search path of the `python3` this would
+    # otherwise find. They pass their own interpreter. Everything else leaves it
+    # unset and gets what it always got.
     local resolved
-    resolved=$(python3 - "$layer" "$ACKBAR_ROOT" "${ACKBAR_STATIC_ROOT:-}" <<'EOF'
+    resolved=$("${PYTHON:-python3}" - "$layer" "$ACKBAR_ROOT" "${ACKBAR_STATIC_ROOT:-}" <<'EOF'
 import re, sys, yaml
 
 layer, root, static = sys.argv[1:4]
