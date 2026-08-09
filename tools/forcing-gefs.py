@@ -12,67 +12,89 @@ the truth actually had, wrong by the amount a real forecast is wrong.
 
 Every member here is valid at the same times as every other and as the truth.
 What differs between members is which perturbed forecast they came from, and
-`--lead` says how far ahead the forecast was looking. That is real forecast
-uncertainty about the actual verifying date.
+`--lead` says how far ahead it was looking. That is real forecast uncertainty
+about the actual verifying date.
 
 It is not the scheme the open boundary uses, and the difference is not cosmetic.
-There, a member's field is imported from another *date*, because GLORYS has one
+There a member's field is imported from another *date*, because GLORYS has one
 member and there is nothing else to draw from; the result is a plausible field
-that is not an estimate of the uncertainty about this date. Here there is a
-native ensemble and it would be perverse to synthesize one instead.
+that is not an estimate of the uncertainty about this date. Where a native
+ensemble exists it would be perverse to synthesize one instead, so where one
+exists this uses it.
 
-Three things follow, all of them simplifications:
+Where one does not, `--lead` is still the axis, and the lagged-difference scheme
+builds on top of this rather than replacing it. See "What each era can supply".
 
-- **No amplitude, no span, no mean preservation, no clamping.** Those exist to
-  manufacture spread. This spread is measured.
-- **Physical consistency is free.** A member's seven fields come out of one model
-  run, so its cloud, radiation, precipitation and wind agree with each other. No
-  rule about lagging every variable together, because nothing is lagged.
-- **`--lead` is the one knob**, and it sets two things at once: how much spread
-  the ensemble has, and how wrong the experiments' atmosphere is against the
-  truth's. Both in physically calibrated units, and with the honest tradeoff a
-  real forecast system has, since a longer lead buys spread and costs accuracy.
+## GEFS is not one archive, and this is why there is an era table
 
-Choose it by measurement rather than taste: the smallest lead whose ensemble
-spread spans the ERA5-minus-`gec00` difference over the same box and hours.
+The period is a first class input, not an assumption. Two products with nothing
+in common but a name cover the years anyone would want:
 
-## How a member's series is stitched
+| era | years | members | inits/day | output | grid | one file holds |
+|---|---|---|---|---|---|---|
+| `reforecast` | 2000-2019 | 5 | 1 | 3 h | 0.25 deg | every lead of one field |
+| `operational-1deg` | 2017 to 2018-07 | 21 | 4 | 6 h | 1.0 deg | every field at one lead |
+| `operational-half` | 2018-07 to 2020-09 | 21 | 4 | 6 h | 0.5 deg | every field at one lead |
+| `operational-quarter` | 2020-09 on | 31 | 4 | 3 h | 0.25 deg | every field at one lead |
 
-A GEFS run is 16 days long and an experiment is longer, so a member is a series
-at *constant lead*, taking a segment from each successive initialization. With
-four initializations a day, one init contributes the six hours from `lead` to
-`lead + 6`, and the next init takes over. Every record in a member's file is
-therefore between `lead` and `lead + 6` hours old, which keeps its error
-statistics stationary. soca-science did the same thing with a fixed six hour
-lead; the joins are small jumps and they are the price of a series longer than a
-forecast.
+They differ in the bucket, the directory shape, the file naming, how many members
+exist, how often a forecast starts, how often it reports, and how humidity is
+carried: the reforecast publishes specific humidity directly while the
+operational archive publishes dewpoint and needs the same conversion ERA5 does.
+None of that is derivable from a date, so it is stated per era and selected by
+one.
 
-`--lead` must be a multiple of 6, because NCEP resets its averaging and
-accumulation windows every six hours and this reads the reset boundary as the
-segment boundary. A lead of 9 is expressible and would need a second, different
-de-averaging path for no gain.
+Nothing is silently approximate. A period no era covers, an era that is not
+implemented, a member count an era cannot supply, a lead its cadence cannot
+express: each of those names itself and stops.
+
+## What each era can supply
+
+**The 5 member eras cannot supply a 20 member ensemble.** The reforecast has five
+members on an ordinary day and eleven on a Wednesday, and eleven once a week is
+not an ensemble a daily cycle can read. So on the earlier period native GEFS is
+an *input to* the lagged-difference scheme rather than an ensemble in its own
+right, and the lagged-difference path is first class rather than a fallback that
+gets dropped if native measures better on the later period. On 2020-09 onward,
+31 members means a 20 member experiment is native, exchangeable and needs no
+construction at all.
+
+## Lead
+
+`--lead` is the one knob and it sets two things at once: how much spread the
+ensemble has, and how wrong the experiments' atmosphere is against the truth's.
+Both in physically calibrated units, and with the honest tradeoff a real forecast
+system has, since a longer lead buys spread and costs accuracy. Choose it by
+measurement rather than taste: the smallest lead whose ensemble spread spans the
+ERA5-minus-control difference over the same box and hours.
+
+A member's series is stitched at constant lead, taking the hours from `lead` to
+`lead + <the era's initialization interval>` out of each successive
+initialization, so every record is the same age and its error statistics are
+stationary. soca-science did the same with a fixed six hour lead. The joins are
+small jumps and they are the price of a series longer than a forecast.
+
+`--lead` must be a multiple of the era's reset period, because NCEP resets its
+averaging and accumulation windows on that period and this reads the reset
+boundary as a segment boundary.
 
 ## De-averaging, which is the only place this can be quietly wrong
 
-Radiation and precipitation arrive as windows since the last reset, so a segment
-gets one window free and has to difference for the other:
+Radiation and precipitation arrive as windows since the last reset, so within
+each reset period one window arrives whole and the rest are differences:
 
-    mean over [L+3, L+6]  =  2 * mean over [L, L+6]  -  mean over [L, L+3]
-    accum over [L+3, L+6] =      accum over [L, L+6] -  accum over [L, L+3]
+    mean over [a, b]  =  (b - r) * mean over [r, b]  -  (a - r) * mean over [r, a]
+                         all divided by (b - a), where r is the reset
 
-which is soca-science's `[2.0, -1.0]` and `[1.0, -1.0]`. Getting this wrong does
-not crash anything: it makes precipitation too large by a factor that grows
-through each reset period, and puts the shortwave's diurnal peak in the wrong
-place. Every window read is checked against the range this expects.
+which for the common case of two three hour halves is soca-science's `[2, -1]`
+for a mean and `[1, -1]` for an accumulation. Getting it wrong does not crash
+anything: it makes precipitation too large by a factor that grows through each
+reset period and puts the shortwave's diurnal peak in the wrong place. Every
+window read is checked against the one the arithmetic assumes.
 
-## Volume
-
-Whole files are fetched rather than byte ranges out of the `.idx`. Three files
-per initialization per member at about 14 MB, so a sixty day twenty member
-archive moves roughly 170 GB and keeps about 4 GB. Each file is deleted as soon
-as it is read, so peak disk is one file per member being built. If that transfer
-ever matters, the `.idx` files make a range fetch straightforward and would cut
-it by about three.
+An era whose output interval equals its reset period never differences at all,
+which is why the two six hourly operational eras are simpler than either three
+hourly one rather than harder.
 """
 
 import argparse
@@ -80,6 +102,7 @@ import datetime
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import eccodes
 import numpy as np
@@ -90,50 +113,172 @@ sys.path.insert(0, str(REPO / "src"))
 from ackbar.forcing import (  # noqa: E402
     FIELDS, assert_no_leap_day, clip, specific_humidity, write_atm)
 
-BUCKET = "s3://noaa-gefs-pds"
 
-#: Where a member's file for one initialization and lead lives. The 0.25 degree
-#: `pgrb2s` subset rather than the half degree `pgrb2a`: it is smaller, finer,
-#: and carries every field needed here.
-LAYOUT = ("{bucket}/gefs.{day}/{hour}/atmos/pgrb2sp25/"
-          "{member}.t{hour}z.pgrb2s.0p25.f{lead:03d}")
+class Era(NamedTuple):
+    """One GEFS product, and every period-specific fact about it.
 
-#: How GEFS names an instantaneous field, as (shortName, typeOfLevel, level).
-#: `2d` and `sp` have no output name: they are read for the humidity conversion,
-#: which is then the same arithmetic ERA5 gets, so a truth-minus-experiment
-#: difference in humidity is a difference in the atmosphere rather than in two
-#: conversions.
-INSTANT = {
-    "T2":  ("2t",  "heightAboveGround", 2),
-    "U10": ("10u", "heightAboveGround", 10),
-    "V10": ("10v", "heightAboveGround", 10),
-    "_2d": ("2d",  "heightAboveGround", 2),
-    "_sp": ("sp",  "surface", 0),
+    `implemented` is false for an era whose layout is known to differ but has not
+    been read from, which is a different thing from an era that does not exist.
+    A user asking for one gets told which, rather than an archive built out of
+    guesses about a directory shape nobody checked.
+    """
+    name: str
+    first: str
+    last: str
+    bucket: str
+    members: int
+    inits: tuple      # initialization hours in a day
+    step: int         # hours between output records
+    reset: int        # hours between accumulation resets
+    humidity: str     # "spfh" or "dewpoint"
+    layout: str       # "per_field" or "per_lead"
+    grid: str
+    implemented: bool = True
+    note: str = ""
+
+
+ERAS = (
+    Era(name="reforecast", first="2000-01-01", last="2019-12-31",
+        bucket="s3://noaa-gefs-retrospective", members=5, inits=(0,),
+        step=3, reset=6, humidity="spfh", layout="per_field",
+        grid="0.25 deg to day 10",
+        note="five members daily and eleven on Wednesdays; the eleven are "
+             "weekly and a daily cycle cannot read them"),
+    Era(name="operational-1deg", first="2017-01-01", last="2018-07-26",
+        bucket="s3://noaa-gefs-pds", members=21, inits=(0, 6, 12, 18),
+        step=6, reset=6, humidity="dewpoint", layout="per_lead",
+        grid="1.0 deg", implemented=False,
+        note="the pgrb2a layout and its field names have not been read from "
+             "here; six hourly shortwave on a one degree grid also defeats the "
+             "point of sub-daily forcing over the Gulf"),
+    Era(name="operational-half", first="2018-07-27", last="2020-09-22",
+        bucket="s3://noaa-gefs-pds", members=21, inits=(0, 6, 12, 18),
+        step=6, reset=6, humidity="dewpoint", layout="per_lead",
+        grid="0.5 deg", implemented=False,
+        note="the pgrb2a layout and its field names have not been read from "
+             "here"),
+    Era(name="operational-quarter", first="2020-09-23", last="2099-12-31",
+        bucket="s3://noaa-gefs-pds", members=31, inits=(0, 6, 12, 18),
+        step=3, reset=6, humidity="dewpoint", layout="per_lead",
+        grid="0.25 deg"),
+)
+
+#: Where a member's file lives, per layout. The reforecast splits by field and
+#: holds every lead; the operational archive splits by lead and holds every
+#: field. That is not a naming difference, it is a different number of downloads
+#: for the same forcing, and it is why `plan` exists.
+PER_LEAD = ("{bucket}/gefs.{day}/{hour}/atmos/pgrb2sp25/"
+            "{member}.t{hour}z.pgrb2s.0p25.f{lead:03d}")
+PER_FIELD = ("{bucket}/GEFSv12/reforecast/{year}/{day}{hour}/{member}/"
+             "Days:1-10/{stem}_{day}{hour}_{member}.grib2")
+
+#: How to find a field in a GRIB message, as (typeOfLevel, level). Matched on the
+#: level rather than the parameter name because a reforecast field file holds one
+#: parameter at more than one height: `ugrd_hgt` carries 10 m and 100 m winds
+#: interleaved, and taking the first would put the ocean under a wind from ninety
+#: metres up.
+LEVEL = {
+    "T2":    ("heightAboveGround", 2),
+    "Q2":    ("heightAboveGround", 2),
+    "U10":   ("heightAboveGround", 10),
+    "V10":   ("heightAboveGround", 10),
+    "DSWRF": ("surface", 0),
+    "DLWRF": ("surface", 0),
+    "PRATE": ("surface", 0),
+    "_2d":   ("heightAboveGround", 2),
+    "_sp":   ("surface", 0),
 }
 
-#: The same for the fields that arrive as a window since the last reset.
-WINDOW = {
-    "DSWRF": ("dswrf", "surface", 0),
-    "DLWRF": ("dlwrf", "surface", 0),
-    "PRATE": ("tp",    "surface", 0),
+#: The GRIB `shortName` each output field has, which the per-lead layout needs
+#: because one file holds every field and the level alone does not separate them.
+SHORT = {
+    "T2": "2t", "Q2": "q", "U10": "10u", "V10": "10v",
+    "DSWRF": "dswrf", "DLWRF": "dlwrf", "PRATE": "tp",
+    "_2d": "2d", "_sp": "sp",
 }
 
-#: How often GEFS initializes, and how often it reports. Both are properties of
-#: the archive from 2020-09-23 onward; earlier vintages report six hourly on a
-#: coarser grid and this tool does not read them.
-INIT_EVERY = 6
-STEP = 3
+#: The reforecast's file stem per output field. One parameter each, so the stem
+#: is the selector and `SHORT` is not consulted.
+STEM = {
+    "T2": "tmp_2m", "Q2": "spfh_2m", "U10": "ugrd_hgt", "V10": "vgrd_hgt",
+    "DSWRF": "dswrf_sfc", "DLWRF": "dlwrf_sfc", "PRATE": "apcp_sfc",
+}
+
+#: Fields that arrive as a window since the last reset rather than as a value.
+WINDOWED = ("DSWRF", "DLWRF", "PRATE")
+
+#: How far below zero a de-averaged field may go before it is a bug rather than
+#: arithmetic on rounded numbers.
+#:
+#: Differencing two windows that were each packed to a few significant digits
+#: leaves a residue, and scaling one of them scales it, so a night-time shortwave
+#: of exactly zero comes back as a few W m-2 either side of it.
+#:
+#: The tolerance has to have an absolute part, and finding that out is the reason
+#: these numbers are measured rather than assumed. A purely relative tolerance is
+#: scaled by the field's own magnitude, which at night is the residue itself, so
+#: every dark segment fails: the first version of this check rejected a shortwave
+#: of -8 W m-2 "against a range of 8". The relative part still earns its place by
+#: daylight, where packing precision tracks magnitude.
+#:
+#: Both parts are far below what a *real* misreading costs. Taking a six hour
+#: window for a three hour one puts hundreds of W m-2 in the wrong place, not
+#: tens, so the failure this is meant to catch is nowhere near these bounds.
+NEGATIVE_ABSOLUTE = {"DSWRF": 20.0, "DLWRF": 20.0, "PRATE": 2.0e-5}
+NEGATIVE_RELATIVE = 0.02
 
 
-def member_name(index):
+def choose_era(start, end, named):
+    """The era covering a span, or a message about why none does."""
+    if named:
+        for era in ERAS:
+            if era.name == named:
+                break
+        else:
+            raise SystemExit(
+                f"forcing-gefs: no era called {named!r}. Known: "
+                f"{', '.join(e.name for e in ERAS)}")
+    else:
+        covering = [e for e in ERAS
+                    if datetime.datetime.strptime(e.first, "%Y-%m-%d") <= start
+                    and end <= datetime.datetime.strptime(e.last, "%Y-%m-%d")
+                    + datetime.timedelta(hours=23)]
+        if not covering:
+            raise SystemExit(
+                f"forcing-gefs: no GEFS era covers {start:%Y-%m-%d} to "
+                f"{end:%Y-%m-%d} whole. The eras are:\n" + "\n".join(
+                    f"  {e.name:<22} {e.first} to {e.last}" for e in ERAS))
+        if len(covering) > 1:
+            # The reforecast and the operational archive overlap from 2017 to
+            # 2019 and are different products over the same days, so a date is
+            # not enough to choose and guessing would decide the member count
+            # silently.
+            raise SystemExit(
+                f"forcing-gefs: {start:%Y-%m-%d} to {end:%Y-%m-%d} is covered "
+                f"by more than one era, so --era is required. Candidates: "
+                f"{', '.join(e.name for e in covering)}")
+        era = covering[0]
+
+    if not era.implemented:
+        raise SystemExit(
+            f"forcing-gefs: the {era.name} era ({era.first} to {era.last}) is "
+            f"known and not implemented. {era.note}.\n"
+            f"Implementing it means reading its layout and field names; the "
+            f"cadence, member count and grid in this tool's era table are "
+            f"already right for it.")
+    return era
+
+
+def member_name(era, index):
     """`mem000` is the control, which in GEFS is `gec00` and not a perturbation.
 
-    Members above it are the perturbed ones in order. That mapping is the whole
-    of "which forecast did member 7 read", and it is derived from the index
-    rather than recorded, so it is reproducible from the experiment config
-    alone.
+    Members above it are the perturbed ones in order, so "which forecast did
+    member 7 read" is derived from the index rather than recorded, and is
+    reproducible from the experiment config alone. The reforecast drops the `ge`
+    prefix, which is the only naming difference between the eras that matters.
     """
-    return "gec00" if index == 0 else f"gep{index:02d}"
+    stem = "c00" if index == 0 else f"p{index:02d}"
+    return stem if era.layout == "per_field" else f"ge{stem}"
 
 
 def run(*args):
@@ -143,11 +288,7 @@ def run(*args):
     return out.stdout
 
 
-def fetch(init, member, lead, cache):
-    """One GEFS file, downloaded if it is not already here."""
-    url = LAYOUT.format(bucket=BUCKET, day=f"{init:%Y%m%d}", hour=f"{init:%H}",
-                        member=member, lead=lead)
-    local = cache / f"{member}.{init:%Y%m%d%H}.f{lead:03d}.grib2"
+def download(url, local):
     if not local.exists():
         run("aws", "s3", "cp", "--no-sign-request", "--only-show-errors",
             url, str(local) + ".part")
@@ -155,85 +296,115 @@ def fetch(init, member, lead, cache):
     return local
 
 
-def read(path, wanted):
-    """Pull *wanted* out of one GRIB file.
+def harvest(path, specs, steps):
+    """Pull the wanted (field, step) planes out of one GRIB file.
 
-    *wanted* maps an output name to (shortName, typeOfLevel, level). Returns the
-    fields clipped to the box, plus each one's window as (start, end) in hours
-    from the initialization, so the caller can check it got the window it meant
-    to ask for.
+    *specs* maps an output name to `(shortName or None, typeOfLevel, level)`, and
+    *steps* is the set of `endStep` values to keep. Returns `{(name, step):
+    plane}` plus the window each carries and the grid.
+
+    A `shortName` of None means the file holds one parameter and the level alone
+    identifies it, which is the reforecast's case.
     """
     found, spans = {}, {}
     lons = lats = None
-    index = {key: name for name, key in wanted.items()}
     with open(path, "rb") as stream:
         while True:
             handle = eccodes.codes_grib_new_from_file(stream)
             if handle is None:
                 break
             try:
-                key = (eccodes.codes_get(handle, "shortName"),
-                       eccodes.codes_get(handle, "typeOfLevel"),
-                       eccodes.codes_get(handle, "level"))
-                if key not in index:
+                end = eccodes.codes_get(handle, "endStep")
+                if end not in steps:
                     continue
-                name = index[key]
-                ni = eccodes.codes_get(handle, "Ni")
-                nj = eccodes.codes_get(handle, "Nj")
-                if lons is None:
-                    first_lon = eccodes.codes_get(
-                        handle, "longitudeOfFirstGridPointInDegrees")
-                    first_lat = eccodes.codes_get(
-                        handle, "latitudeOfFirstGridPointInDegrees")
-                    step_lon = eccodes.codes_get(
-                        handle, "iDirectionIncrementInDegrees")
-                    step_lat = eccodes.codes_get(
-                        handle, "jDirectionIncrementInDegrees")
-                    lons = (first_lon + step_lon * np.arange(ni)) % 360.0
-                    # GRIB scans north to south here, so the latitude increment
-                    # is a decrement. Reading it as positive flips the field
-                    # about the equator, which in this box is a plausible
-                    # looking wind blowing the wrong way rather than an error.
-                    lats = first_lat - step_lat * np.arange(nj)
-                found[name] = eccodes.codes_get_values(handle).reshape(nj, ni)
-                spans[name] = (eccodes.codes_get(handle, "startStep"),
-                               eccodes.codes_get(handle, "endStep"))
+                level = (eccodes.codes_get(handle, "typeOfLevel"),
+                         eccodes.codes_get(handle, "level"))
+                short = eccodes.codes_get(handle, "shortName")
+                for name, (want_short, want_type, want_level) in specs.items():
+                    if (want_type, want_level) != level:
+                        continue
+                    if want_short is not None and want_short != short:
+                        continue
+                    ni = eccodes.codes_get(handle, "Ni")
+                    nj = eccodes.codes_get(handle, "Nj")
+                    if lons is None:
+                        first_lon = eccodes.codes_get(
+                            handle, "longitudeOfFirstGridPointInDegrees")
+                        first_lat = eccodes.codes_get(
+                            handle, "latitudeOfFirstGridPointInDegrees")
+                        step_lon = eccodes.codes_get(
+                            handle, "iDirectionIncrementInDegrees")
+                        step_lat = eccodes.codes_get(
+                            handle, "jDirectionIncrementInDegrees")
+                        lons = (first_lon + step_lon * np.arange(ni)) % 360.0
+                        # GRIB scans north to south here, so the latitude
+                        # increment is a decrement. Reading it as positive flips
+                        # the field about the equator, which in this box is a
+                        # plausible looking wind blowing the wrong way rather
+                        # than an error.
+                        lats = first_lat - step_lat * np.arange(nj)
+                    found[(name, end)] = eccodes.codes_get_values(
+                        handle).reshape(nj, ni)
+                    spans[(name, end)] = (
+                        eccodes.codes_get(handle, "startStep"), end)
             finally:
                 eccodes.codes_release(handle)
-
-    missing = set(wanted) - set(found)
-    if missing:
-        raise SystemExit(f"forcing-gefs: {path.name} has no {sorted(missing)}")
-
-    out = {}
-    for name, plane in found.items():
-        x, y, cube = clip(lons, lats, plane[None, :, :])
-        out[name] = cube[0]
-    return out, spans, x, y
+    return found, spans, lons, lats
 
 
-#: How far below zero a de-averaged field may go before it is a bug rather than
-#: arithmetic on rounded numbers.
-#:
-#: Differencing two windows that were each packed to a few significant digits
-#: leaves a residue, and doubling one of them doubles it, so a night-time
-#: shortwave of exactly zero comes back as a few W m-2 either side of it.
-#:
-#: The tolerance has to have an absolute part, and finding that out is the
-#: reason these numbers are measured rather than assumed. A purely relative
-#: tolerance is scaled by the field's own magnitude, which at night is the
-#: residue itself, so every dark segment fails: the first version of this check
-#: rejected a shortwave of -8 W m-2 "against a range of 8". The relative part
-#: still earns its place by daylight, where packing precision tracks magnitude.
-#:
-#: Both parts are far below what a *real* misreading costs. Taking a six hour
-#: window for a three hour one puts hundreds of W m-2 in the wrong place, not
-#: tens, so the failure this is meant to catch is nowhere near these bounds.
-NEGATIVE_ABSOLUTE = {"DSWRF": 20.0, "DLWRF": 20.0, "PRATE": 2.0e-5}
-NEGATIVE_RELATIVE = 0.02
+def collect(era, init, member, steps, cache):
+    """Every needed (field, step) for one initialization, whichever layout."""
+    specs_instant = {name: (SHORT.get(name), *LEVEL[name])
+                     for name in instant_names(era)}
+    specs_window = {name: (SHORT.get(name), *LEVEL[name])
+                    for name in WINDOWED}
+
+    found, spans = {}, {}
+    lons = lats = None
+    if era.layout == "per_lead":
+        specs = {**specs_instant, **specs_window}
+        for lead in sorted(steps["all"]):
+            url = PER_LEAD.format(bucket=era.bucket, day=f"{init:%Y%m%d}",
+                                  hour=f"{init:%H}", member=member, lead=lead)
+            local = download(url, cache / f"{member}.{init:%Y%m%d%H}.f{lead:03d}")
+            try:
+                part, span, x, y = harvest(local, specs, {lead})
+            finally:
+                local.unlink(missing_ok=True)
+            found.update(part)
+            spans.update(span)
+            lons = lons if lons is not None else x
+            lats = lats if lats is not None else y
+    else:
+        for name in list(specs_instant) + list(specs_window):
+            want = steps["window"] if name in WINDOWED else steps["instant"]
+            url = PER_FIELD.format(bucket=era.bucket, year=f"{init:%Y}",
+                                   day=f"{init:%Y%m%d}", hour=f"{init:%H}",
+                                   member=member, stem=STEM[name])
+            local = download(url, cache / f"{member}.{init:%Y%m%d%H}.{STEM[name]}")
+            try:
+                # One parameter per file, so the shortName is not consulted and
+                # only the level separates the 10 m wind from the 100 m one.
+                part, span, x, y = harvest(
+                    local, {name: (None, *LEVEL[name])}, want)
+            finally:
+                local.unlink(missing_ok=True)
+            found.update(part)
+            spans.update(span)
+            lons = lons if lons is not None else x
+            lats = lats if lats is not None else y
+
+    return found, spans, lons, lats
 
 
-def floor_at_zero(name, plane, scale, path):
+def instant_names(era):
+    """The fields read directly, which depends on how the era carries humidity."""
+    if era.humidity == "spfh":
+        return ["T2", "Q2", "U10", "V10"]
+    return ["T2", "U10", "V10", "_2d", "_sp"]
+
+
+def floor_at_zero(name, plane, scale, where):
     """Clamp a strictly positive field, refusing an excursion too big to be dust.
 
     *scale* is the magnitude of the window this was differenced out of, not of
@@ -245,108 +416,156 @@ def floor_at_zero(name, plane, scale, path):
     allowed = max(NEGATIVE_ABSOLUTE[name], NEGATIVE_RELATIVE * scale)
     if -worst > allowed:
         raise SystemExit(
-            f"forcing-gefs: de-averaging {name} from {path.name} gives "
-            f"{worst:.4g}, past the {allowed:.4g} that packing residue explains "
-            f"at a window magnitude of {scale:.4g}. The reset period is not "
-            f"what this tool reads; see the de-averaging note in its docstring.")
+            f"forcing-gefs: de-averaging {name} at {where} gives {worst:.4g}, "
+            f"past the {allowed:.4g} that packing residue explains at a window "
+            f"magnitude of {scale:.4g}. The reset period is not what this tool "
+            f"reads; see the de-averaging note in its docstring.")
     return np.maximum(plane, 0.0), worst
 
 
-def expect(spans, name, window, path):
-    """Fail unless a field's window is the one the de-averaging assumes."""
-    if spans[name] != window:
-        raise SystemExit(
-            f"forcing-gefs: {path.name} has {name} over {spans[name]} where "
-            f"{window} was expected. The archive's reset period is not what "
-            f"this tool reads; see the de-averaging note in its docstring.")
+def segment(era, init, member, lead, cache):
+    """One initialization's contribution: `era.inits` spacing of forcing.
 
-
-def segment(init, member, lead, cache):
-    """One initialization's six hours of forcing, as {name: [(hour, plane)]}.
-
-    Hours are offsets from *init*. Instantaneous fields land on the hour, window
-    fields at the midpoint of the window they describe.
+    Returns `{name: [(hours after init, plane)]}`, the grid, and the worst
+    negative excursion the de-averaging produced.
     """
-    at_lead = fetch(init, member, lead, cache)
-    at_mid = fetch(init, member, lead + STEP, cache)
-    at_end = fetch(init, member, lead + 2 * STEP, cache)
+    span = 24 // len(era.inits)
+    instants = list(range(lead, lead + span, era.step))
+    # Every window boundary inside the segment, plus the reset each belongs to.
+    ends = list(range(lead + era.step, lead + span + era.step, era.step))
+    steps = {"instant": set(instants), "window": set(ends)}
+    steps["all"] = steps["instant"] | steps["window"]
 
-    first, _, x, y = read(at_lead, INSTANT)
-    second, _, _, _ = read(at_mid, INSTANT)
-    early, early_spans, _, _ = read(at_mid, WINDOW)
-    whole, whole_spans, _, _ = read(at_end, WINDOW)
+    found, spans, lons, lats = collect(era, init, member, steps, cache)
+    missing = [key for key in
+               [(n, s) for n in instant_names(era) for s in instants]
+               + [(n, s) for n in WINDOWED for s in ends]
+               if key not in found]
+    if missing:
+        raise SystemExit(
+            f"forcing-gefs: {member} at {init:%Y-%m-%d %H} is missing "
+            f"{missing[:6]}{' and more' if len(missing) > 6 else ''}")
 
-    for name in WINDOW:
-        expect(early_spans, name, (lead, lead + STEP), at_mid)
-        expect(whole_spans, name, (lead, lead + 2 * STEP), at_end)
+    # Clipped before anything is computed, not after. Two reasons, and the second
+    # is the one that bit: the arithmetic below is a hundredth of the work on a
+    # box, and the de-averaging tolerance is meant to be about the water this
+    # archive forces rather than about the globe. Flooring globally and clipping
+    # afterwards gives the same numbers in the file and a different, larger,
+    # residue to judge, because the largest packing residue on Earth is not in
+    # the Gulf of Mexico.
+    x = y = None
+    for key, plane in list(found.items()):
+        x, y, cube = clip(lons, lats, plane[None, :, :])
+        found[key] = cube[0]
 
-    series = {}
-    for name in ("T2", "U10", "V10"):
-        series[name] = [(lead, first[name]), (lead + STEP, second[name])]
-    series["Q2"] = [
-        (lead, specific_humidity(first["_2d"], first["_sp"])),
-        (lead + STEP, specific_humidity(second["_2d"], second["_sp"])),
-    ]
-
-    residue = {}
-    for name in WINDOW:
-        # The second half of the reset period, recovered from the window that
-        # contains it and the window that precedes it. Every one of these is
-        # non-negative by physics and slightly negative by arithmetic, so each
-        # is floored and the worst excursion is carried out for reporting.
-        if name == "PRATE":
-            scale = float(np.abs(whole[name]).max()) / (STEP * 3600.0)
-            late = (whole[name] - early[name]) / (STEP * 3600.0)
-            first_half = early[name] / (STEP * 3600.0)
+    series = {name: [] for name in FIELDS}
+    for step in instants:
+        if era.humidity == "spfh":
+            series["Q2"].append((step, found[("Q2", step)]))
         else:
-            scale = float(np.abs(whole[name]).max())
-            late = 2.0 * whole[name] - early[name]
-            first_half = early[name]
-        first_half, low_a = floor_at_zero(name, first_half, scale, at_mid)
-        late, low_b = floor_at_zero(name, late, scale, at_end)
-        residue[name] = min(low_a, low_b)
-        series[name] = [(lead + STEP / 2.0, first_half),
-                        (lead + STEP * 1.5, late)]
+            series["Q2"].append((step, specific_humidity(
+                found[("_2d", step)], found[("_sp", step)])))
+        for name in ("T2", "U10", "V10"):
+            series[name].append((step, found[(name, step)]))
 
-    for path in (at_lead, at_mid, at_end):
-        path.unlink(missing_ok=True)
-    return series, x, y, residue
+    worst = {name: 0.0 for name in WINDOWED}
+    for name in WINDOWED:
+        previous = {}
+        for end in ends:
+            reset = lead + (end - 1 - lead) // era.reset * era.reset
+            start = end - era.step
+            whole = found[(name, end)]
+            if spans[(name, end)] != (reset, end):
+                raise SystemExit(
+                    f"forcing-gefs: {name} at step {end} covers "
+                    f"{spans[(name, end)]} where ({reset}, {end}) was expected. "
+                    f"The reset period is not what this tool reads; see the "
+                    f"de-averaging note in this tool's docstring.")
+            if start == reset:
+                # The first window of a reset period arrives whole.
+                plane = whole
+            else:
+                # Everything after it is what the containing window holds minus
+                # what the previous one already accounted for.
+                earlier = previous[start]
+                if name == "PRATE":
+                    plane = whole - earlier
+                else:
+                    plane = ((end - reset) * whole
+                             - (start - reset) * earlier) / era.step
+            previous[end] = whole
+            scale = float(np.abs(whole).max())
+            if name == "PRATE":
+                plane = plane / (era.step * 3600.0)
+                scale = scale / (era.step * 3600.0)
+            plane, low = floor_at_zero(name, plane, scale,
+                                       f"{member} {init:%Y-%m-%d %H} +{end}")
+            worst[name] = min(worst[name], low)
+            series[name].append((end - era.step / 2.0, plane))
+
+    return series, x, y, worst
 
 
-def build(index, start, end, lead, cache, out):
+def build(era, index, start, end, lead, cache, out):
     """One member's whole `atm.nc`."""
-    member = member_name(index)
+    member = member_name(era, index)
     origin = start
     gathered = {name: ([], []) for name in FIELDS}
     grid = None
+    worst = {name: 0.0 for name in WINDOWED}
 
-    worst = {name: 0.0 for name in WINDOW}
-    init = start - datetime.timedelta(hours=lead)
-    while init + datetime.timedelta(hours=lead) <= end:
-        series, x, y, residue = segment(init, member, lead, cache)
-        for name, low in residue.items():
-            worst[name] = min(worst[name], low)
-        if grid is None:
-            grid = (x, y)
-        base = (init - origin).total_seconds() / 3600.0
-        for name, records in series.items():
-            hours, planes = gathered[name]
-            for offset, plane in records:
-                hours.append(base + offset)
-                planes.append(plane)
-        init += datetime.timedelta(hours=INIT_EVERY)
+    # The initializations are evenly spaced through the day from midnight, so
+    # walking by the segment length from a midnight visits exactly them, for one
+    # a day and for four alike.
+    #
+    # The series is *not* required to begin on an initialization plus the lead.
+    # It cannot be: the reforecast starts once a day at 00Z, so demanding that
+    # alignment would restrict a midnight start to leads that are whole
+    # multiples of a day, and the shortest of those is 24 hours. Segments are
+    # generated wherever they fall and the result is trimmed, which is what the
+    # ERA5 tool does with its monthly files for the same reason.
+    span = 24 // len(era.inits)
+    # A midnight far enough back that the first segment cannot be missed, and a
+    # midnight rather than `start - lead - span` because only the former is
+    # guaranteed to sit on the initialization grid: subtracting 36 hours from
+    # midnight lands on 12Z, which the reforecast never initializes at, and every
+    # step of 24 from there stays wrong.
+    cursor = (datetime.datetime(start.year, start.month, start.day)
+              - datetime.timedelta(hours=((lead + span) // 24 + 1) * 24))
+    while cursor + datetime.timedelta(hours=lead) <= end:
+        if cursor + datetime.timedelta(hours=lead + span) > start:
+            series, x, y, low = segment(era, cursor, member, lead, cache)
+            for name, value in low.items():
+                worst[name] = min(worst[name], value)
+            if grid is None:
+                grid = (x, y)
+            base = (cursor - origin).total_seconds() / 3600.0
+            for name, records in series.items():
+                hours, planes = gathered[name]
+                for offset, plane in records:
+                    hours.append(base + offset)
+                    planes.append(plane)
+        cursor += datetime.timedelta(hours=span)
 
+    if grid is None:
+        raise SystemExit(
+            f"forcing-gefs: no {era.name} initialization at a {lead} h lead "
+            f"reaches {start:%Y-%m-%d %H}")
+
+    horizon = (end - origin).total_seconds() / 3600.0
     packed = {}
     for name, (hours, planes) in gathered.items():
         hours = np.array(hours, dtype="f8")
         cube = np.stack(planes).astype("f4")
         order = np.argsort(hours, kind="stable")
-        packed[name] = (hours[order], cube[order])
+        hours, cube = hours[order], cube[order]
+        inside = (hours >= 0.0) & (hours <= horizon)
+        packed[name] = (hours[inside], cube[inside])
 
     x, y = grid
     target = out / f"mem{index:03d}.nc"
     write_atm(target, x, y, origin, packed,
-              source=f"GEFS {member} at {lead} h lead, noaa-gefs-pds")
+              source=f"GEFS {era.name} {member} at {lead} h lead, {era.bucket}")
     return target, packed, worst
 
 
@@ -359,24 +578,18 @@ def main():
     ap.add_argument("--out", type=Path, required=True,
                     help="archive directory for this source")
     ap.add_argument("--lead", type=int, default=12,
-                    help="forecast lead in hours, a multiple of 6. Every record "
-                         "is between this and this plus six hours old")
+                    help="forecast lead in hours, a multiple of the era's reset "
+                         "period. Every record is between this and this plus "
+                         "the initialization interval old")
     ap.add_argument("--members", type=int, default=20,
                     help="how many members, counting the control as the first. "
-                         "GEFS has 31 from 2020-09-23, so above that a second "
-                         "lead is needed and the members stop being "
-                         "exchangeable")
+                         "Bounded by what the era has")
+    ap.add_argument("--era", help="which GEFS product, when the dates alone do "
+                                  "not decide it")
     ap.add_argument("--cache", type=Path,
                     help="where downloads land before being read and deleted. "
                          "Default: <out>/.cache")
     args = ap.parse_args()
-
-    if args.lead % (2 * STEP) != 0:
-        raise SystemExit(
-            f"forcing-gefs: --lead {args.lead} is not a multiple of "
-            f"{2 * STEP}; see the de-averaging note in this tool's docstring")
-    if not 1 <= args.members <= 31:
-        raise SystemExit("forcing-gefs: --members outside 1 to 31")
 
     start = datetime.datetime.strptime(args.start, "%Y-%m-%d")
     end = (datetime.datetime.strptime(args.end, "%Y-%m-%d")
@@ -384,15 +597,33 @@ def main():
     if end <= start:
         raise SystemExit("forcing-gefs: end is not after start")
     assert_no_leap_day(start, end)
-    if start.hour % INIT_EVERY:
-        raise SystemExit("forcing-gefs: start must land on an initialization")
+
+    era = choose_era(start, end, args.era)
+    if args.lead < era.step:
+        raise SystemExit(
+            f"forcing-gefs: the {era.name} era's first output is at "
+            f"{era.step} h, so a lead of {args.lead} has nothing to read")
+    if args.lead % era.reset:
+        raise SystemExit(
+            f"forcing-gefs: --lead {args.lead} is not a multiple of the "
+            f"{era.name} era's {era.reset} h reset period; see the de-averaging "
+            f"note in this tool's docstring")
+    if not 1 <= args.members <= era.members:
+        raise SystemExit(
+            f"forcing-gefs: the {era.name} era has {era.members} members and "
+            f"{args.members} were asked for."
+            + (f" {era.note}." if era.note else "")
+            + " Above what an era holds, members come from the "
+              "lagged-difference scheme rather than from more forecasts.")
 
     args.out.mkdir(parents=True, exist_ok=True)
     cache = args.cache or (args.out / ".cache")
     cache.mkdir(parents=True, exist_ok=True)
 
+    print(f"forcing-gefs: {era.name}, {era.members} members, "
+          f"{len(era.inits)} init/day, {era.step} h output, {era.grid}")
     for index in range(args.members):
-        target, packed, worst = build(index, start, end, args.lead, cache,
+        target, packed, worst = build(era, index, start, end, args.lead, cache,
                                       args.out)
         hours, cube = packed["DSWRF"]
         residue = " ".join(f"{name} {low:.3g}" for name, low in worst.items()
