@@ -130,6 +130,15 @@ $YY $MM $DD $HH 0 0
 "ocean_model", "v",       "v",       "ocn_daily", "all", "none", "none", 2
 EOF
 
+# Extra diagnostics, one `"ocean_model", "<name>", ...` line per field. A
+# parameter that resolves and then changes nothing is either being ignored or
+# multiplying zero, and the only way to tell is to look at the field it acts
+# through.
+for name in ${SPIKE_DIAG:-}; do
+    printf '"ocean_model", "%s", "%s", "ocn_daily", "all", "none", "none", 2\n' \
+        "$name" "$name" >> diag_table
+done
+
 python3 - "$BASE/input.nml" "$DAYS" "$YY,$MM,$DD,$HH,0,0" <<'PYEOF' > input.nml
 import re, sys
 text, days, start = open(sys.argv[1]).read(), sys.argv[2], sys.argv[3]
@@ -204,6 +213,11 @@ written=(*ocn_daily.nc)
 mkdir -p "$OUT"
 mv "${written[@]}" "$OUT/"
 cp MOM_sweep model.log ocean.stats "$OUT/" 2>/dev/null || true
+# What MOM6 resolved, as against what it was asked for. A parameter written
+# into MOM_sweep and then ignored, because the module that reads it is gated on
+# something else, is indistinguishable from a parameter that had no effect, and
+# this file is the only thing that tells the two apart.
+cp MOM_parameter_doc.short "$OUT/" 2>/dev/null || true
 [[ -e nam_stochy.used ]] && cp nam_stochy.used "$OUT/"
 printf '%s\n' "$elapsed" > "$OUT/seconds"
 echo "spike-forecast: $OUT (${elapsed}s on $NTASKS PEs)"
