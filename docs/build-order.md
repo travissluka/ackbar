@@ -755,9 +755,12 @@ that change what a document or a config layer looks like, so an evaluation and c
 before them would be a pass done twice. This runs after that, and it loses nothing by waiting,
 because it has never been blocked on workflow.
 
-- **Blocked on data, not on workflow.** The Gulf domains run with a single frozen SODA
-  five-day mean on the open boundary and a short forcing sample, so a months-long run needs
-  time-varying boundary conditions and a real forcing archive first. That is an offline stage.
+- **Blocked on data, not on workflow.** `gom_25km` and `gom_12km` now carry a time-varying
+  GLORYS boundary and `gom_8km` and `gom_4km` still carry the single frozen SODA five-day
+  mean they were imported with, so which domains are blocked is a property of what has been
+  fetched rather than of this list: `docs/domains.md` says how to ask. The forcing sample is
+  still short, and a months-long run still needs a real forcing archive. Both are offline
+  stages.
 - **Decide the twin.** Nature and DA at the same resolution is an identical twin: easy, and
   flattering. Nature at 4 or 8 km against DA at 12 or 25 km is fraternal, is the honest
   version, and changes what the observation generator has to do.

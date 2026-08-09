@@ -228,7 +228,7 @@ def stage(config, run, cycle, task, *, source, member=None):
     _fresh(run / "RESTART")
 
     _input_dir(run, _path(model, "input"), source,
-               overlay=member_inputs(config, cycle, member))
+               overlay=member_inputs(config, cycle, member, task))
 
     # The stochastic physics, which is the one thing in a run directory that
     # differs between members. Both halves are written together or neither is:
@@ -271,7 +271,7 @@ def link_override(config, run, names=OVERRIDE):
         _link(run / name, source)
 
 
-def member_inputs(config, cycle, member):
+def member_inputs(config, cycle, member, task="forecast"):
     """This member's own copies of the domain's inputs, as `(name, path)` pairs.
 
     `ensemble.inputs` maps a name *inside `INPUT/`* to a path template carrying
@@ -305,7 +305,12 @@ def member_inputs(config, cycle, member):
         )
 
     resolved = []
-    for name, path in sorted(render(inputs, symbols(config, cycle, member)).items()):
+    # *task* because `forecast.ext` is the same executable over a different
+    # window, and its length and end reach a template through this table. It
+    # changes nothing for `{{member_dir}}` and everything for a path that dates
+    # itself by the forecast it belongs to.
+    table = symbols(config, cycle, member, task=task)
+    for name, path in sorted(render(inputs, table).items()):
         path = Path(path)
         if not path.exists():
             raise ModelError(

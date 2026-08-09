@@ -118,12 +118,30 @@ def mom6_parameters(domain, who="obc"):
                                    PYTHON=sys.executable))
     if done.returncode != 0:
         die(who, f"domain-paths failed for {domain}: {done.stderr.strip()}")
-    base, override = done.stdout.split()
+    # Split on lines, not on whitespace: a checkout under a path containing a
+    # space makes `domain-paths.sh`'s `eval` parse `BASE=/a b/c` as a prefix
+    # assignment to the command `b/c`, so `BASE` never persists, the eval's last
+    # line still exits 0, and two empty lines come back. Splitting on whitespace
+    # turned that into an unpacking traceback rather than a message.
+    lines = done.stdout.splitlines()
+    if len(lines) != 2 or not all(lines):
+        die(who, f"domain-paths gave {lines!r} for {domain}, not a base and an "
+                 f"override directory. A checkout path containing a space does "
+                 f"this, because domain-paths.sh resolves through `eval`.")
+    base, override = lines
 
     values = {}
-    for path in (Path(base, "MOM_input"), Path(override, "MOM_override")):
-        if not path.exists():
-            continue
+    found = [path for path in (Path(base, "MOM_input"), Path(override, "MOM_override"))
+             if path.exists()]
+    if not found:
+        # Skipping both silently made the caller below report "this domain sets
+        # OBC_NUMBER_OF_SEGMENTS = 0, so it has no open boundary", which is a
+        # confident answer drawn from having read nothing at all.
+        die(who, f"neither {Path(base, 'MOM_input')} nor "
+                 f"{Path(override, 'MOM_override')} exists, so nothing is known "
+                 f"about {domain}'s parameters. In a worktree this is usually "
+                 f"a base case under pkg/ whose submodule is not checked out.")
+    for path in found:
         for line in path.read_text().splitlines():
             match = re.match(r"\s*(?:#override\s+)?(\w+)\s*=\s*(.*?)\s*(?:!.*)?$",
                              line)
@@ -156,17 +174,49 @@ def segment_geometry(domain, sx, sy, who="obc"):
         if not spec:
             die(who, f"{domain} declares {count} segments but no "
                      f"OBC_SEGMENT_{name}")
-        match = re.fullmatch(r"([IJ])=(\w+)", spec.split(",")[0].strip())
+        # MOM6 strips spaces before parsing (`remove_spaces`,
+        # MOM_open_boundary.F90), so this does too, and a domain writing
+        # `I = N` is the same segment as one writing `I=N`.
+        words = [word.strip() for word in spec.replace(" ", "").split(",")]
+        match = re.fullmatch(r"([IJ])=(\w+)", words[0])
         if not match:
             die(who, f"OBC_SEGMENT_{name} of {domain} starts with "
-                     f"{spec.split(',')[0]!r}, which is not I=<pos> or J=<pos>")
+                     f"{words[0]!r}, which is not I=<pos> or J=<pos>")
         axis, position = match.groups()
-        if position not in ("0", "N"):
+
+        # `ni`/`nj` are model cells; the supergrid carries two points per cell
+        # plus one. MOM6 accepts a bare integer as well as `N`, and `I=87` on a
+        # domain 87 cells wide is the same edge as `I=N`, so refusing it as
+        # "interior" was refusing a domain for how it spelled itself.
+        ni, nj = (sx.shape[1] - 1) // 2, (sx.shape[0] - 1) // 2
+        last = str(ni if axis == "I" else nj)
+        if position in ("N", last):
+            edge = -1
+        elif position == "0":
+            edge = 0
+        else:
             die(who, f"OBC_SEGMENT_{name} of {domain} is at {axis}={position}, "
-                     f"an interior index. Only segments on a domain edge (0 or "
-                     f"N) are handled here, because an interior segment lands "
-                     f"on a supergrid row this does not compute.")
-        edge = -1 if position == "N" else 0
+                     f"which is neither edge of an axis running 0 to "
+                     f"{last}. Only segments on a domain edge are handled here, "
+                     f"because an interior segment lands on a supergrid row "
+                     f"this does not compute.")
+
+        # The second word is the range along the edge, and a segment that does
+        # not span the whole edge needs a slice of it. Taking the whole edge
+        # anyway produces a file MOM6 accepts at init, because
+        # `open_boundary_config` checks only that supergrid sizes are odd, and
+        # then kills the run at the first data read with an FMS array size
+        # mismatch that does not name the segment.
+        span = re.fullmatch(r"([IJ])=(\w+):(\w+)", words[1]) if len(words) > 1 else None
+        if span:
+            along = ni if span.group(1) == "I" else nj
+            ends = {span.group(2), span.group(3)}
+            if not ends <= {"0", "N", str(along)}:
+                die(who, f"OBC_SEGMENT_{name} of {domain} runs {words[1]}, "
+                         f"which is part of an edge rather than all of it. "
+                         f"Building the whole edge instead would write a file "
+                         f"MOM6 accepts at initialisation and then dies on at "
+                         f"the first boundary read.")
 
         if axis == "J":
             lon, lat, shape = sx[edge, :], sy[edge, :], (1, sx.shape[1])
@@ -263,11 +313,21 @@ def layer_thicknesses(depths):
     return np.diff(interfaces)
 
 
-def interpolate_to(values, src_lon, src_lat, lon, lat):
+def interpolate_to(values, src_lon, src_lat, lon, lat, who="obc"):
     """Bilinear from the source grid onto a list of points.
 
     `values` is `(..., lat, lon)` already filled, `lon`/`lat` are flat arrays of
     target points. Returns `(..., npoints)`.
+
+    Extrapolation past the fetched strip is refused rather than performed. The
+    interpolator is configured to extrapolate, which is deliberate and is what
+    lets a target point sit a fraction of a cell outside the source and still be
+    filled; what it must not do is continue a linear trend for degrees. That is
+    reachable whenever the source does not cover the domain, and the two ways in
+    are a longitude convention mismatch and a source that simply stops: both
+    HYCOM GOFS 3.1 and GLORYS end at 80S, so a Ross or Weddell nest asks for
+    latitudes neither has. The failure without this check is silent, because a
+    linear continuation of a smooth ocean field looks like an ocean field.
     """
     from scipy.interpolate import RegularGridInterpolator
 
@@ -280,7 +340,26 @@ def interpolate_to(values, src_lon, src_lat, lon, lat):
     elif src_lon.max() <= 180.0:
         lon = ((lon + 180.0) % 360.0) - 180.0
 
-    points = np.column_stack([np.asarray(lat, float).ravel(), lon])
+    lat = np.asarray(lat, float).ravel()
+    src_lat = np.asarray(src_lat, float)
+    # One source cell of slack on each side, because a supergrid point can sit a
+    # fraction of a cell outside the strip that was fetched around it, and that
+    # is the case extrapolation exists for.
+    slack_lon = float(np.max(np.abs(np.diff(src_lon)))) if len(src_lon) > 1 else 0.0
+    slack_lat = float(np.max(np.abs(np.diff(src_lat)))) if len(src_lat) > 1 else 0.0
+    for axis, target, source, slack in (("longitude", lon, src_lon, slack_lon),
+                                        ("latitude", lat, src_lat, slack_lat)):
+        low, high = source.min() - slack, source.max() + slack
+        outside = (target < low) | (target > high)
+        if outside.any():
+            die(who, f"{outside.sum()} of {target.size} target point(s) lie "
+                     f"outside the source in {axis}: the domain wants "
+                     f"{target.min():.3f} to {target.max():.3f} and the source "
+                     f"covers {source.min():.3f} to {source.max():.3f}. "
+                     f"Interpolating would extrapolate a linear trend across "
+                     f"that gap and return numbers that look like an ocean.")
+
+    points = np.column_stack([lat, lon])
     flat = values.reshape(-1, *values.shape[-2:])
     out = np.empty((flat.shape[0], points.shape[0]))
     for k, plane in enumerate(flat):
@@ -292,10 +371,10 @@ def interpolate_to(values, src_lon, src_lat, lon, lat):
     return out.reshape(*values.shape[:-2], points.shape[0])
 
 
-def sample_onto(geo, fields, src_lon, src_lat):
+def sample_onto(geo, fields, src_lon, src_lat, who="obc"):
     """Fill and interpolate every field of one strip onto one segment's points."""
     return {name: interpolate_to(fill_horizontally(np.asarray(values)),
-                                 src_lon, src_lat, geo["lon"], geo["lat"])
+                                 src_lon, src_lat, geo["lon"], geo["lat"], who)
             for name, values in fields.items()}
 
 

@@ -19,9 +19,11 @@ Why the boundary is a spread source at all
 An ensemble filter removes spread every cycle. A regional ensemble whose members
 share one boundary has, at the boundary, no spread at all to remove or replace,
 and the interior spread it does have drains out through an edge that every member
-agrees about. `docs/design.md` measures the two sources ACKBAR implements on day
-5 surface temperature; neither reaches sea surface height, which is the field the
-altimeters see and the field a Loop Current lives in.
+agrees about. `docs/design.md` compares the spread sources on day 5 surface
+temperature, which is the horizon that suits the other three and badly
+understates this one; what the others do not reach on any horizon is sea surface
+height with structure, which is the field the altimeters see and the field a Loop
+Current lives in.
 
 Counillon and Bertino (2009, Ocean Dynamics 59:83-95) measured all three sources
 on this basin at 1/25 degree. Domain root-mean-square sea surface height spread
@@ -330,6 +332,16 @@ def main():
         # Whole day lags against a time axis in days: the shift is an index
         # shift, and the axis has to be the day counts it claims to be for that
         # to hold. Anything else is a boundary file this tool did not write.
+        # The units are checked and not only the spacing. A file written in
+        # "hours since" with hourly records has steps of exactly 1.0 as well,
+        # and would pass a spacing test while turning every lag in days into a
+        # lag in hours: a 21 day ladder delivered as a 21 hour one, which is a
+        # working ensemble with a twentyfold error in its only parameter.
+        units = f["time"].units
+        if not units.strip().lower().startswith("days since"):
+            die(f"{source} has time units {units!r}, and this shifts records by "
+                f"whole days. A lag would be that many records of whatever this "
+                f"axis counts, not that many days.")
         steps = np.diff(times)
         if len(steps) and not np.allclose(steps, 1.0):
             die(f"{source} has a time axis that is not one day per record "
@@ -340,7 +352,6 @@ def main():
                 f"{len(times)} record file")
 
         keep = slice(span, len(times) - span)
-        units = f["time"].units
         print(f"obc-lagged: {source}")
         print(f"obc-lagged: {len(times)} records, keeping "
               f"{keep.stop - keep.start} after cutting {span} days off each end")

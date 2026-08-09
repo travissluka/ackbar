@@ -507,11 +507,19 @@ the two available answers, but it is climatological spread and not the flow
 structure of the ocean at that instant. `tools/ensemble-ic.sh` builds the other
 kind, perturbing one state through the static B, and is what tier 3 uses.
 
-**Every member is forced by the same atmosphere.** The members differ only in
-their ocean state, and each cycle they are pushed towards a common solution by
-the surface fluxes they share. An ensemble that means something needs
-perturbations in the atmosphere too, which is a data problem rather than a
-workflow one: it arrives with the forcing archive that the nature run needs.
+**Every member is forced by the same atmosphere.** Each cycle they are pushed
+towards a common solution by the surface fluxes they share. An ensemble that
+means something needs perturbations in the atmosphere too, which is now a data
+problem rather than a workflow one: `ensemble.inputs` gives a member its own
+`atm.nc` the same way it gives it its own `obc.nc`, so what is missing is the
+archive rather than the mechanism. See Domains in [`design.md`](design.md).
+
+The members no longer differ *only* in their ocean state, which is the part of
+this caveat that has moved. `ensemble.stochastic` gives each its own model
+perturbation, and a boundary ensemble gives each its own edge. Neither replaces
+the atmosphere: measured on `gom_25km`, an ensemble atmosphere produced four
+times the day 5 surface temperature spread of stochastic physics, and the
+boundary needs three weeks before it is doing much at all.
 
 Neither is a reason not to run the filter, and both are reasons not to read a
 score off it yet.
