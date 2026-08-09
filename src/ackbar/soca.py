@@ -1314,15 +1314,26 @@ def vt_config(config, cycle, *, background, scales, templates=None):
 def vertical_correlation_spec(solver):
     """What `ackbar.diffusion.vertical_scales` needs, from the experiment.
 
-    Two numbers with two different homes, joined here. `method` and
-    `iterations` describe the operator and come from the same block the
-    analysis reads the calibration back through, so the two cannot disagree.
-    The floor is not saber's: it is a statement about how tightly the analysis
-    may correlate below the mixed layer, `config/static/diffusion.yaml` holds
-    it for the offline stage, and that file is deliberately unreadable from a
-    job. So a cycling experiment states it, which is what `da/corr_vt_cycled` does.
+    One number, and it is the floor. The floor is not saber's: it is a statement
+    about how tightly the analysis may correlate below the mixed layer,
+    `config/static/diffusion.yaml` holds it for the offline stage, and that file
+    is deliberately unreadable from a job. So a cycling experiment states it,
+    which is what `da/corr_vt_cycled` does.
+
+    **The operator is not joined here, and an earlier version of this docstring
+    claimed it was.** `method` and `iterations` are required of the solver block
+    below, because an experiment that recalibrates every cycle and does not say
+    what operator it reads the result back through is incomplete. But they are
+    not returned, because `vertical_scales` does not read them and the operator
+    the per-cycle calibration actually *builds* with is a pair of literals in
+    `config/soca/vt.yaml`. Requiring them here makes the experiment state its
+    intent; it does not make the two agree. What makes them agree is
+    `tests/test_diffusion.py`, which now compares that document against
+    `config/static/diffusion.yaml` directly.
     """
     vertical = _vertical_block(solver)
+    _require(vertical, "method")
+    _require(vertical, "iterations")
     floor = solver.get("vertical correlation floor")
     if floor is None:
         raise ModelError(
@@ -1332,9 +1343,7 @@ def vertical_correlation_spec(solver):
             "`config/static/diffusion.yaml`, a job cannot read that file, and "
             "a calibration built with a different floor than the domain's "
             "static one is not comparable with it. `da/corr_vt_cycled` states it.")
-    return {"min": float(floor),
-            "method": _require(vertical, "method"),
-            "iterations": _require(vertical, "iterations")}
+    return {"min": float(floor)}
 
 
 def vertical_correlation_memory(solver):

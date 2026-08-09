@@ -92,11 +92,19 @@ horizontal:
 # Vertical, in *model levels* rather than metres, because that is the coordinate
 # the operator diffuses along and MOM6's layers are not evenly spaced.
 #
-# The scale at the surface is the number of levels in the mixed layer, taken
-# from `MLD` in the restart and interpolated down to `min` at the bottom of the
-# mixed layer, so that the analysis spreads freely inside a well mixed column
-# and barely at all across the pycnocline. Below that it is `min` everywhere.
-# It is not capped: see the note on `max` below.
+# The scale at the surface is the number of levels in the mixed layer,
+# interpolated down to `min` at the bottom of that layer, so that the analysis
+# spreads freely inside a well mixed column and barely at all across the
+# pycnocline. Below that it is `min` everywhere. It is not capped: see the note
+# on `max` below.
+#
+# The mixed layer is computed from the restart's density profile by
+# `ackbar.diffusion`, not read from the restart's own `MLD` field, which is what
+# this note used to say. MOM6's `MLD` is instantaneous and carries the diurnal
+# layer, so a summer afternoon background reports a few metres and the vertical
+# correlation collapses to `min` over most of the domain. That difference is a
+# change of physics that would read like a change of spelling, so it is stated
+# here rather than only at the code.
 #
 # Written to `$(domain_static)/diffusion/corr_vt.nc`, and read only by the group that
 # holds the tracers. Sea surface height is a single level and has no vertical

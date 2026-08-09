@@ -18,6 +18,16 @@ DIFFUSION = REPO / "config" / "static" / "diffusion.yaml"
 VARIATIONAL = REPO / "config" / "layers" / "da" / "variational.yaml"
 HYBRID = REPO / "config" / "layers" / "da" / "hybrid.yaml"
 
+#: The per-cycle vertical calibration, which is a *third* place the operator is
+#: spelled and the one the two fixtures above do not reach. Under
+#: `da/corr_vt_cycled` the normalization the analysis reads is not the offline
+#: one at all: `b.corr_vt` rebuilds it every cycle through this document, whose
+#: `method` and `iterations` are literals. The file says in as many words that
+#: they must stay equal to the other two, which is what makes it a join rather
+#: than a preference.
+CYCLED_VT = REPO / "config" / "soca" / "vt.yaml"
+CORR_VT_CYCLED = REPO / "config" / "layers" / "da" / "corr_vt_cycled.yaml"
+
 
 @pytest.fixture(scope="module")
 def calibration():
@@ -121,6 +131,69 @@ def test_the_vertical_iteration_count_is_even(calibration):
     """
     iterations = calibration["vertical"]["iterations"]
     assert iterations > 0 and iterations % 2 == 0
+
+
+def test_the_cycled_calibration_builds_the_operator_the_analysis_reads(calibration):
+    """The same join as above, through the door the two fixtures do not reach.
+
+    Under `da/corr_vt_cycled` the vertical normalization the analysis reads is
+    not the offline one: `b.corr_vt` rebuilds it every cycle with
+    `config/soca/vt.yaml`, whose `method` and `iterations` are literals because
+    they used to be substituted from the experiment's own solver block and are
+    not any more. So the pair that
+    `test_the_analysis_applies_the_vertical_scheme_the_normalization_was_built_with`
+    guards has a third member, and raising the scheme in the two files that test
+    covers would leave every cycled experiment writing through implicit/2 and
+    reading back through whatever the new value is. That is the same silent
+    depth-varying factor, reintroduced by a change that the suite calls green.
+    """
+    document = yaml.safe_load(CYCLED_VT.read_text())
+    groups = document["background error"]["saber central block"]["calibration"]["groups"]
+    wanted = calibration["vertical"]
+    for group in groups:
+        assert group["vertical"]["method"] == wanted["method"]
+        assert group["vertical"]["iterations"] == wanted["iterations"]
+
+
+def test_the_cycled_floor_is_the_one_the_offline_calibration_used(calibration):
+    """`corr_vt_cycled` blends against the offline scale field, so the floors must match.
+
+    Cycle 1 seeds its rolling average from `scales_corr_vt.nc`, which the
+    offline stage wrote with `vertical.min`. If the layer's own floor differs,
+    the first blend mixes two fields built to different floors and carries the
+    mixture forward for the rest of the experiment, with nothing reporting it.
+    The layer states the requirement in its comments; this is the check.
+    """
+    cycled = yaml.safe_load(CORR_VT_CYCLED.read_text())["solver"]
+    assert cycled["vertical correlation floor"] == calibration["vertical"]["min"]
+
+
+def test_the_vertical_operator_spans_the_levels_the_model_carries(calibration):
+    """`diffusion_levels` and MOM6's `NK` are two literals with nothing joining them.
+
+    Changing one without the other is the worst failure mode in this file
+    because it does not fail. saber is handed a scale field with one level count
+    and a geometry with another, and what it does is spin at full CPU on every
+    rank, writing nothing and raising nothing, until the job's walltime kills
+    it. There is no error to read afterwards.
+
+    Only the gom family is checked, and that is a statement about ownership
+    rather than an omission: this repository carries `MOM_input` for those
+    domains, so both numbers are here and can be compared. `om_1deg` takes
+    upstream's MOM6-examples configuration and overrides it, so its `NK` is not
+    in this tree and there is nothing here to join it to.
+    """
+    base = REPO / "config" / "model" / "mom6sis2" / "domain" / "gom" / "common"
+    nk = None
+    for line in (base / "MOM_input").read_text().splitlines():
+        head = line.split("!", 1)[0]
+        if head.split("=")[0].strip() == "NK":
+            nk = int(head.split("=", 1)[1].strip())
+    assert nk is not None, f"no NK in {base / 'MOM_input'}"
+
+    gom = yaml.safe_load((REPO / "config" / "layers" / "domain" / "common"
+                          / "gom.yaml").read_text())
+    assert gom["vars"]["diffusion_levels"] == nk
 
 
 def test_the_scales_are_relative_to_the_grid_and_not_to_a_domain(calibration):

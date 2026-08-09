@@ -32,12 +32,22 @@
 # ---------------------------------------------------------------------------
 # Two things to know before trusting the output
 #
-#   * The vertical scales come from `MLD` in the restart you give it, so they
-#     describe *that* state's mixed layer. A cold start's mixed layer is thinner
-#     than a spun up one, so a B calibrated on an initial condition is tighter in
-#     the vertical than it should be. Recalibrate against a spun up background
-#     before believing an analysis. v2 recalibrated the vertical every cycle;
-#     ACKBAR does not yet, and this is the reason that is on the list.
+#   * The vertical scales describe the mixed layer of the restart you give it,
+#     so a cold start's are tighter than a spun up state's and a B calibrated on
+#     an initial condition correlates less deeply than it should. Recalibrate
+#     against a spun up background before believing an analysis.
+#
+#     The layer is computed from the restart's density profile by
+#     `ackbar.diffusion`, not read from the restart's own `MLD` field, which is
+#     what an earlier version of this note said. MOM6's instantaneous `MLD`
+#     carries the diurnal layer, so on a summer afternoon it reports a few
+#     metres and the vertical correlation collapses to the floor over most of
+#     the domain. `src/ackbar/diffusion.py` has the criterion and the reasoning.
+#
+#     v2 recalibrated the vertical every cycle. ACKBAR does too now, under
+#     `da/corr_vt_cycled`, which rebuilds it from each cycle's own background
+#     and blends it into a rolling average; this offline run is what seeds the
+#     first cycle.
 #
 #   * The horizontal normalization is a Monte Carlo estimate, so it depends on
 #     the random draws and therefore on the MPI decomposition. Two runs at
@@ -78,7 +88,22 @@ ITERATIONS=
 ONLY=
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --iterations) ITERATIONS=${2:?--iterations needs a count}; shift 2 ;;
+        --iterations)
+            ITERATIONS=${2:?--iterations needs a count}
+            # Below ten, saber divides by zero. `DiffusionImpl.cc` computes its
+            # progress stride as `floor(N/10.0)` and then takes `itr % stride`,
+            # so any count under ten is an integer modulo by zero and the
+            # calibration dies with SIGFPE partway through, after the geometry
+            # and the background are built. Refused here rather than discovered
+            # there, because the failure names nothing.
+            [[ $ITERATIONS =~ ^[0-9]+$ && $ITERATIONS -ge 10 ]] || {
+                echo "soca-diffusion: --iterations $ITERATIONS; saber's progress" \
+                     "counter divides by floor(N/10), so anything under 10 dies" \
+                     "with SIGFPE. Use 10 or more; 200 is the usual smoke value" \
+                     "and 10000 is the science one." >&2
+                exit 1
+            }
+            shift 2 ;;
         --only) ONLY=${2:?--only needs a group name}; shift 2 ;;
         -*) echo "soca-diffusion: unknown option $1" >&2; exit 1 ;;
         *) RESTART=$1; shift ;;
@@ -313,16 +338,42 @@ done
 
 mkdir -p "$OUT"
 for name in "${NAMES[@]}"; do mv "out/$name.nc" "$OUT/"; done
-# Only the document that was actually run. Copying both under `--only` would
-# replace the surviving file's provenance with an empty calibration, which is
-# worse than having none: it would describe the operator as built from nothing.
-if [[ -z "$ONLY" || "$ONLY" != corr_vt ]]; then cp calibrate_hz.yaml "$OUT/"; fi
-if [[ -z "$ONLY" || "$ONLY" == corr_vt ]]; then cp calibrate_vt.yaml "$OUT/"; fi
+# Only the document that was actually run, and under `--only` under a name that
+# says which group it covers.
+#
+# The narrowing above is what forces the second half of that. A `--only loc_hz`
+# run generates a `calibrate_hz.yaml` describing loc_hz and nothing else, so
+# copying it to the unqualified name would replace the record of what
+# `corr_hz.nc` and `corr_hz_ssh.nc` were normalized with, for two files this run
+# deliberately did not touch. That is worse than having no record: the surviving
+# files would carry a document that does not mention them. So a narrowed run
+# writes `calibrate_hz.<group>.yaml` and the unqualified name keeps meaning
+# "the last full horizontal calibration", which is what every group not named
+# in a narrowed document was actually built with.
+if [[ -z "$ONLY" ]]; then
+    cp calibrate_hz.yaml "$OUT/"
+    cp calibrate_vt.yaml "$OUT/"
+elif [[ "$ONLY" == corr_vt ]]; then
+    cp calibrate_vt.yaml "$OUT/"
+else
+    cp calibrate_hz.yaml "$OUT/calibrate_hz.$ONLY.yaml"
+fi
+
 # The vertical scale *field*, beside the operator built from it. The other
 # `scales_*.nc` are intermediates and are dropped with the working directory;
 # this one is a product, because an experiment that recalibrates every cycle
 # seeds its first rolling average from it. See config/layers/da/corr_vt_cycled.yaml.
-[[ -s scales_corr_vt.nc ]] && cp scales_corr_vt.nc "$OUT/"
+#
+# Guarded by the same condition as the vertical calibration, and it has to be.
+# `diffusion-scales.py` above runs against the whole config before any narrowing,
+# so it rewrites `scales_corr_vt.nc` on every invocation including a `--only
+# corr_hz_ssh` one that leaves `corr_vt.nc` alone. Copying it unconditionally
+# would put a scale field beside a normalization built from a *different* scale
+# field, with nothing recording the mismatch, and a cycled experiment seeds its
+# first rolling average from that file.
+if [[ -z "$ONLY" || "$ONLY" == corr_vt ]]; then
+    [[ -s scales_corr_vt.nc ]] && cp scales_corr_vt.nc "$OUT/"
+fi
 true
 echo "soca-diffusion: wrote ${NAMES[*]/#/$OUT/} (with .nc)"
 echo "soca-diffusion: verify it with  tools/soca-dirac.sh $DOMAIN"
