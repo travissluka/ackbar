@@ -45,6 +45,15 @@ def test_a_scheme_that_was_not_asked_for_appears_in_neither_half():
     assert "epbl" not in stochastic.namelist(only, member=1, cycle=1)
 
 
+def test_the_two_halves_agree_about_an_empty_scheme_rather_than_disagreeing():
+    # The schema rejects this, and is one `required:` away from not rejecting
+    # it. Disagreeing is the failure mode that costs a whole cycle: the
+    # generator refuses the run rather than skipping the scheme.
+    empty = {"seed": 1, "sppt": SPPT, "epbl": {}}
+    assert "PERT_EPBL" not in stochastic.parameters(empty)
+    assert "epbl =" not in stochastic.namelist(empty, member=1, cycle=1)
+
+
 def test_the_timescale_reaches_the_generator_in_seconds():
     # ACKBAR writes durations as ISO 8601 everywhere and the generator's
     # namelist is seconds, so this conversion is the whole interface.

@@ -119,7 +119,12 @@ def parameters(stochastic):
     """
     lines = ["! written by ackbar from ensemble.stochastic"]
     for name, (switch, _, _) in _SCHEMES.items():
-        if name in stochastic:
+        # The same test `namelist` makes, and it has to be: a scheme switched on
+        # in one file and absent from the other is what
+        # `init_stochastic_physics_ocn` refuses the run over. `in` here against
+        # a truth test there would disagree over an empty scheme, which the
+        # schema rejects today and is one `required:` away from not rejecting.
+        if stochastic.get(name):
             lines.append(f"{switch} = True")
     return "\n".join(lines) + "\n"
 
