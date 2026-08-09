@@ -121,17 +121,38 @@ window read is checked against the one the arithmetic assumes.
 An era whose output interval equals its reset period never differences at all,
 which is why the two six hourly operational eras are simpler than either three
 hourly one rather than harder.
+
+## Reading a fourteenth of the archive
+
+A reforecast field file holds every lead of one parameter over ten days, and a
+segment wants sixteen of its eighty messages. Downloading the file whole moves
+451 MB per initialization to use 32 of them, and the wind files are the worst of
+it: 137 MB each, of which a segment reads eight messages out of a hundred and
+sixty, because they carry the 10 m and 100 m winds interleaved.
+
+NCEP publishes a `.idx` beside every GRIB file giving each message's byte offset,
+so the wanted messages can be asked for by range and concatenated. The index is
+used as a *superset* filter and nothing else: which plane is which is still
+decided by eccodes in `harvest`, so a description the index parse does not
+understand costs a few unread bytes rather than a wrong field, and a filter that
+is too narrow is caught by `segment`'s missing check rather than silently
+producing a short series.
 """
 
 import argparse
 import datetime
+import re
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
 import eccodes
 import numpy as np
+import requests
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
@@ -323,6 +344,110 @@ def download(url, local):
     return local
 
 
+#: A line of a GRIB index, `number:offset:d=DATE:PARAM:LEVEL:TIMERANGE:ENS=...`.
+#: The forecast hour wanted is the end of the time range, which is the second
+#: number of `12-15 hour ave fcst` and the only one of `15 hour fcst`.
+IDX_HOUR = re.compile(r"(?:(\d+)-)?(\d+) hour")
+
+#: How much unwanted GRIB to swallow rather than split a range in two. Messages
+#: here are a few hundred kB, so at zero the only ranges that merge are the ones
+#: that were already contiguous, which is what the windowed fields do (a window
+#: and the window containing it are neighbours) and what the winds do not (every
+#: other message is the 100 m level, which nothing reads).
+GAP = 0
+
+#: Range requests to have in flight at once. Network concurrency, not a rank
+#: count: a single range is a fraction of a file and eight of them saturate the
+#: link where one does not.
+JOBS = 8
+
+RETRIES = 4
+
+_local = threading.local()
+_pool = None
+
+
+def session():
+    """One connection per thread, kept open across the ranges of a file."""
+    if not hasattr(_local, "session"):
+        _local.session = requests.Session()
+    return _local.session
+
+
+def https(url):
+    """The public HTTPS form of an `s3://` URL, which is what ranges need."""
+    bucket, _, key = url[len("s3://"):].partition("/")
+    return f"https://{bucket}.s3.amazonaws.com/{key}"
+
+
+def get(url, span=None):
+    """One GET, whole or ranged, retried because S3 drops one now and then."""
+    headers = {"Range": f"bytes={span}"} if span else {}
+    for attempt in range(RETRIES):
+        try:
+            reply = session().get(url, headers=headers, timeout=300)
+            if reply.status_code in (200, 206):
+                return reply.content
+            problem = f"HTTP {reply.status_code}"
+        except requests.RequestException as error:
+            problem = str(error)
+        if attempt == RETRIES - 1:
+            raise SystemExit(
+                f"forcing-gefs: GET {url} [{span or 'whole'}]: {problem}")
+        time.sleep(2 ** attempt)
+
+
+def message_ranges(url, cache, steps):
+    """Byte ranges of the messages in *url* whose forecast hour is wanted.
+
+    The index is cached because the leads of a ladder read the same member's
+    files over and over, and an index is six kB against the tens of MB it saves.
+    """
+    index = cache / (url.rsplit("/", 1)[-1] + ".idx")
+    if not index.exists():
+        index.write_bytes(get(https(url) + ".idx"))
+
+    offsets, keep = [], []
+    for line in index.read_text().splitlines():
+        parts = line.split(":")
+        if len(parts) < 6:
+            continue
+        hour = IDX_HOUR.search(parts[5])
+        offsets.append(int(parts[1]))
+        keep.append(int(hour.group(2)) in steps if hour else False)
+
+    ranges = []
+    # The last message runs to the end of the file, which the index does not
+    # say, so its range is left open.
+    ends = offsets[1:] + [None]
+    for offset, end, wanted in zip(offsets, ends, keep):
+        if not wanted:
+            continue
+        if ranges and ranges[-1][1] is not None and offset - ranges[-1][1] <= GAP:
+            ranges[-1] = (ranges[-1][0], end)
+        else:
+            ranges.append((offset, end))
+    if not ranges:
+        raise SystemExit(
+            f"forcing-gefs: {index.name} has no message at any of "
+            f"{sorted(steps)} h, so the ranges to read cannot be worked out")
+    return ranges
+
+
+def fetch_messages(url, steps, local, cache):
+    """Write just the wanted messages of *url* to *local*, as one GRIB file.
+
+    Concatenated GRIB is GRIB: a reader walks message to message and neither
+    knows nor cares that the ones between were never fetched.
+    """
+    ranges = message_ranges(url, cache, steps)
+    target = https(url)
+    spans = [f"{start}-" if end is None else f"{start}-{end - 1}"
+             for start, end in ranges]
+    local.write_bytes(b"".join(_pool.map(lambda s: get(target, s), spans)))
+    return local
+
+
 def harvest(path, specs, steps):
     """Pull the wanted (field, step) planes out of one GRIB file.
 
@@ -408,7 +533,9 @@ def collect(era, init, member, steps, cache):
             url = PER_FIELD.format(bucket=era.bucket, year=f"{init:%Y}",
                                    day=f"{init:%Y%m%d}", hour=f"{init:%H}",
                                    member=member, stem=STEM[name])
-            local = download(url, cache / f"{member}.{init:%Y%m%d%H}.{STEM[name]}")
+            local = fetch_messages(
+                url, want, cache / f"{member}.{init:%Y%m%d%H}.{STEM[name]}",
+                cache)
             try:
                 # One parameter per file, so the shortName is not consulted and
                 # only the level separates the 10 m wind from the 100 m one.
@@ -633,6 +760,9 @@ def main():
     ap.add_argument("--cache", type=Path,
                     help="where downloads land before being read and deleted. "
                          "Default: <out>/.cache")
+    ap.add_argument("--jobs", type=int, default=JOBS,
+                    help="byte ranges to request at once. Network concurrency, "
+                         "not a rank count")
     args = ap.parse_args()
 
     start = datetime.datetime.strptime(args.start, "%Y-%m-%d")
@@ -685,6 +815,9 @@ def main():
     cache = args.cache or (args.out / ".cache")
     cache.mkdir(parents=True, exist_ok=True)
 
+    global _pool
+    _pool = ThreadPoolExecutor(max_workers=args.jobs)
+
     print(f"forcing-gefs: {era.name}, {era.members} members, "
           f"{len(era.inits)} init/day, {era.step} h output, {era.grid}")
     print(f"forcing-gefs: {args.domain} box {box['west']:.3f} to "
@@ -701,6 +834,11 @@ def main():
               + (f", floored at zero from {residue}" if residue else ""),
               flush=True)
 
+    # The indices are kept for the whole run because every rung of the ladder
+    # reads the same member's files again, and are the only thing left in the
+    # cache once the last member is written.
+    for index in cache.glob("*.idx"):
+        index.unlink()
     if not any(cache.iterdir()):
         cache.rmdir()
 
