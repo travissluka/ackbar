@@ -366,6 +366,44 @@ def test_a_cleanup_that_refused_collects_the_arrears_on_its_next_pass(env):
     assert paths.cycle_out("rst", 3).exists()
 
 
+def test_cleanup_reaps_behind_the_long_forecast_that_is_never_finished(env):
+    """The refusal that never ends, which is what the walk-back is for.
+
+    `submit` is released by the *cycling* forecast, while `forecast.ext`,
+    `hofx.ext` and `post.fcst` run on past it as leaves. So cycle n's cleanup
+    starts while cycle n-1's long forecast is still integrating, and it is not
+    bad luck: the two are released by the same event and one of them runs for
+    days. A horizon fixed at `cycle - 1` therefore never proves, and the sweep
+    that is supposed to collect the arrears has no pass that reaches it.
+
+    Measured on `osse25-4dletkf` before this: twenty one cycles, twenty one
+    refusals with the same three sentinels missing, and 5.9 GB per cycle held
+    for the life of the run. The only successful pass in the experiment was the
+    one after it had been paused long enough for the leaves to land.
+    """
+    config, _, paths = env
+    config["forecast"] = {"extended": {"length": "P7D", "every": "PT24H"}}
+    for cycle in (1, 2, 3):
+        _complete_cycle(env, cycle)
+
+    # Every cycle but the newest has finished its long forecast, which is what
+    # a run in flight looks like at every moment of its life.
+    for cycle in (1, 2):
+        for task in ("forecast.ext", "hofx.ext", "post.fcst"):
+            sentinel = paths.sentinel(cycle, task, 1)
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.write_text("{}")
+
+    do(env, 4, "cleanup")
+
+    # Cycle 3 cannot be proven, so nothing is reaped behind it. Cycle 2 can, so
+    # everything at or below cycle 1 goes: one cycle of state held for the delay
+    # rather than every cycle of it held for good.
+    assert not paths.cycle_out("rst", 1).exists()
+    assert paths.cycle_out("rst", 2).exists()
+    assert paths.cycle_out("rst", 3).exists()
+
+
 def test_a_keep_rule_pins_a_restart_every_so_often(env):
     """What makes a long experiment branchable.
 

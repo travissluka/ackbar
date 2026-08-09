@@ -412,7 +412,17 @@ Tasks that need specific care, in order of how badly they fail:
   retried cleanup evaluates a regenerated subgraph with new job ids, concludes the old
   consumers are gone, and deletes restarts that a resubmitted consumer is about to read. The
   artifact rule also dissolves the "cleanup must be dependency-aware" problem outright: no
-  dependency list, no race with healing, no age arithmetic.
+  dependency list, no race with healing, no age arithmetic. **The horizon it proves is the most
+  recent complete cycle, not the previous one**, and that distinction is the whole of whether
+  the rule works. `submit` is released by the cycling forecast, while `forecast.ext`, `hofx.ext`
+  and `post.fcst` run on past it as leaves, so cycle *n*'s cleanup starts while cycle *n-1*'s
+  long forecast is still integrating: not occasionally, but every cycle of every experiment with
+  an extended forecast. Fixed at *n-1* the proof never holds, the sweep that is meant to collect
+  the arrears has no pass that reaches it, and nothing says so louder than a log line. Measured
+  on `osse25-4dletkf`: twenty one cycles, twenty one refusals, 5.9 GB per cycle held for the
+  life of the run against the 12 GB it should have been. Walking back costs one extra cycle of
+  state and is safe under the same argument the horizon rests on, that cycle *n* reads cycle
+  *n-1* and nothing older.
 - **The stats harvest.** The task most likely to run twice, and its job is to write rows.
   `run/<date>/stats.json`, one file per cycle, never appended to. Accumulate at analysis time.
 - **`post.obs` statistics and `post.state` compression.** Same append hazard. Compression is

@@ -1671,13 +1671,103 @@ def _cleanup(config, paths, cycle):
     means one incomplete cycle strands its predecessor's state for the life of
     the experiment. Sweeping the range instead collects on the next pass whatever
     the last one declined to touch.
+
+    **And the horizon is the most recent complete cycle, not `cycle - 1`.** That
+    sweep is only a recovery if some later pass finds a cycle it can prove, and
+    with `forecast.extended` set no pass ever does. `submit` is released by the
+    *cycling* forecast, while `forecast.ext`, `hofx.ext` and `post.fcst` run on
+    past it as leaves, so cycle n's cleanup starts while cycle n-1's long
+    forecast is still integrating, every cycle, by construction rather than by
+    bad luck. Measured on `osse25-4dletkf`: cleanup refused on all 21 cycles with
+    the same three sentinels missing, and the run held 5.9 GB per cycle for its
+    whole life, 128 GB against the 12 GB it should have been. Walking back to a
+    cycle that does prove costs one extra cycle of state and is safe under the
+    same argument the horizon rests on: cycle n reads cycle n-1 and nothing
+    older, so proving cycle *k* and reaping at or below `k - keep_cycles` cannot
+    be invalidated by whatever the cycles after *k* are still doing.
     """
     members = member_set(config)
-    keep = cycle - 1
+    # Before the horizon has anything behind it there is nothing to prove and
+    # nothing to say. Without this the opening cycles of every run report a
+    # refusal for cycle 0, which has restarts but no `post.state`, and a reader
+    # learns to ignore the message that matters later.
+    if cycle - 1 - keep_cycles(config) < 0:
+        return
+
+    keep, refused = _horizon(config, paths, cycle, members)
+    if refused is not None:
+        when, absent = refused
+        print(f"ackbar: cycle {when} is incomplete ({absent} artifact(s) "
+              f"missing)")
+    if keep is None:
+        print(f"ackbar: no cycle before {cycle} is complete, nothing reaped")
+        return
+    if keep != cycle - 1:
+        print(f"ackbar: reaping behind cycle {keep}, the most recent complete "
+              f"one")
+
     drop = keep - keep_cycles(config)
     if drop < 0:
         return
 
+    # `ana` at the horizon is safe under the same proof: it is what that cycle's
+    # forecast started from, and its `rst` existing is what says that forecast
+    # ran. `slot` is safe under it too, and this is the one that needs saying:
+    # those are the sub-window states of the horizon cycle's forecast, read by
+    # the analysis one cycle later, and `rst/<keep>` existing means that analysis
+    # and the forecast after it are both done with them.
+    for target, kind in _reapable(paths, drop, config):
+        shutil.rmtree(target)
+        print(f"ackbar: removed {target}")
+
+    # Scratch too, and this is the one nothing else collects. A task deletes its
+    # own scratch on success and *keeps* it on failure, which is right: it is
+    # the whole debugging trace. By the time a cycle is this far behind the
+    # horizon its logs have been kept by `keep_traces` and its trace is no
+    # longer what anyone is reading.
+    for target in _reapable_scratch(paths, drop):
+        shutil.rmtree(target, ignore_errors=True)
+        print(f"ackbar: removed {target}")
+
+
+def _horizon(config, paths, cycle, members):
+    """The most recent complete cycle before *cycle*, and the first refusal.
+
+    Returns `(keep, refused)`. `keep` is None when no cycle before this one
+    proves complete, which is the ordinary state of the first two cycles of a
+    run. `refused` is `(cycle, count)` for the newest cycle that failed its
+    proof, or None if the newest one passed, so the caller can say what it was
+    waiting on without printing a line per cycle walked.
+
+    **Walking back rather than stopping is what makes the refusal a delay.**
+    `cycle - 1` is not merely often incomplete, it is *reliably* incomplete
+    whenever `forecast.extended` is set, because its long forecast is released
+    by the same event that releases this task and runs for longer. Stopping
+    there means the reaper never runs at all.
+
+    Every proof is evaluated in full even after one fails, because a cycle
+    further back can be complete while the one in front of it is not: a healed
+    cycle, or simply the newest one still finishing. The walk is bounded by the
+    experiment's own length and costs one `stat` per artifact per cycle, which
+    against the gigabytes it releases is nothing.
+    """
+    refused = None
+    for keep in range(cycle - 1, -1, -1):
+        absent = _incomplete(config, paths, keep, members)
+        if not absent:
+            return keep, refused
+        if refused is None:
+            refused = (keep, len(absent))
+    return None, refused
+
+
+def _incomplete(config, paths, keep, members):
+    """The artifacts missing before cycle *keep* may be reaped behind.
+
+    Empty means every declared consumer of the states below *keep* has written
+    its output, so they can go. See `_cleanup` for why each entry is here.
+    """
+    drop = keep - keep_cycles(config)
     stamp = restart_stamp(config)
     proof = [paths.member_out("rst", keep, m) / stamp for m in members]
 
@@ -1728,30 +1818,7 @@ def _cleanup(config, paths, cycle):
                 proof.extend(paths.sentinel(when, task, m)
                              for m in extended_members(config, members))
 
-    absent = [str(p) for p in proof if not p.exists()]
-    if absent:
-        print(f"ackbar: not cleaning cycle {drop} or earlier, cycle {keep} is "
-              f"incomplete ({len(absent)} artifact(s) missing)")
-        return
-
-    # `ana` at the horizon is safe under the same proof: it is what that cycle's
-    # forecast started from, and its `rst` existing is what says that forecast
-    # ran. `slot` is safe under it too, and this is the one that needs saying:
-    # those are the sub-window states of the horizon cycle's forecast, read by
-    # the analysis one cycle later, and `rst/<keep>` existing means that analysis
-    # and the forecast after it are both done with them.
-    for target, kind in _reapable(paths, drop, config):
-        shutil.rmtree(target)
-        print(f"ackbar: removed {target}")
-
-    # Scratch too, and this is the one nothing else collects. A task deletes its
-    # own scratch on success and *keeps* it on failure, which is right: it is
-    # the whole debugging trace. By the time a cycle is this far behind the
-    # horizon its logs have been kept by `keep_traces` and its trace is no
-    # longer what anyone is reading.
-    for target in _reapable_scratch(paths, drop):
-        shutil.rmtree(target, ignore_errors=True)
-        print(f"ackbar: removed {target}")
+    return [str(p) for p in proof if not p.exists()]
 
 
 def keep_cycles(config):
