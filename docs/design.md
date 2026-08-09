@@ -1259,6 +1259,19 @@ spread by day 30 and is still rising, its temperature spread peaks below the the
 than at the surface, and two thirds of its sea surface height spread is more than 200 km from
 any segment. `tools/obc-lagged.py` carries the measurements.
 
+**In a cycling filter the quantity it moves is not the spread but the collapse rate**, which no
+free-forecast measurement can show and which is the reason the table above understates it.
+Ten cycles of `osse25-4dletkf` against the same experiment with `ensemble.inputs` added: the
+control's domain sea surface height prior spread falls monotonically from 0.0650 m to 0.0238 m
+and is still falling, while the boundary ensemble's tracks it down to about 0.043 m and then
+stops, holding 0.0432 to 0.0448 m over the last five cycles. They differ by 1.9 times at the
+last cycle and the gap is widening. An LETKF's analysis removes more variance than its forecast
+regenerates; what a boundary ensemble supplies is a source the analysis cannot consume, because
+it is re-imposed from outside the domain each cycle rather than carried in the state the filter
+updates. Banded by distance from the nearest open segment the ratio is 2.78 within 50 km and
+1.10 beyond 400 km, so it fills the hole the shared boundary creates rather than inflating the
+basin. `tools/obc-spread.py` computes it and `site/monitor/osse/obc/` carries the figures.
+
 Three of the four are implemented: `ensemble.stochastic` is the model-internal one, and the
 other two arrive as files through `ensemble.inputs` (below). Stochastic physics is *stochastic*
 rather than a perturbed-parameter ensemble on purpose: a member with its own parameter values is
@@ -1280,9 +1293,18 @@ different offline stages with different layouts and staged by the same code. Eve
 resolves to a file, including the control and including a source with only one realization,
 which materializes as N symlinks to that one file; so `readlink INPUT/atm.nc` inside a member's
 run directory always answers what that member read. A missing file is refused rather than
-falling back to the domain's copy, and `ackbar validate` step 3 names it before anything is
-submitted, because the fallback is a member with no perturbation whose only symptom is an
-ensemble slightly less spread than it should be.
+falling back to the domain's copy, because the fallback is a member with no perturbation whose
+only symptom is an ensemble slightly less spread than it should be.
+
+That refusal is raised where the member is staged, which means inside the job, and **`ackbar
+validate` does not check `ensemble.inputs` at all.** Two failures therefore cost a submission
+and a job apiece rather than a line at validate time: an archive missing a member, and an
+archive whose time coverage does not span the experiment's cycles. The second is the worse of
+the two, because it does not fail until the cycle that runs off the end of the file, healing
+cannot recover it, and the message comes from `time_interp_external` inside MOM6 rather than
+from anything ACKBAR wrote. Both are checkable from the files: existence, and the
+`time_coverage_start`/`time_coverage_end` attributes `tools/obc-lagged.py` writes. This is the
+next thing to build here.
 
 **A boundary ensemble carries a basin-wide sea surface height mode that no analysis can remove,
 and the obvious fix does not work.** `ufo::ObsADT::simulateObs` computes `offset = mean(H(x) - y)`

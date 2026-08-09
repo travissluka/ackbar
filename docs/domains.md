@@ -225,9 +225,22 @@ warm at depth and looks like a model bias.
 
 The GLORYS span is the constraint to know about, because a run outside it fails
 in `time_interp_external` at the first timestep. **Every tier 3 fixture starts
-2015-01-05, which is outside it.** That mismatch is open, and reconciling it
-means either extending the fetch backwards or restamping the smoke initial
-condition and moving the fixture dates.
+2015-01-05, which is outside it, and this is not a latent problem: the gom tier 3
+tests fail on it today.** `test_tier3.py`, `test_tier3_gom.py`,
+`test_tier3_diffusion.py` and `test_tier3_gom_obc.py` all inherit `tier3_gom`,
+and the model stops with
+
+```
+FATAL from PE 7: time_interp_external 2: time 735114 (20150105.010000 is before
+range of list 735257-735362(20150528.000000 - 20150910.000000),file=INPUT/obc.nc
+```
+
+`tier3_gom.yaml`'s own header still describes the boundary as a SODA five-day
+mean valid 2015-01-04, which it stopped being when the domain was rebuilt on
+GLORYS. Reconciling it means either extending the fetch backwards or restamping
+the smoke initial condition and moving the fixture dates, and either way it
+touches all four modules, so it is a change of its own rather than a fix to make
+in passing.
 
 **A lagged boundary ensemble is shorter than the boundary it came from, and by
 enough to matter.** `tools/obc-lagged.py` cuts the largest lag off each end,
@@ -240,6 +253,18 @@ in `time_interp_external` around cycle 40, and healing cannot recover, because
 fixing it means re-fetching and rebuilding the ladder, which changes the boundary
 every earlier cycle already integrated against. Fetch the source long enough for
 the experiment *plus twice the span* before building an ensemble from it.
+
+Each member says what it covers, so this is answerable from the file rather than
+from the ladder arithmetic:
+
+```bash
+ncdump -h $ACKBAR_STATIC_ROOT/obc/<domain>/<archive>/mem000.nc \
+  | grep -E ':time_coverage|:perturbation ='
+```
+
+`perturbation` names the member's own lag and the amplitude, and the source's
+`:source` carries through, so an archive records which pull it was built from
+without depending on its directory name.
 
 **The atmosphere is a climatology.** NCAR/CORE, staged once under
 `$ACKBAR_STATIC_ROOT/forcing/ncar-clim` and shared by every resolution. It has no
