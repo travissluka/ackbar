@@ -22,11 +22,16 @@
 # quarter of what an ensemble atmosphere produced, and unlike the ensemble
 # atmosphere it needs nothing downloaded. The report is `site/monitor/spread/`.
 #
-# **ePBL is available and is not used here.** It perturbs the boundary layer's
-# TKE budget, which is the right place for mixed layer spread, and at every
-# amplitude tried it produced nothing measurable above the divergence floor on
-# this domain. It is left out rather than carried at an amplitude that does
-# nothing.
+# **Where oSPPT puts the spread, measured on this experiment's own ensemble.**
+# One cycle, from `osse25-letkf`'s last analysis, every member integrated 24
+# hours twice. Surface temperature spread went from 0.066 to 0.199 degC and
+# mixed layer depth from 0.73 to 1.62 m, so a threefold and a twofold gain in
+# the two fields the surface observations constrain. Column temperature went
+# from 0.340 to 0.365, seven percent. **Sea surface height and salinity did not
+# move at all**, 0.0102 m and 0.115 psu either way, and those are exactly the
+# fields `osse25-letkf` records as under-dispersed. So this addresses the
+# surface temperature half of the problem and not the altimetric half, which
+# needs perturbed open boundaries or an ensemble atmosphere.
 #
 # **What to read, and in what order.** The prior and posterior variance
 # `config/soca/letkf.yaml` writes every cycle, against `osse25-letkf`'s, which
@@ -75,19 +80,38 @@ ensemble:
     # this experiment rather than a number, and so that a second run of the same
     # experiment reproduces the first.
     seed: 20150712
+    # All three numbers below are NOAA-PSL's own, from `NOAA-PSL/NestedReplay`,
+    # and the length scale and timescale are also what JCSDA's UFS-marine
+    # quarter degree namelist carries. They are a *global* configuration, and
+    # the length scale is the one that does not obviously transfer: 500 km
+    # across a basin 1500 km wide is three e-folding lengths, so the pattern is
+    # a handful of patches rather than a field. Whether a shorter scale suits a
+    # regional domain better has not been measured inside a cycling filter, and
+    # is the first thing to sweep here.
     sppt:
-      # The strongest of the three amplitudes measured, and near the top of what
-      # the scheme can mean: MOM6 clips the multiplier into [0, 2], so above
-      # about 1.0 the clipping is doing the work and the perturbation is no
-      # longer the distribution it claims to be.
+      # MOM6 clips the multiplier into [0, 2], so above about 1.0 the clipping
+      # does the work and the perturbation stops being the distribution it
+      # claims to be. 0.8 is near the top of what the scheme can mean.
       amplitude: 0.8
-      # Metres. Twenty cells at 25 km, which is the eddy scale here rather than
-      # the grid scale; 150 km and 1500 km were both measured and neither beat
-      # this.
+      # Metres, as an e-folding length. `ackbar/stochastic.py` sets
+      # `new_lscale`, without which the generator's default makes a pattern
+      # twice as wide as this number asks for.
       length_scale: 500000.0
       # A quarter of a cycle, so a member's perturbation is a sequence of draws
       # over the forecast rather than one offset held constant. Doubling it to
       # 24 hours was measured and produced less.
+      timescale: PT6H
+    # Carried, and expected to do very little. Measured twice on this domain,
+    # once as free forecasts from a common state and once as a cycle of this
+    # experiment's own ensemble, it moved surface temperature spread by 2% and
+    # the column not at all; mixed layer depth spread by about a tenth. It is
+    # here because it is the right *place* for mixed layer spread and costs one
+    # namelist line, and because a null measured under climatological forcing
+    # may not stay null under an ensemble atmosphere, which is the next thing
+    # to arrive. Drop it if it is still doing nothing then.
+    epbl:
+      amplitude: 0.8
+      length_scale: 500000.0
       timescale: PT6H
 
 forecast:

@@ -135,8 +135,26 @@ def namelist(stochastic, member, cycle):
     five, which sets the first element and leaves the rest at the generator's
     "unset". One pattern per scheme is what the schema allows and what the
     spread measurements were made with.
+
+    The values NOAA-PSL runs these schemes at, for reference when reading an
+    experiment's own: amplitude 0.8, length scale 500 km and timescale 6 hours,
+    for both oSPPT and ePBL (`NOAA-PSL/NestedReplay`, and the same length scale
+    and timescale in JCSDA's UFS-marine quarter degree namelist). Those are
+    global configurations, so the length scale in particular deserves a second
+    thought on a basin that is only a few of them across.
     """
-    lines = ["&nam_stochy"]
+    # `length_scale` is an e-folding length in metres, and this line is what
+    # makes it one. `setvarspect` in `stochy_patterngenerator.F90` carries two
+    # variance spectra: the generator's default puts `L**2 / 4` in the exponent
+    # and `new_lscale` puts `(L / 4)**2`, four times smaller, which its own
+    # comment calls "fix for proper lengthscale". Under the default a pattern is
+    # twice as wide as the number asks for, which on a basin a few length scales
+    # across is the difference between a field of errors and one multiplier with
+    # a gradient. Written unconditionally rather than exposed: a key called
+    # `length_scale` in metres has one correct meaning, and letting an
+    # experiment choose between two of them records a number that does not say
+    # what it is.
+    lines = ["&nam_stochy", "  new_lscale = .true."]
     for name, (_, amp, seed_key) in _SCHEMES.items():
         scheme = stochastic.get(name)
         if not scheme:

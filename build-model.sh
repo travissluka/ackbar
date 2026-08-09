@@ -67,6 +67,19 @@ ln -sfn "$ACKBAR_DATASETS_ROOT" "$MODEL_DIR/.datasets"
 CASE_DIRS=$(make -s -C "$MODEL_DIR/$TARGET" \
     --eval='print-EXTRA_SRC_DIRS: ; @echo $(EXTRA_SRC_DIRS)' print-EXTRA_SRC_DIRS)
 
+# Which directories are compiled in is decided by `configure`, and `configure`
+# caches. So a build tree made before the generator was added is up to date as
+# far as `make` is concerned: it reports "nothing to be done" and leaves an
+# executable that FATALs on the first `DO_SPPT`, inside a cycling experiment
+# rather than at a build. Reconfigured here rather than left to whoever meets
+# that. The shared libraries are untouched, since none of them depends on this.
+CONFIGURED=$MODEL_DIR/$TARGET/build/Makefile
+if [[ -f $CONFIGURED ]] && ! grep -qF "$STOCHY" "$CONFIGURED"; then
+    echo "build-model: $(dirname "$CONFIGURED") predates the stochastic pattern"
+    echo "  generator; removing it so configure runs again."
+    rm -rf "$(dirname "$CONFIGURED")"
+fi
+
 # The generator's spectral transforms call `esmf_dgemm`, ESMF's name for the
 # BLAS routine, and this build links neither ESMF nor BLAS. The shim supplies
 # the name over openblas; `tools/stochastic-shim/esmf_dgemm.F90` says why not

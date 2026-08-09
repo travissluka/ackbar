@@ -52,6 +52,17 @@ def test_the_timescale_reaches_the_generator_in_seconds():
     assert "ocnsppt_tau = 21600.0" in group
 
 
+def test_the_length_scale_is_an_e_folding_length_and_not_twice_one():
+    """`new_lscale` is what makes `length_scale` mean what it says.
+
+    Without it `setvarspect` puts `L**2 / 4` in the variance spectrum's exponent
+    rather than `(L / 4)**2`, and the pattern comes out twice as wide as asked
+    for. On a basin a few length scales across that is the difference between a
+    field of errors and one multiplier with a gradient across it.
+    """
+    assert "new_lscale = .true." in stochastic.namelist(BOTH, member=1, cycle=1)
+
+
 def test_the_group_is_a_namelist_group_the_generator_can_read():
     group = stochastic.namelist(BOTH, member=1, cycle=1)
     assert group.startswith("&nam_stochy\n") and group.endswith("/\n")
