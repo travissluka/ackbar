@@ -172,8 +172,18 @@ def main():
                sy.min() - obc_grid.MARGIN, sy.max() + obc_grid.MARGIN)
         data = fetch(GLORYS_IC, box, source_date, source_date)
 
+        # The time axis takes the source's own stamp, which for a GLORYS daily
+        # mean is 12Z and not midnight, unless this file is asserting a
+        # different day, in which case it takes the day being asserted: the
+        # assertion exists so a cycle starting at T00 can begin from another
+        # day's ocean, and the hour of the day it was read from is not part of
+        # the claim. See `obc_grid.write_obc` for why the hour is kept at all.
+        stamp = dt.datetime.utcfromtimestamp(
+            np.datetime64(np.asarray(data["time"])[0], "s").astype("int64"))
+        when = when if args.valid_at else stamp
+
         comment = valid_at = None
-        if source_date != when:
+        if source_date != when.replace(hour=0, minute=0, second=0):
             valid_at = when
             comment = (
                 f"Read from {source_date:%Y-%m-%d} and asserted to be an "

@@ -107,35 +107,46 @@ The observable a net imbalance produces is basin mean sea surface height driftin
 apart member by member, and the spike writes SSH daily. Measure it there.
 
 ---------------------------------------------------------------------------
-The head that nothing can correct
+The basin-wide mode, and the thing that does not fix it
 
-Sea surface height is the one field whose boundary-wide average is removed from
-each member's perturbation before it is written, and this is not a tuning choice.
+About 47% of the interior sea surface height spread this produces on `gom_25km`
+is one basin-wide number rather than spatial structure, 3.0 cm of 4.35 cm at day
+30. That matters more than its size suggests, because it is the one direction
+altimetry cannot see: `ufo::ObsADT::simulateObs` computes
+`offset = mean(H(x) - y)` over the observation space and subtracts it from
+`H(x)`, and `ObsADTTLAD` does the same in the tangent linear and the adjoint. So
+a member whose sea level is uniformly high carries an error no observation
+reports and neither an LETKF nor a variational solver can remove, and it inflates
+every spread-versus-error diagnostic with spread the increment cannot reach.
 
-`ufo::ObsADT::simulateObs` computes `offset = mean(H(x) - y)` over every location
-in the observation space and subtracts it from `H(x)`, and `ObsADTTLAD` does the
-same in both the tangent linear and the adjoint. So altimetry is assimilated as
-an anomaly about its own domain mean, and a member whose sea level is uniformly
-high carries an error no observation reports and no analysis removes. Left in, it
-is spread the filter is charged for and cannot use: it inflates every
-spread-versus-error diagnostic with a direction the increment cannot reach.
+**Removing the boundary's own basin-wide sea surface height does not fix it, and
+this was measured rather than assumed.** The reasoning that says it should is
+easy to reconstruct and wrong, so it is written down here to stop it being
+reconstructed: all three GoM segments are FLATHER, a FLATHER segment imposes a
+prescribed head on the interior, so a boundary-wide `zeta` anomaly should pump
+the basin. Two spikes were run, identical but for a generator that subtracted
+each member's boundary-wide `zeta` before writing. The interior basin-wide spread
+did not fall: 0.0298 m with it, 0.0362 m without, which is inside the sampling
+error of seven members and certainly not the collapse the argument predicts. The
+structured part was unchanged at 0.0317 m either way, and temperature and
+salinity spread moved by under 2%.
 
-The domain makes that worse rather than better. Measured on `gom_25km`, the
-boundary-wide component is 12% of the boundary perturbation's variance and 47% of
-the interior sea surface height spread it produces, because FLATHER hands a
-boundary-wide head straight to the basin while structured boundary anomalies
-mostly radiate back out. About a sevenfold amplification in variance, all of it
-into the blind direction.
+The direct test says why. Correlating each member's boundary-wide `zeta` anomaly
+against its day 30 basin-mean sea surface height gives **-0.23**: no relationship,
+and the wrong sign. Whatever raises and lowers this basin, it is not the head
+prescribed at the edge.
 
-Only sea surface height. A domain-wide temperature or salinity offset is
-observed, by profiles and by SST, and removing it would be removing a real
-uncertainty the filter can act on.
+The remaining candidate, and the one worth building if this is ever worth fixing,
+is the **net volume flux**: the perturbed normal velocities carry a different
+transport through the segments, and a mass imbalance is exactly a basin that
+fills or empties. Constraining each member to zero anomalous net transport needs
+the domain's mask and topography, which is why it is not done here, and the same
+reason is written out under "the mass check" above. Subtracting the `zeta` mode
+alone would also break the source's own consistency between sea surface height
+and normal velocity, which a lagged pair inherits already balanced.
 
-Removing a per-member scalar preserves the ensemble mean exactly, since the mean
-of the members' offsets is the offset of the mean perturbation, which is zero.
-What it does not do is drive the interior basin mean spread to zero: transmission
-is not uniform along the boundary, so this removes the cause and leaves a
-remainder. The remainder is what the spike measures.
+So the generator leaves both alone, and the basin-wide mode is a known,
+unobservable component of this scheme rather than a bug in it.
 """
 
 import argparse
@@ -151,31 +162,6 @@ import netCDF4 as nc
 #: the segment, `nz` is a vertical axis, and `dz_<field>` is the source column's
 #: thicknesses, which MOM6 requires beside each field and at the field's shape.
 NOT_DATA = ("lon", "lat", "nz")
-
-#: The field whose boundary-wide component is unobservable, so the one this tool
-#: removes it from. MOM6 takes it as `SSH=file:obc.nc(zeta)` on every segment.
-HEAD = "zeta"
-
-
-def boundary_mean(values, segments, field):
-    """*field* averaged over every point of every segment, one number per day.
-
-    Unweighted over points rather than by cell width or by area. The quantity
-    being stood in for is the mean `ObsADT` removes, which is itself unweighted
-    and taken over altimeter locations rather than over the boundary, so no
-    weighting available here matches it. The difference between the choices is
-    far smaller than the component being removed.
-
-    None when no segment carries the field, which is how a boundary file that
-    prescribes no sea surface height passes through untouched.
-    """
-    present = [values[segment][field] for segment in segments
-               if field in segments[segment]]
-    if not present:
-        return None
-    return np.concatenate([v.reshape(len(v), -1) for v in present],
-                          axis=1).mean(axis=1)
-
 
 def field_order(segments):
     """Every field any segment carries, in a stable order for the summary."""
@@ -384,25 +370,9 @@ def main():
             for field in fields:
                 mean = sum(m[segment][field] for m in members) / len(members)
                 for m in members:
-                    m[segment][field] = args.amplitude * (m[segment][field] - mean)
-
-        # The sea surface height perturbation loses its boundary-wide part
-        # before it is added back. See "The head that nothing can correct".
-        removed = []
-        for m in members:
-            offset = boundary_mean(m, segments, HEAD)
-            removed.append(0.0 if offset is None
-                           else float(np.sqrt((offset ** 2).mean())))
-            if offset is not None:
-                for segment, fields in segments.items():
-                    if HEAD in fields:
-                        m[segment][HEAD] -= offset.reshape(
-                            (-1,) + (1,) * (m[segment][HEAD].ndim - 1))
-
-        for segment, fields in segments.items():
-            for field in fields:
-                for m in members:
-                    m[segment][field] += base[segment][field]
+                    m[segment][field] = (base[segment][field]
+                                         + args.amplitude
+                                         * (m[segment][field] - mean))
 
         args.out.mkdir(parents=True, exist_ok=True)
         written = [("mem000", 0, base)]
@@ -423,12 +393,6 @@ def main():
             print(f"{name:8s}{lag:6d}" + "".join(f"{v:10.4f}" for v in row))
         print("Departure from the unperturbed boundary, over every segment point, "
               "level and day. mem000 is that boundary, so its row is zero.")
-        if any(removed):
-            print(f"\nBoundary-wide {HEAD} removed from each member, rms over "
-                  f"the window: "
-                  + ", ".join(f"{v:.4f}" for v in removed))
-            print("Unobservable, not small. See the head that nothing can "
-                  "correct, above.")
 
         # A member this run did not write is a member from a previous one, and
         # every consumer addresses these files by name: `spike-obc.sh` globs

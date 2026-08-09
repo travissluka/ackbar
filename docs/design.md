@@ -1284,21 +1284,23 @@ falling back to the domain's copy, and `ackbar validate` step 3 names it before 
 submitted, because the fallback is a member with no perturbation whose only symptom is an
 ensemble slightly less spread than it should be.
 
-**Sea surface height is the exception, and it is an observation-operator fact rather than a
-tuning choice.** `ufo::ObsADT::simulateObs` computes `offset = mean(H(x) - y)` over the
-observation space and subtracts it from `H(x)`, and `ObsADTTLAD` does the same in the tangent
-linear and the adjoint. Altimetry is therefore assimilated as an anomaly about its own domain
-mean, so a member whose sea level is uniformly high carries an error no observation reports and
-neither an LETKF nor a variational solver can remove. A boundary ensemble that carries one is
-charged for spread in a direction the increment cannot reach, and every spread-versus-error
-diagnostic is flattered by it. `tools/obc-lagged.py` removes each member's boundary-wide `zeta`
-before writing, and only `zeta`: a domain-wide temperature or salinity offset is observed, by
-profiles and by SST, and removing it would remove uncertainty the filter can act on.
+**A boundary ensemble carries a basin-wide sea surface height mode that no analysis can remove,
+and the obvious fix does not work.** `ufo::ObsADT::simulateObs` computes `offset = mean(H(x) - y)`
+over the observation space and subtracts it from `H(x)`, and `ObsADTTLAD` does the same in the
+tangent linear and the adjoint. Altimetry is therefore assimilated as an anomaly about its own
+domain mean, so a member whose sea level is uniformly high carries an error no observation
+reports and neither an LETKF nor a variational solver can remove. On `gom_25km` that mode is
+47% of the interior sea surface height spread variance, 3.0 cm of 4.35 cm at day 30.
 
-The domain makes that mode worse rather than better, which is why it is worth the code. Measured
-on `gom_25km`, the boundary-wide component is 12% of the boundary perturbation's variance and
-47% of the interior sea surface height spread it produces, because FLATHER hands a boundary-wide
-head straight to the basin while structured boundary anomalies mostly radiate back out.
+The reasoning that says to fix it by removing the boundary's own basin-wide `zeta` is easy to
+reconstruct and is wrong, so it is recorded here: every GoM segment is FLATHER, FLATHER imposes
+a prescribed head, so a boundary-wide `zeta` anomaly ought to pump the basin. It was built and
+measured. The interior basin-wide spread did not fall, 0.0298 m against 0.0362 m across two
+otherwise identical seven member spikes, and correlating each member's boundary-wide `zeta`
+anomaly against its day 30 basin-mean sea surface height gives -0.23: no relationship and the
+wrong sign. The change was reverted. The remaining candidate is net volume flux through the
+segments, which needs the domain's mask and topography to constrain, and `tools/obc-lagged.py`
+carries the full account.
 
 **Writeback is one node with one contract:** produce the restart set the next forecast reads.
 Direct restart write is the first implementation. IAU is then an alternate implementation

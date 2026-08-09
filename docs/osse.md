@@ -28,17 +28,25 @@ It is **not** a benchmark. Three reasons, all structural:
 - **The DA settings are not tuned.** The background error values are the pinned
   bundle's defaults, because v2's tuning lived in `BkgErrGODAS` and does not map
   onto `SOCAParametricOceanStdDev`. See [Settle these](#settle-these).
-- **The open boundary is shared too, and it is exactly right.** `gom_12km` and
-  `gom_25km` carry the same GLORYS slice, so the truth run and every experiment
-  are held to the same edge. That is a constraint no real regional system has:
-  whatever the analysis gets wrong in the interior, the boundary keeps pulling
-  back towards the state the observations were generated from, most strongly
-  near the segments and in the barotropic mode. It flatters every skill number
-  and it flatters the Loop Current inflow in particular, since the Yucatan
-  transport is prescribed identically in both. `tools/fetch-hycom.py` exists to
-  end this: an independent product on the same dates gives truth a boundary the
-  experiments do not have, which is what "fraternal" should mean at the edge as
-  well as in the resolution.
+- **The open boundary is shared too, and that is now a decision rather than an
+  oversight.** `gom_12km` and `gom_25km` carry the same GLORYS slice, so the
+  truth run and every experiment are held to the same edge. It is a constraint no
+  real regional system has: whatever the analysis gets wrong in the interior, the
+  boundary keeps pulling it back towards the state the observations were
+  generated from, and the Loop Current inflow in particular is prescribed
+  identically in both. Every skill number here is flattered by it and should be
+  read that way.
+
+  Giving truth an independent boundary was built and then declined. The reason is
+  the mode it would introduce: two reanalyses differ at the boundary by a
+  basin-wide sea level offset, 0.14 to 0.16 m of datum plus a residual that moves
+  from day to day, and `ObsADT` removes the domain mean before forming a
+  departure (see [`design.md`](design.md)), so that component is invisible to
+  every solver. A twin built that way would carry a permanent uncorrectable
+  penalty that says nothing about the DA and confounds everything that does.
+  `tools/fetch-hycom.py` stays, because the second source is what calibrates the
+  boundary ensemble's amplitude, which is a use that wants the disagreement
+  measured rather than injected.
 
 It is a *fraternal* twin, which is the one structural thing that came out right:
 truth is `gom_12km` and every experiment is `gom_25km`, so model error is real

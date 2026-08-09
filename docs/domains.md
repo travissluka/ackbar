@@ -199,17 +199,21 @@ snapshot means the interior relaxes toward whatever that snapshot implies, and
 the resulting error is boundary error rather than the forecast error an analysis
 exists to correct.
 
-**A shared boundary is not neutral either, and that is what the OSSE has.**
-`gom_25km` and `gom_12km` carry the same GLORYS slice, and the truth run is built
-on the same domain, so truth and the assimilating system are held to the same
-edge. Every skill number measured that way includes a constraint no real regional
-system has: whatever the analysis gets wrong, the boundary keeps pulling it back
-towards the state the observations were generated from. Two things exist to
-remove it, and neither is on by default. `tools/fetch-hycom.py` builds the same
-boundary from an independent product, which is what makes a fraternal twin
-possible; `tools/obc-lagged.py` builds a per-member ensemble of one product's
-boundary, which is what gives the members somewhere to disagree. See
-`ensemble.inputs` in `docs/design.md` for how either reaches a run.
+**A shared boundary is not neutral either, and that is what the OSSE has, on
+purpose.** `gom_25km` and `gom_12km` carry the same GLORYS slice, so truth and the
+assimilating system are held to the same edge, and every skill number includes a
+constraint no real regional system has. Giving truth an independent boundary was
+built and declined: the difference between two products is dominated by a
+basin-wide sea level offset that `ObsADT` makes invisible to every solver, so it
+would add an uncorrectable penalty that confounds the comparison rather than
+sharpening it. `docs/osse.md` carries the reasoning.
+
+What the second source is for instead is calibration. `tools/obc-lagged.py`
+builds a per-member ensemble by lagging one product's boundary, and
+`tools/fetch-hycom.py` provides the independent measurement of how far apart two
+reanalyses of the same day actually are, which is what sets that ensemble's
+amplitude. See `ensemble.inputs` in `docs/design.md` for how the ensemble reaches
+a run.
 
 Two things about a second source are worth knowing before using one. Its sea
 surface height carries a different datum, 0.16 m between HYCOM GOFS 3.1 and

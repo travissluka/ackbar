@@ -59,6 +59,31 @@ boundaries=("$OBC"/mem*.nc)
 }
 
 echo "spike-obc: ${#boundaries[@]} members, $DAYS days each, from $IC"
+
+# Artifact existence answers "did this member run", not "did it run the same
+# experiment". Rerunning 30 days as 45, or against a different initial
+# condition, into the same output directory would otherwise skip every member
+# that already finished and leave an ensemble whose members are not comparable,
+# which `spike-spread.py` reads without complaint because every member does have
+# an `ocn_daily` file. So the settings that make members comparable are recorded
+# beside them, and a run that disagrees stops rather than half-appending to
+# someone else's ensemble.
+SETTINGS="$OUT/spike-obc.settings"
+WANT="domain=$DOMAIN days=$DAYS ic=$IC obc=$OBC"
+mkdir -p "$OUT"
+if [[ -f $SETTINGS ]]; then
+    HAVE=$(<"$SETTINGS")
+    if [[ $HAVE != "$WANT" ]]; then
+        echo "spike-obc: $OUT already holds a different experiment" >&2
+        echo "spike-obc:   it has  $HAVE" >&2
+        echo "spike-obc:   you asked for $WANT" >&2
+        echo "spike-obc: use a different output directory, or delete that one" >&2
+        exit 1
+    fi
+else
+    printf '%s' "$WANT" > "$SETTINGS"
+fi
+
 for path in "${boundaries[@]}"; do
     member=$(basename "$path" .nc)
     # Artifacts, not a marker file: the run is done when it has written the

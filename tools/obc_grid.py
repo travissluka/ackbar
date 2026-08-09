@@ -319,7 +319,8 @@ def write_ic(path, lon, lat, depth, fields, when, source, valid_at=None,
         f.createDimension("lon", len(lon))
 
         t = f.createVariable("time", "f8", ("time",))
-        t.units = f"days since {when:%Y-%m-%d} 00:00:00"
+        # *when* carries the source's own hour and it is kept. See `write_obc`.
+        t.units = f"days since {when:%Y-%m-%d %H:%M:%S}"
         t.calendar = "NOLEAP"
         t.cartesian_axis = "T"
         t[0] = 0.0
@@ -362,10 +363,21 @@ def write_ic(path, lon, lat, depth, fields, when, source, valid_at=None,
 def write_obc(path, segments, depth, dates, geometry, source):
     """`obc.nc`: every segment, every field, on the supergrid.
 
-    One `time` axis shared by all of them, in `NOLEAP` days from the first date.
-    `BRUSHCUTTER_MODE` requires segment data on the supergrid and dies on an
-    even dimension, so a J segment is `(1, 2*ni+1)` and an I segment
+    One `time` axis shared by all of them, in `NOLEAP` days from the first
+    record. `BRUSHCUTTER_MODE` requires segment data on the supergrid and dies on
+    an even dimension, so a J segment is `(1, 2*ni+1)` and an I segment
     `(2*nj+1, 1)`, taken straight off `ocean_hgrid.nc`.
+
+    **The hour in *dates* is load bearing and is written out.** Neither source
+    is stamped at midnight: GLORYS `P1D-m` is a daily mean, which CMEMS centres
+    and stamps at 12Z, and `fetch-hycom.py` reads the 12Z snapshot by choice. An
+    earlier version formatted the units as `%Y-%m-%d` and took `.days`, which
+    discarded that and told MOM6 each field belonged at midnight, so
+    `time_interp_external` applied the whole boundary twelve hours early: not an
+    error at any timestep, just a boundary consistently half a day ahead of the
+    atmosphere, the model clock and the observations. Offsets are computed in
+    seconds rather than days so that a source on a sub-daily or irregular cadence
+    lands where it belongs instead of being truncated onto whole days.
     """
     dz = layer_thicknesses(depth)
     nz = len(depth)
@@ -373,10 +385,10 @@ def write_obc(path, segments, depth, dates, geometry, source):
     with nc.Dataset(path, "w", format="NETCDF3_64BIT_OFFSET") as f:
         f.createDimension("time", None)
         t = f.createVariable("time", "f8", ("time",))
-        t.units = f"days since {dates[0]:%Y-%m-%d} 00:00:00"
+        t.units = f"days since {dates[0]:%Y-%m-%d %H:%M:%S}"
         t.calendar = "NOLEAP"
         t.cartesian_axis = "T"
-        t[:] = [(d - dates[0]).days for d in dates]
+        t[:] = [(d - dates[0]).total_seconds() / 86400.0 for d in dates]
 
         for name, geo in geometry.items():
             ny, nx = geo["shape"]

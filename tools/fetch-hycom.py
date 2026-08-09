@@ -199,15 +199,34 @@ def wanted_times(dataset, start, end):
     units = dataset["time"].units
     stamps = nc.num2date(dataset["time"][:], units,
                          only_use_cftime_datetimes=False)
+    # Keyed by day, but the value keeps the full stamp: the hour is what makes
+    # this a 12Z snapshot rather than a daily mean, and `obc_grid.write_obc`
+    # writes it into the time axis so MOM6 applies the boundary when it is
+    # actually valid. Keying by day is only so that a requested date can be
+    # looked up.
     by_day = {}
     for index, stamp in enumerate(stamps):
         if stamp.hour == HOUR:
-            by_day[dt.datetime(stamp.year, stamp.month, stamp.day)] = index
+            when = dt.datetime(stamp.year, stamp.month, stamp.day,
+                               stamp.hour, stamp.minute, stamp.second)
+            by_day[when.date()] = (when, index)
 
     days = [start + dt.timedelta(days=n)
             for n in range((end - start).days + 1)]
-    found = [(day, by_day[day]) for day in days if day in by_day]
-    missing = [day for day in days if day not in by_day]
+    found = [by_day[day.date()] for day in days if day.date() in by_day]
+    missing = [day for day in days if day.date() not in by_day]
+
+    # A dataset that publishes nothing at HOUR is not a dataset with gaps, it is
+    # a dataset on a different cadence, and every day would come back missing.
+    # Told apart here rather than at the call sites, because "documented gaps,
+    # pick a neighbouring day" is advice that can never work when the answer is
+    # that no day has this hour at all.
+    if missing and not by_day:
+        die(f"nothing in this dataset is stamped {HOUR:02d}Z. Its time axis "
+            f"carries {sorted({s.hour for s in stamps})} as hours, so it "
+            f"publishes on a different cadence than the 3-hourly snapshots "
+            f"this tool reads. That is a property of the experiment behind "
+            f"--dataset, not a gap in the record.")
     return found, missing
 
 
@@ -310,11 +329,17 @@ def ssh_offset(built, reference, geometry, dates):
                 f"datum.")
         when = nc.num2date(f["time"][:], f["time"].units, f["time"].calendar,
                            only_use_cftime_datetimes=False)
-        pairs = []
-        for ours, day in enumerate(dates):
-            theirs = int(np.argmin([abs((b - day).days) for b in when]))
-            if abs((when[theirs] - day).days) <= 1:
-                pairs.append((ours, theirs))
+        # Matched on the calendar day itself rather than by differencing. The
+        # reference is written with `calendar = NOLEAP`, so `num2date` hands back
+        # cftime objects, and subtracting one of those from a python datetime is
+        # a hard error rather than an approximation. Two files that disagree
+        # about leap days should also not be silently reconciled by nearest
+        # neighbour: the same date is the only sound pairing.
+        day_of = lambda d: (d.year, d.month, d.day)
+        theirs_by_day = {day_of(d): i for i, d in enumerate(when)}
+        pairs = [(ours, theirs_by_day[day_of(day)])
+                 for ours, day in enumerate(dates)
+                 if day_of(day) in theirs_by_day]
         if not pairs:
             die(f"{reference} covers {when[0]:%Y-%m-%d} to {when[-1]:%Y-%m-%d}, "
                 f"which does not overlap {dates[0]:%Y-%m-%d} to "
@@ -391,6 +416,10 @@ def main():
         raw["water_temp"] = to_potential(raw["water_temp"], raw["salinity"],
                                          depth, src_lat)
 
+        # As in `fetch-glorys.py`: the source's own stamp, which is the 12Z
+        # snapshot this tool reads by choice, unless the file is asserting a
+        # different day, in which case the day asserted.
+        stamp = found[0][0]
         comment = valid_at = None
         if asserted != when:
             valid_at = asserted
@@ -399,7 +428,7 @@ def main():
         obc_grid.write_ic(
             partial, src_lon, src_lat, depth,
             {HYCOM_IC[name]: values for name, values in raw.items()},
-            asserted,
+            asserted if args.valid_at else stamp,
             source=f"HYCOM GOFS 3.1 {experiment_of(args.dataset)}, "
                    f"{when:%Y-%m-%d} {HOUR:02d}Z, in-situ temperature "
                    f"converted to potential",
