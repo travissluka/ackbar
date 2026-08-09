@@ -2,7 +2,8 @@
 """Build the GEFS half of the forcing archive: one `atm.nc` per member.
 
     tools/forcing-gefs.py 2021-06-30 2021-09-01 --lead 12 --members 20 \\
-        --out $ACKBAR_STATIC_ROOT/forcing/gefs
+        --domain gom_25km \\
+        --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
 
 GEFS forces every *experiment*, control and ensemble alike, while ERA5 forces the
 truth. That is the fraternal twin: the experiments see a forecast of the weather
@@ -111,7 +112,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from ackbar.forcing import (  # noqa: E402
-    FIELDS, assert_no_leap_day, clip, specific_humidity, write_atm)
+    FIELDS, assert_no_leap_day, clip, domain_box, specific_humidity,
+    write_atm)
 
 
 class Era(NamedTuple):
@@ -423,7 +425,7 @@ def floor_at_zero(name, plane, scale, where):
     return np.maximum(plane, 0.0), worst
 
 
-def segment(era, init, member, lead, cache):
+def segment(era, init, member, lead, cache, box):
     """One initialization's contribution: `era.inits` spacing of forcing.
 
     Returns `{name: [(hours after init, plane)]}`, the grid, and the worst
@@ -455,7 +457,7 @@ def segment(era, init, member, lead, cache):
     # the Gulf of Mexico.
     x = y = None
     for key, plane in list(found.items()):
-        x, y, cube = clip(lons, lats, plane[None, :, :])
+        x, y, cube = clip(lons, lats, plane[None, :, :], box)
         found[key] = cube[0]
 
     series = {name: [] for name in FIELDS}
@@ -506,7 +508,7 @@ def segment(era, init, member, lead, cache):
     return series, x, y, worst
 
 
-def build(era, index, start, end, lead, cache, out):
+def build(era, index, start, end, lead, cache, out, box, domain):
     """One member's whole `atm.nc`."""
     member = member_name(era, index)
     origin = start
@@ -534,7 +536,8 @@ def build(era, index, start, end, lead, cache, out):
               - datetime.timedelta(hours=((lead + span) // 24 + 1) * 24))
     while cursor + datetime.timedelta(hours=lead) <= end:
         if cursor + datetime.timedelta(hours=lead + span) > start:
-            series, x, y, low = segment(era, cursor, member, lead, cache)
+            series, x, y, low = segment(era, cursor, member, lead, cache,
+                                        box)
             for name, value in low.items():
                 worst[name] = min(worst[name], value)
             if grid is None:
@@ -565,7 +568,8 @@ def build(era, index, start, end, lead, cache, out):
     x, y = grid
     target = out / f"mem{index:03d}.nc"
     write_atm(target, x, y, origin, packed,
-              source=f"GEFS {era.name} {member} at {lead} h lead, {era.bucket}")
+              source=f"GEFS {era.name} {member} at {lead} h lead, "
+                     f"{era.bucket}", domain=domain)
     return target, packed, worst
 
 
@@ -584,6 +588,10 @@ def main():
     ap.add_argument("--members", type=int, default=20,
                     help="how many members, counting the control as the first. "
                          "Bounded by what the era has")
+    ap.add_argument("--domain", required=True,
+                    help="clip to this domain's grid, plus a margin. Reads "
+                         "$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/"
+                         "ocean_hgrid.nc, so the domain must already have one")
     ap.add_argument("--era", help="which GEFS product, when the dates alone do "
                                   "not decide it")
     ap.add_argument("--cache", type=Path,
@@ -616,15 +624,19 @@ def main():
             + " Above what an era holds, members come from the "
               "lagged-difference scheme rather than from more forecasts.")
 
+    box = domain_box(args.domain)
     args.out.mkdir(parents=True, exist_ok=True)
     cache = args.cache or (args.out / ".cache")
     cache.mkdir(parents=True, exist_ok=True)
 
     print(f"forcing-gefs: {era.name}, {era.members} members, "
           f"{len(era.inits)} init/day, {era.step} h output, {era.grid}")
+    print(f"forcing-gefs: {args.domain} box {box['west']:.3f} to "
+          f"{box['east']:.3f} east, {box['south']:.3f} to "
+          f"{box['north']:.3f} north")
     for index in range(args.members):
         target, packed, worst = build(era, index, start, end, args.lead, cache,
-                                      args.out)
+                                      args.out, box, args.domain)
         hours, cube = packed["DSWRF"]
         residue = " ".join(f"{name} {low:.3g}" for name, low in worst.items()
                            if low < 0.0)

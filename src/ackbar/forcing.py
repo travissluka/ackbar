@@ -1,8 +1,9 @@
 """Atmospheric forcing: the one file shape every source is normalized into.
 
 ACKBAR's forcing archive holds one `atm.nc` per member per source, clipped to a
-box around the domain family and carrying the seven fields MOM6-SIS2's data
-table reads. Sources differ in almost everything upstream of this file and in
+padded box around the domain's own grid and carrying the seven fields
+MOM6-SIS2's data table reads. Sources differ in almost everything upstream of
+this file and in
 nothing downstream of it, which is the point: **the data table does not vary by
 source.** One `data_table` names `INPUT/atm.nc` and the seven variables below,
 and swapping ERA5 for GEFS is swapping which file the symlink points at.
@@ -56,21 +57,22 @@ interpolated and neither is wrong.
 """
 
 import datetime
+import os
+from pathlib import Path
 
 import netCDF4
 import numpy as np
 
-#: The clip box, in the source's own coordinates: degrees east on [0, 360) and
-#: degrees north. All four Gulf resolutions occupy the same footprint, 98.1W to
-#: 76.4W and 18N to 32N, so one box serves the family and a finer domain needs no
-#: refetch.
+#: Degrees of forcing pulled beyond the domain edge.
 #:
 #: The margin is not decoration. FMS interpolates the forcing onto the model grid
 #: with `bilinear` and `bicubic`, and a bicubic stencil reaches two source cells
 #: past the point it is filling, so a box ending at the domain edge leaves the
-#: outermost row of the model reading from nothing. Roughly four degrees all
-#: round, which at ERA5's quarter degree is sixteen cells.
-BOX = {"west": 258.0, "east": 288.0, "south": 14.0, "north": 36.0}
+#: outermost row of the model reading from nothing. Four degrees is sixteen ERA5
+#: cells and four cells of the coarsest GEFS era, which is the one that sets the
+#: floor. `fetch-glorys.py` makes the same argument for the same reason and calls
+#: it `MARGIN` too.
+MARGIN = 4.0
 
 #: Output name -> (units, long name). The order is the order they are written.
 FIELDS = {
@@ -120,8 +122,64 @@ def specific_humidity(dewpoint, pressure):
     return ratio * vapour / (pressure - (1.0 - ratio) * vapour)
 
 
-def box_slices(lons, lats):
-    """Where `BOX` sits in a source grid, as slices, plus the axes it selects.
+def domain_box(domain, margin=MARGIN):
+    """The clip box for *domain*, read from its supergrid.
+
+    Not a constant, because a constant is a second statement of where a domain is
+    and the two drift. `ocean_hgrid.nc` is where a domain says what it covers,
+    every offline stage that needs an extent already reads it (`fetch-glorys.py`
+    builds its GLORYS request the same way), and a domain whose grid moves gets a
+    forcing box that moves with it.
+
+    The corollary is that **the box belongs to a domain, not to a family**, so the
+    archive is keyed by domain: the four Gulf resolutions do not have quite the
+    same footprint (`gom_25km` starts at 17.995N, `gom_12km` at 18.058N) and
+    pretending one fetch serves all four means one of them silently reads a box
+    that stops inside it.
+
+    Returns the box in the source's own coordinates: degrees east on [0, 360) and
+    degrees north.
+    """
+    root = os.environ.get("ACKBAR_STATIC_ROOT")
+    if not root:
+        raise SystemExit("forcing: run `source site/activate.sh` first")
+    path = Path(root, "domain", domain, "INPUT", "ocean_hgrid.nc")
+    if not path.exists():
+        raise SystemExit(
+            f"forcing: {path} does not exist, so {domain}'s extent is unknown. "
+            f"The domain's grid is built by its own offline stage and has to "
+            f"exist before forcing can be clipped to it.")
+    with netCDF4.Dataset(path) as f:
+        return box_around(np.asarray(f["x"][:]), np.asarray(f["y"][:]), margin)
+
+
+def box_around(lon, lat, margin=MARGIN):
+    """A padded box around supergrid coordinates *lon*, *lat*, in [0, 360).
+
+    Takes the extent rather than the corners, so a curvilinear or rotated grid
+    gets the box that contains it rather than a box through four of its points.
+    """
+    west, east = float(lon.min()) - margin, float(lon.max()) + margin
+    south, north = float(lat.min()) - margin, float(lat.max()) + margin
+    if east - west >= 360.0:
+        west, east = 0.0, 360.0
+    else:
+        west, east = west % 360.0, east % 360.0
+        if west >= east:
+            # A box straddling where the source's longitude axis wraps is two
+            # slices, not one, and every caller here reads one. Refused rather
+            # than half-handled: a global domain takes the branch above, and no
+            # regional domain in this repository crosses it.
+            raise SystemExit(
+                f"forcing: the box {west:.3f} to {east:.3f} east crosses the "
+                f"source's longitude seam, which the single-slice clip cannot "
+                f"express. A domain that needs this needs two reads joined.")
+    south, north = max(south, -90.0), min(north, 90.0)
+    return {"west": west, "east": east, "south": south, "north": north}
+
+
+def box_slices(lons, lats, box):
+    """Where *box* sits in a source grid, as slices, plus the axes it selects.
 
     Returns `(slice_y, slice_x, y, x, flip_y)`. Slices rather than index arrays
     so that a caller can read the box straight out of a netCDF variable instead
@@ -133,11 +191,11 @@ def box_slices(lons, lats):
     field about the equator, which in this box is a plausible looking wind
     blowing the wrong way rather than an error.
     """
-    keep_x = np.where((lons >= BOX["west"]) & (lons <= BOX["east"]))[0]
-    keep_y = np.where((lats >= BOX["south"]) & (lats <= BOX["north"]))[0]
+    keep_x = np.where((lons >= box["west"]) & (lons <= box["east"]))[0]
+    keep_y = np.where((lats >= box["south"]) & (lats <= box["north"]))[0]
     if keep_x.size == 0 or keep_y.size == 0:
         raise SystemExit(
-            f"forcing: the source grid does not reach {BOX}; it spans "
+            f"forcing: the source grid does not reach {box}; it spans "
             f"{lons.min():.2f} to {lons.max():.2f} east and "
             f"{lats.min():.2f} to {lats.max():.2f} north")
     # Contiguous by construction here: the box does not cross the prime meridian
@@ -155,20 +213,20 @@ def box_slices(lons, lats):
     return sy, sx, y, x, flip_y
 
 
-def clip(lons, lats, cube):
-    """Cut *cube* to `BOX`, returning `(x, y, cube)` with coordinates ascending.
+def clip(lons, lats, cube, box):
+    """Cut *cube* to *box*, returning `(x, y, cube)` with coordinates ascending.
 
     For a source already wholly in memory, which is what reading GRIB gives.
     Anything reading netCDF should use `box_slices` and never hold the globe.
     """
-    sy, sx, y, x, flip_y = box_slices(lons, lats)
+    sy, sx, y, x, flip_y = box_slices(lons, lats, box)
     out = cube[:, sy, sx]
     if flip_y:
         out = out[:, ::-1, :]
     return x, y, out
 
 
-def write_atm(path, x, y, origin, series, source):
+def write_atm(path, x, y, origin, series, source, domain):
     """Write one member's `atm.nc`.
 
     *series* maps a name in `FIELDS` to `(hours, cube)`, where *hours* are hours
@@ -177,8 +235,11 @@ def write_atm(path, x, y, origin, series, source):
     file does not carry fails inside `time_interp_external` with a message about
     the file rather than about the variable, and half an hour is lost to it.
 
-    *source* is recorded as a global attribute, because the archive path says
-    which source a file came from and a file that has been moved does not.
+    *source* and *domain* are recorded as global attributes, because the archive
+    path says which source and domain a file came from and a file that has been
+    moved does not. The box is recorded from the axes actually written rather
+    than from the request, so the attribute says what is in the file and not what
+    was asked for; the two differ by up to one source cell on every edge.
     """
     missing = [name for name in FIELDS if name not in series]
     if missing:
@@ -234,5 +295,6 @@ def write_atm(path, x, y, origin, series, source):
             f[:] = cube
 
         out.source = source
-        out.box = (f"{BOX['west']} to {BOX['east']} east, "
-                   f"{BOX['south']} to {BOX['north']} north")
+        out.domain = domain
+        out.box = (f"{x[0]:.3f} to {x[-1]:.3f} east, "
+                   f"{y[0]:.3f} to {y[-1]:.3f} north")

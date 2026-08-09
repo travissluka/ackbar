@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build the ERA5 half of the forcing archive: one `atm.nc` over the gom box.
+"""Build the ERA5 half of the forcing archive: one `atm.nc` over a domain's box.
 
-    tools/forcing-era5.py 2021-06-25 2021-09-05 \\
-        --out $ACKBAR_STATIC_ROOT/forcing/era5
+    tools/forcing-era5.py 2021-06-25 2021-09-05 --domain gom_25km \\
+        --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/era5
 
 ERA5 forces the *truth* run of the OSSE and nothing else. The experiments read a
 different source, which is the whole point of a fraternal twin: an OSSE whose
@@ -62,7 +62,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from ackbar.forcing import (  # noqa: E402
-    FIELDS, assert_no_leap_day, box_slices, specific_humidity, write_atm)
+    FIELDS, assert_no_leap_day, box_slices, domain_box, specific_humidity,
+    write_atm)
 
 BUCKET = "s3://nsf-ncar-era5"
 
@@ -156,7 +157,7 @@ def payload(dataset):
     return named[0]
 
 
-def read(url, name, cache, origin):
+def read(url, name, cache, origin, box):
     """Download one file, read the box out of it, delete it.
 
     Returns `(hours since origin, cube)` with *cube* (time, lat, lon) on an
@@ -171,7 +172,7 @@ def read(url, name, cache, origin):
         with netCDF4.Dataset(local) as source:
             lons = source["longitude"][:].astype("f8")
             lats = source["latitude"][:].astype("f8")
-            sy, sx, y, x, flip_y = box_slices(lons, lats)
+            sy, sx, y, x, flip_y = box_slices(lons, lats, box)
             field = payload(source)
 
             if "forecast_initial_time" in field.dimensions:
@@ -210,11 +211,11 @@ def read(url, name, cache, origin):
         local.unlink(missing_ok=True)
 
 
-def gather(family, code, start, end, cache, origin):
+def gather(family, code, start, end, cache, origin, box):
     """One variable over the whole span, ordered, trimmed, duplicates dropped."""
     hours, cubes, grid = [], [], None
     for url, name in sorted(wanted(family, code, start, end), key=lambda f: f[1]):
-        h, cube, x, y = read(url, name, cache, origin)
+        h, cube, x, y = read(url, name, cache, origin, box)
         if grid is None:
             grid = (x, y)
         elif not (np.array_equal(grid[0], x) and np.array_equal(grid[1], y)):
@@ -246,6 +247,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("start", help="first day to cover, YYYY-MM-DD")
     ap.add_argument("end", help="last day to cover, YYYY-MM-DD, inclusive")
+    ap.add_argument("--domain", required=True,
+                    help="clip to this domain's grid, plus a margin. Reads "
+                         "$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/"
+                         "ocean_hgrid.nc, so the domain must already have one")
     ap.add_argument("--out", type=Path, required=True,
                     help="archive directory for this source")
     ap.add_argument("--member", default="mem000",
@@ -264,6 +269,10 @@ def main():
     if end <= start:
         raise SystemExit("forcing-era5: end is not after start")
     assert_no_leap_day(start, end)
+    box = domain_box(args.domain)
+    print(f"forcing-era5: {args.domain} box {box['west']:.3f} to "
+          f"{box['east']:.3f} east, {box['south']:.3f} to "
+          f"{box['north']:.3f} north", flush=True)
 
     args.out.mkdir(parents=True, exist_ok=True)
     cache = args.cache or (args.out / ".cache")
@@ -275,7 +284,7 @@ def main():
     for name, code in INSTANT.items():
         print(f"forcing-era5: {name} from {code}", flush=True)
         hours, cube, grid = gather("e5.oper.an.sfc", code, start, end, cache,
-                                   origin)
+                                   origin, box)
         raw[name] = (hours, cube)
 
     if not np.array_equal(raw["_2d"][0], raw["_sp"][0]):
@@ -288,7 +297,7 @@ def main():
     for name, code in MEANFLUX.items():
         print(f"forcing-era5: {name} from {code}", flush=True)
         hours, cube, grid = gather("e5.oper.fc.sfc.meanflux", code, start, end,
-                                   cache, origin)
+                                   cache, origin, box)
         series[name] = (hours, cube)
 
     x, y = grid
@@ -296,7 +305,8 @@ def main():
     # layout the boundary archive uses. What the file is called inside the run
     # directory is the stager's business, not the archive's.
     target = args.out / f"{args.member}.nc"
-    write_atm(target, x, y, origin, series, source="ERA5, NCAR mirror ds633.0")
+    write_atm(target, x, y, origin, series,
+              source="ERA5, NCAR mirror ds633.0", domain=args.domain)
     if not any(cache.iterdir()):
         cache.rmdir()
 

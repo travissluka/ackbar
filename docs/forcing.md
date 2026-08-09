@@ -14,20 +14,50 @@ surface temperature analysis error of about 0.15.
 ## The archive
 
 ```
-$ACKBAR_STATIC_ROOT/forcing/<source>/mem000.nc
-                                    mem001.nc
-                                    ...
+$ACKBAR_STATIC_ROOT/forcing/<domain>/<source>/mem000.nc
+                                              mem001.nc
+                                              ...
 ```
 
-One file per member per source, clipped to a box around the domain family, all
-sources normalized into one shape. What a file is called inside a run directory
-is the stager's business, not the archive's; the boundary archive uses the same
-layout so that one per-member overlay mechanism serves both.
+One file per member per source per domain, all sources normalized into one shape.
+What a file is called inside a run directory is the stager's business, not the
+archive's; the boundary archive uses the same layout so that one per-member
+overlay mechanism serves both.
 
 **A deterministic source materializes all N members as symlinks to the one
 file**, rather than the stager falling back when a member is missing. Fallback
 logic is how "which forcing did member 7 read" stops being answerable; with
 symlinks it is one `readlink`.
+
+## The box comes from the domain's grid
+
+`domain_box` reads `$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/ocean_hgrid.nc`,
+takes the extent of the supergrid rather than its corners, and pads it by
+`MARGIN`, four degrees. `fetch-glorys.py` builds its GLORYS request the same way
+for the same reason, so the two offline stages agree on where a domain is by
+construction rather than by two constants staying in step.
+
+**Four degrees is not decoration.** FMS interpolates forcing onto the model grid
+with `bilinear` and `bicubic`, and a bicubic stencil reaches two source cells
+past the point it fills, so a box ending at the domain edge leaves the outermost
+row of the model reading from nothing. Four degrees is sixteen ERA5 cells and
+four cells of the coarsest GEFS era, which is the one that sets the floor.
+
+Two consequences, both deliberate:
+
+- **The archive is keyed by domain**, because the four Gulf resolutions do not
+  quite share a footprint (`gom_25km` starts at 17.995N, `gom_12km` at 18.058N).
+  One fetch serving the family would mean one of them reading a box that stops
+  inside it, and the failure would be at the grid edge where it is least visible.
+- **A global domain takes the whole globe**, and a regional domain straddling the
+  source's longitude seam is refused by name rather than half-handled: that box
+  is two slices and every reader here takes one. Nothing in the repository needs
+  it, so it is a message and not a code path.
+
+The box written into each file's `box` attribute is the axes actually written,
+not the request, so it says what is in the file. `domain` is an attribute too:
+the path says which domain a file was cut for, and a file that has been moved
+does not.
 
 ## The file
 
