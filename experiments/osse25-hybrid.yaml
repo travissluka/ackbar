@@ -1,71 +1,117 @@
-# The quarter degree OSSE's hybrid 3D EnVar.
+# The quarter degree OSSE's hybrid FGAT EnVar, with a 4D-LETKF ensemble.
 #
-# See docs/osse.md. `osse25-3dvar` with one layer added, for the same reason
-# that experiment is `osse25-noda` with one layer changed: everything else is
+# See docs/osse.md. `osse25-3dfgat` with one layer added, for the same reason
+# that experiment is `osse25-3dvar` with one key changed: everything else is
 # identical, so the difference in O-B is attributable.
 #
 # Half the background error from the static B and half from a twenty member
-# ensemble the LETKF beside it maintains. What it should show over 3DVar is a
+# ensemble the filter beside it maintains. What it should show over 3D-FGAT is a
 # background error that knows where the Loop Current is *today*: the static B
 # spreads an observation isotropically over a fixed length scale, and the
 # ensemble spreads it along the flow. The Gulf is the case that makes the
 # difference visible, because almost all of its error is in the position of one
 # strongly steered current and its rings.
 #
-# **Twenty members drawn from the static B is a weak ensemble at cycle one.**
-# `tools/ensemble-ic.sh` says why: the perturbations carry B's correlation
-# scales and none of the ocean's flow structure, so the first cycles are spin
-# up and the ensemble only becomes flow dependent by being cycled. The initial
-# spread is about 2 cm of sea surface height against a mesoscale error several
-# times that, so the ensemble starts underdispersive, which is the direction
-# that makes a hybrid behave like its static half rather than the direction
-# that makes it diverge.
+# **`window.type: fgat` means two different things to the two solvers here, and
+# both are what is wanted.** The variational analysis solves 3D-FGAT: each
+# observation is compared against the background nearest its own time and one
+# increment is solved at the window's centre. The ensemble filter beside it gets
+# the same trajectory, and for an ensemble filter that is 4D-LETKF, because its
+# departures and its observation-space perturbations come from the one hofx over
+# the member trajectories while the weights are applied at the analysis time.
+# So this experiment is FGAT over a static B plus a 4D-LETKF ensemble, and the
+# covariance the variational solve reads is the ensemble at the analysis time,
+# which is what FGAT means. `graph.build._check_ensemble_window` refuses `fgat`
+# only when the *experiment's* solver is the filter, which is the case where
+# there is no variational half to give the word its meaning.
+#
+# **The ensemble is real ocean states, not perturbations.** The same time-lagged
+# GLORYS ensemble `osse25-letkf` uses, and that file carries how it was built
+# and why it beats drawing from the static B. The members are then recentred on
+# the variational analysis every cycle, so the ensemble follows the run being
+# reported.
+#
+# **Expect the ensemble half to be weaker than it should be.** The LETKF runs
+# have it measured: this ensemble loses about a quarter of its temperature
+# spread every seven cycles and ends far overconfident, because nothing on this
+# domain grows the prior's spread between cycles. A hybrid is the configuration
+# where that is least damaging, since the static half carries the covariance the
+# ensemble stops describing, and that is the reason to run this one before the
+# pure EnVar rather than after.
 #
 # The 0.5/0.5 weights are the textbook hybrid and are not tuned, which is the
-# first thing to sweep if this does not beat 3DVar. With a twenty member
+# first thing to sweep if this does not beat 3D-FGAT. With a twenty member
 # ensemble the usual finding is that less ensemble is better than the textbook
 # says, so the sweep to run is downward.
+#
+# Localization is 1.5 Rossby radii, floored at two grid cells: `loc_hz` in
+# `config/static/diffusion.yaml`, built into `loc_hz.nc` by
+# `tools/soca-diffusion.sh`. Changing the multiplier means rebuilding that file.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
   - da/variational
   - da/hybrid
+  - da/corr_vt_cycled
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2
   - obs/adt_hy2a
   - obs/sst_metopb
   - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
 
 experiment:
   name: osse25-hybrid
-  description: OSSE, gom_25km hybrid 3D EnVar against the gom_12km truth
+  description: OSSE, gom_25km hybrid FGAT EnVar with a 4D-LETKF ensemble
 
 cycle:
-  # Ten days into the truth period, so that the truth archive covers the whole
-  # window of every cycle including the first, whose window opens half a cycle
-  # before its analysis time.
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  # Five days short of where the truth ends (2015-08-31), for the mirror of the
-  # reason the start is late: the last cycle's window closes after its analysis
-  # time.
-  count: 45
+  count: 30
+
+solver:
+  window:
+    type: 'fgat'
+
+forecast:
+  # Six hourly, the same cadence and for the same reason as `osse25-3dfgat` and
+  # `osse25-4dletkf`: the truth the observations were drawn from is six hourly
+  # and the archive samples the nearest state rather than interpolating, so no
+  # trajectory resolved finer than that can remove the representativeness error
+  # already in the observations.
+  #
+  # Four states inside the 24 hour window, plus the background at its start, and
+  # here they are needed for **every member** rather than the control alone,
+  # because the ensemble filter evaluates each member's own trajectory. That is
+  # the disk cost of this experiment over the deterministic ones.
+  slots: PT6H
+
+  # Identical to the other four experiments'. The comparison at each lead is a
+  # paired difference, so the launches and the valid times have to match.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
 
 vars:
-  # Sampled from the promoted 12km truth run at each observation's own time by
-  # `tools/obs-archive-osse.py --truth-run`, which is why the slug names the
-  # nature run's grid and not this experiment's. Every experiment in the
-  # comparison reads this one directory: the observations are of the ocean, not
-  # of a model, and two archives sampled from different nature runs must never
-  # be mixed, because nothing downstream reads the provenance and the mixture
-  # would score as ordinary observation error.
-  obs_dir: $(static_root)/obs/gom12-osse-2015/2015
+  # The full thirteen platform archive, the same directory every other
+  # experiment in the comparison reads. Two archives sampled from different
+  # nature runs must never be mixed, because nothing downstream reads the
+  # provenance and the mixture would score as ordinary observation error.
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
 
 ensemble:
   size: 20
   control: true
-  # An LETKF beside the variational analysis, which is what makes the ensemble
+  # A filter beside the variational analysis, which is what makes the ensemble
   # component flow dependent and observation informed rather than a decaying
   # sample of the perturbations it started with. The members are then recentred
   # on the variational analysis, so the ensemble follows the run being reported.
@@ -74,16 +120,7 @@ ensemble:
   initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
 
 cleanup:
-  # Ordinary reaping. The trajectory is recorded online as `bkg/` records by
-  # `post.state`, so nothing has to be held for a promotion step at the end;
-  # see `tools/local/promote-truth.sh` and the note it carries.
   keep_cycles: 1
 
 model:
-  # The settling run's output, promoted to the initial condition stage rather
-  # than named where it landed. `osse25-spinup/run/.../rst/mem000` is the same
-  # bytes and would work, and it lives under a directory `cleanup` is entitled
-  # to reap: an experiment that reads another experiment's run directory is one
-  # retention setting away from being unreproducible. The README beside this
-  # says what it is and how to rebuild it.
   initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

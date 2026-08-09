@@ -68,9 +68,18 @@ RESTART=
 # generated documents are copied next to the output: they are the only record of
 # what a given `corr_hz.nc` was normalized with.
 ITERATIONS=
+# `--only <group>` rebuilds one entry of `horizontal:` and leaves every other
+# file in $OUT alone. It exists because the normalization is a Monte Carlo
+# estimate: rebuilding a group that nobody asked to change gives it a *different*
+# normalization, within the estimator's error but not equal, and every experiment
+# already run against the old file is then reading a slightly different
+# background error from every experiment run after. Changing one multiplier in
+# config/static/diffusion.yaml should cost one file.
+ONLY=
 while [[ $# -gt 0 ]]; do
     case $1 in
         --iterations) ITERATIONS=${2:?--iterations needs a count}; shift 2 ;;
+        --only) ONLY=${2:?--only needs a group name}; shift 2 ;;
         -*) echo "soca-diffusion: unknown option $1" >&2; exit 1 ;;
         *) RESTART=$1; shift ;;
     esac
@@ -159,13 +168,27 @@ python3 "$SCALES" "$GRIDSPEC" "$RESTART" "$CONFIG" .
 # horizontal randomization over every level instead of over one. v2 split them
 # for the same reason.
 python3 - "$CONFIG" "$METADATA" "$RESTART" "$ITERATIONS" \
-         calibrate_hz.yaml calibrate_vt.yaml <<'PY'
+         calibrate_hz.yaml calibrate_vt.yaml "$ONLY" <<'PY'
 import os, sys, yaml
 
-config_path, metadata, restart, iterations, hz_out, vt_out = sys.argv[1:7]
+config_path, metadata, restart, iterations, hz_out, vt_out, only = sys.argv[1:8]
 config = yaml.safe_load(open(config_path))
 if iterations:
     config["normalization iterations"] = int(iterations)
+
+# Narrow to one group, and drop the vertical with it unless that is the group
+# asked for. See `--only` above for why rebuilding the rest is not free.
+if only:
+    horizontal = config.get("horizontal") or {}
+    if only == "corr_vt":
+        config["horizontal"] = {}
+    elif only in horizontal:
+        config["horizontal"] = {only: horizontal[only]}
+        config.pop("vertical", None)
+    else:
+        sys.exit(f"soca-diffusion: --only {only} is not a group in "
+                 f"{config_path}; it has {', '.join(horizontal)} and "
+                 f"{'corr_vt' if config.get('vertical') else 'no vertical'}")
 
 # A label, not a lookup. SOCA takes the validity time of a state read with an
 # explicit filename from the configuration and never compares it against the
@@ -255,10 +278,16 @@ PY
 # case that bites: its experiment tests go through Slurm while this goes
 # straight to mpiexec, and the two together can oversubscribe the node.
 NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
-echo "soca-diffusion: calibrating the horizontal on $NTASKS ranks"
-mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_hz.yaml
-echo "soca-diffusion: calibrating the vertical on $NTASKS ranks"
-mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_vt.yaml
+# Under `--only` one of the two documents has no groups in it, and the toolbox
+# is not asked to run an empty calibration.
+if [[ -z "$ONLY" || "$ONLY" != corr_vt ]]; then
+    echo "soca-diffusion: calibrating the horizontal on $NTASKS ranks"
+    mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_hz.yaml
+fi
+if [[ -z "$ONLY" || "$ONLY" == corr_vt ]]; then
+    echo "soca-diffusion: calibrating the vertical on $NTASKS ranks"
+    mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_vt.yaml
+fi
 
 # What the toolbox writes is what the da layers read, so check for the files
 # rather than for an exit status. `filepath` in saber is a stem: the file is the
@@ -268,11 +297,12 @@ mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_vt.yaml
 # adding a group is one edit rather than three. `loc_hz` arrived that way.
 mapfile -t NAMES < <(python3 -c '
 import sys, yaml
-config = yaml.safe_load(open(sys.argv[1]))
-print("\n".join(config.get("horizontal") or {}))
+config, only = yaml.safe_load(open(sys.argv[1])), sys.argv[2]
+names = list(config.get("horizontal") or {})
 if config.get("vertical"):
-    print("corr_vt")
-' "$CONFIG")
+    names.append("corr_vt")
+print("\n".join([only] if only else names))
+' "$CONFIG" "$ONLY")
 
 for name in "${NAMES[@]}"; do
     [[ -s out/$name.nc ]] || {
@@ -283,11 +313,16 @@ done
 
 mkdir -p "$OUT"
 for name in "${NAMES[@]}"; do mv "out/$name.nc" "$OUT/"; done
-cp calibrate_hz.yaml calibrate_vt.yaml "$OUT/"
+# Only the document that was actually run. Copying both under `--only` would
+# replace the surviving file's provenance with an empty calibration, which is
+# worse than having none: it would describe the operator as built from nothing.
+if [[ -z "$ONLY" || "$ONLY" != corr_vt ]]; then cp calibrate_hz.yaml "$OUT/"; fi
+if [[ -z "$ONLY" || "$ONLY" == corr_vt ]]; then cp calibrate_vt.yaml "$OUT/"; fi
 # The vertical scale *field*, beside the operator built from it. The other
 # `scales_*.nc` are intermediates and are dropped with the working directory;
 # this one is a product, because an experiment that recalibrates every cycle
 # seeds its first rolling average from it. See config/layers/da/corr_vt_cycled.yaml.
 [[ -s scales_corr_vt.nc ]] && cp scales_corr_vt.nc "$OUT/"
+true
 echo "soca-diffusion: wrote ${NAMES[*]/#/$OUT/} (with .nc)"
 echo "soca-diffusion: verify it with  tools/soca-dirac.sh $DOMAIN"
