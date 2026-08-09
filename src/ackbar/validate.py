@@ -439,13 +439,6 @@ def _graph_step(config, graph):
                 "aftercorr between arrays with different index sets never fires"
             )))
 
-    # Every window type builds now, so the phase gate that used to sit here is
-    # gone rather than narrowed. What replaced it is a check that cannot be
-    # deleted by implementing something: `graph.build._check_four_d_covariance`
-    # refuses `4d` over a static B, because 4D-Ens-Var's four dimensions are the
-    # ensemble's and carrying a static B across the window needs a linear model
-    # SOCA does not have for the ocean. That one runs at graph build, which is
-    # earlier than here and earlier than the forecast that would pay for it.
     return findings
 
 

@@ -76,12 +76,10 @@
 #     tools/ensemble-collect.sh                 renumber the survivors, then
 #     tools/ensemble-recenter.py                move the mean onto the control
 #
-# **The recentring is last on purpose.** It used to run at the end of this
-# script, before the settle, and that leaves the ensemble mean one free day
-# ahead of the control rather than on it: measured on this domain, 0.40 degC in
-# temperature and 0.07 m/s in velocity, the latter further off centre than the
-# members are from each other. An ensemble filter cannot tell that offset from
-# information and writes it into the control on the first cycle.
+# **The recentring is last on purpose.** Recentring before the settle leaves the
+# ensemble mean one free day ahead of the control rather than on it, and an
+# ensemble filter cannot tell that offset from information: it writes it into
+# the control on the first cycle.
 #
 # The settle cannot move either, because its whole job is to shed the shock this
 # script's 24 hour leg leaves behind, and a member has to be a state the model

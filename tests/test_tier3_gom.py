@@ -132,9 +132,7 @@ def test_the_regional_model_cycles_and_leaves_restart_sets(run):
         [True, True, True]
 
 
-# The restart handoff was checked here as well while this experiment and
-# `test_tier3.py`'s were different domains. They are one experiment now, so the
-# claim is asked once, there.
+# The restart handoff is asserted in `test_tier3.py`, over the same experiment.
 
 
 # --- the overrides reach the model -------------------------------------------

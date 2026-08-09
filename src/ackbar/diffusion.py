@@ -13,21 +13,15 @@ the normalization in a `corr_vt.nc` is computed for the scale field it was built
 from, and a scale field computed two different ways is a B that is wrong by a
 factor nothing reports.
 
-Ported from soca-science v2's `tools/calc_scales.py`, which is where the
-science in here comes from. Three things changed in the port and none of them
-are choices about the physics:
-
-  * it does every group in one pass over one grid, instead of being run once per
-    group from a config file that repeats the grid paths three times,
-  * the horizontal and the vertical scales go to separate files, because they
-    are read by separate SOCA states and mixing them meant every reader carried
-    a variable it ignored,
-  * `np.NaN` became `np.nan`, which numpy 2 requires.
+Ported from soca-science v2's `tools/calc_scales.py`, which is where the science
+in here comes from. The horizontal and the vertical scales go to separate files,
+because they are read by separate SOCA states and mixing them meant every reader
+carried a variable it ignored.
 
 Why this and not `soca_setcorscales.x`, which exists and computes a Rossby
 based scale from the same gridspec: that application applies no smoothing and
 its vertical scale is a single constant times the land mask, with no mixed
-layer in it at all. v2 stopped using it for those two reasons. The smoothing in
+layer in it at all. The smoothing in
 particular is not cosmetic. A diffusion coefficient with a sharper gradient
 than the field it correlates produces a kernel that is not the kernel anybody
 asked for, most visibly along the shelf break where the Rossby radius
@@ -50,10 +44,7 @@ VT_VARIABLE = "Temp"
 #: floor down to a minimum thickness, which comes out around a centimetre. At
 #: 0.01 those survived the test, so a 10 m shelf column of five real 2 m layers
 #: counted as sixteen levels deep, and `vertical_scales` clips a fully mixed
-#: column to its own level count: the scale saturated at 16 instead of 5. It
-#: showed up as isolated bright cells on the Campeche Bank and the Bahamas
-#: shelf, correlating three times as far as their neighbours in water a
-#: hundredth as deep.
+#: column to its own level count: the scale saturated at 16 instead of 5.
 #:
 #: 0.1 m is an order of magnitude above the squeeze and an order below the
 #: thinnest layer any of these grids nominally carries, so there is nothing

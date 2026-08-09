@@ -555,8 +555,7 @@ class TestEverythingIsWholeHours:
 
         A two hour window on a domain coupling every two hours overshoots by an
         hour, so the run is seven hours and the model refuses it outright. That
-        is a FATAL at job start on every cycle of the experiment, and nothing
-        before this said so.
+        is a FATAL at job start on every cycle of the experiment.
         """
         config = load("hybrid_om1deg", keys)
         assert config["model"]["coupling_seconds"] == 7200

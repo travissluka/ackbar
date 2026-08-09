@@ -5,11 +5,9 @@ wholesale or merge element by element against a declared key, depending on
 whether the schema annotates that list path with ``x-ackbar-merge-key``.
 
 The keyed case exists for ``observations``: a layer must be able to reach one
-observer without restating the other twenty-four. (The example this used to give
-was a ``da/letkf`` layer setting one observer's localization. That is now the
-anti-pattern and ``da/letkf.yaml`` says why: naming platforms there left every
-platform not named with no localization at all, and invented a phantom observer
-for every one named that the experiment did not carry.) Lists with no natural
+observer without restating the other twenty-four. (Setting an observer's
+localization from a solver layer is the anti-pattern, not the example:
+``da/letkf.yaml`` says why.) Lists with no natural
 key (``variables``, saber blocks, filter chains) replace wholesale, because
 merging them elementwise by position is never what anyone meant.
 """
@@ -187,10 +185,7 @@ def _merge_keyed(base, over, key, merge_keys, path):
 def _removing(element, key, path):
     """Whether this element is a removal, refusing a marker that is not a bool.
 
-    `$remove: 'true'` and `$remove: 1` used to be silent no-ops: the element
-    merged normally and `_strip_remove` then deleted the marker, so the output
-    carried no trace of a line that was meant to delete something. `false` is
-    allowed and means what it says.
+    `false` is allowed and means what it says.
     """
     if not isinstance(element, dict) or REMOVE not in element:
         return False

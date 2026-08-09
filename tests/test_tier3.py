@@ -236,7 +236,7 @@ def test_every_cycle_leaves_a_harvest(both_runs):
 # --- resuming ----------------------------------------------------------------
 
 def test_a_killed_cycle_reproduces_rather_than_merely_finishing(both_runs):
-    """The claim phase 4 is finished on.
+    """A resumed cycle has to reproduce, not merely finish.
 
     A workflow that resumed from the analysis instead of the background, or from
     a half-written restart, or from the initial condition again, would finish

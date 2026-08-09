@@ -434,17 +434,13 @@ COAST = 1
 def _refuse_fixed_truth(platforms):
     """Every way a platform can be incompatible with `--state`, in one message.
 
-    There are two ways and only one of them used to be caught. A profile or a
-    glider reads down a column and a drifter is advected by the truth's own
-    velocities, so none of the three can be answered from one state: that is the
-    layout half, and it produced a clean sentence for profiles and an
-    `AttributeError: 'FixedTruth' object has no attribute 'state'` for drifters.
-    The other half is the *field*: `perturb` builds an anomaly for sea surface
-    temperature and height and nothing else, so any salinity platform raised
-    `KeyError: 'sss'` from inside the sampler, several hundred lines and one
-    written `truth.nc` later. Both now say the same sentence and name the same
-    fix, and both are decided from the platform table rather than from a
-    hardcoded list, so adding a platform cannot skip the check.
+    Two axes. The *layout*: a profile or a glider reads down a column and a
+    drifter is advected by the truth's own velocities, none of which exists in
+    one state. The *field*: `perturb` builds an anomaly for sea surface
+    temperature and height and nothing else. Both say the same sentence and name
+    the same fix, both are decided from the platform table rather than from a
+    hardcoded list so adding a platform cannot skip the check, and both refuse
+    before `truth.nc` is written.
     """
     refused = {
         name: (f"observes {PLATFORMS[name]['field']}, and a single state "
@@ -578,15 +574,9 @@ def main(argv=None):
             # that sequence shifts every draw after it, so the guarantee here is
             # narrow and worth stating exactly: **the same command at the same
             # commit reproduces the same files.** It is not that an archive
-            # survives a change to this tool.
-            #
-            # It has not survived one. Times used to be drawn here, after the
-            # errors; they moved inside `observe` when the platforms grew
-            # trajectories, which put them before. So an archive rebuilt today
-            # differs from one built before that change in values, times and
-            # some positions, and rebuilding the smoke archive moves tier 3's
-            # pinned numbers. That is expected. What would be a bug is believing
-            # otherwise and hunting the difference somewhere else.
+            # survives a change to this tool: any such change moves tier 3's
+            # pinned numbers when the smoke archive is rebuilt, which is
+            # expected rather than a bug to hunt elsewhere.
             lon, lat, when, depth = observe(grid, spec, begin, begin + length, rng)
             path = target / f"{platform}.{begin.strftime('%Y%m%d%H')}.nc4"
             if lon.size == 0:

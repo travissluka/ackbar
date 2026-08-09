@@ -14,14 +14,11 @@ the *finished* config: layers merged, observer bodies expanded, every `$(...)`
 substituted. What is left in it is `{{...}}`, which is job time by definition
 and cannot be resolved here.
 
-The ordered layer files used to be copied in beside it, under `cfg/layers/`.
-They are not any more. Nothing read them: `ackbar config why` replays the merge
-over the layer tree in the checkout, not over a copy, and every other consumer
-reads the merged config. They were a second, pre-substitution account of the
-same thing, and two accounts of one config is how the wrong one gets read.
-`provenance.json` still lists the layers by name and in order, with the commit
-they were read at, which is what makes the copy reconstructable and made it
-redundant.
+The layer files themselves are not copied in beside it. `provenance.json` lists
+them by name and in order with the commit they were read at, which is enough to
+reconstruct them, and `ackbar config why` replays the merge over the layer tree
+in the checkout rather than over a copy. A second, pre-substitution account of
+the same config is how the wrong one gets read.
 """
 
 import json

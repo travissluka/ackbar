@@ -34,19 +34,14 @@ SITE = {
     "root": str(REPO),
 }
 
+# Every window type in the schema builds. The one combination that cannot exist,
+# `4d` over a static B, is refused at graph build and pinned in `test_graph.py`.
 FIXTURES = [
     "free_om1deg",
     "var_om1deg",
-    # Here rather than deferred, since FGAT landed. What it pins is the
-    # four-dimensional *arithmetic*, the overshoot and the slot cadence, which
-    # `fgat` and `4d` share and which is computed from the window's length.
+    # Pins the four-dimensional *arithmetic*, the overshoot and the slot cadence,
+    # which `fgat` and `4d` share and which is computed from the window's length.
     "fourd_om1deg",
-    # And 4D-Ens-Var, which was the deferred one until its document landed.
-    # There is no deferred fixture any more: every window type in the schema
-    # builds. What used to be a phase gate here is now a permanent refusal in
-    # `graph.build._check_four_d_covariance`, and it is about a combination that
-    # cannot exist rather than one that is not written yet, so it is pinned in
-    # `test_graph.py` beside the other graph checks.
     "fourdenvar_om1deg",
     "letkf_om1deg",
     "envar_om1deg",

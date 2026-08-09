@@ -6,8 +6,7 @@ restart set: a directory of files holding every prognostic variable it has,
 including a great many the analysis never touched. Writeback is the step between
 them, and it is a direct write into a copy of the background rather than an
 increment fed to the model, because `soca_checkpoint_model.x` does not exist in
-the pinned SOCA. That was settled by spike before this phase; see
-`docs/build-order.md`.
+the pinned SOCA. See `docs/build-order.md`.
 
 Copy first, then overwrite in place. That ordering is what makes a rerun safe:
 the source of every value is the background, which no task in the experiment
@@ -175,10 +174,9 @@ def apply_analysis(config, analysis, restart, cycle=1):
 #: the ones below the bottom collapse to a residual thickness. A third of the
 #: cells on this domain are in that state.
 #:
-#: One centimetre is chosen with a gap on both sides rather than tuned: on
-#: gom_25km the share of cells below the threshold moves from 34.0% at a
-#: centimetre to 35.3% at a metre, so every value across two orders of magnitude
-#: selects the same set, and there is nothing for the exact number to change.
+#: One centimetre is chosen with a gap on both sides rather than tuned: every
+#: value across two orders of magnitude selects the same set of cells, so there
+#: is nothing for the exact number to change.
 VANISHED = 0.01
 
 
@@ -216,7 +214,6 @@ def fill_down(change, alive):
 #: a face, so the sequence is monotone and terminates; the cap is there because a
 #: face is shared by two cells and takes the smaller of their two demands, so one
 #: pass can leave a cell that was relying on cancellation still over its limit.
-#: Two or three is what it takes on gom_25km.
 DIVERGENCE_PASSES = 10
 
 #: An hour, in seconds. The limit below is quoted per hour because that is the
@@ -237,10 +234,10 @@ def divergence_limit(config):
 def divergence_scaling(restart, analysis, masks, metrics, limit):
     """Scale factors for the velocity increment, per face, from its divergence.
 
-    **Every forecast this workflow has lost to an analysis increment died the
-    same way**, and it is not where the increment was largest. The message is
-    always `btstep: eta has dropped below bathyT` and the column is always a thin
-    one, so the tempting fix is to damp the increment in shallow water. That
+    **A velocity increment kills a column through the divergence of the transport
+    it implies, not through its own magnitude.** The model reports `btstep: eta
+    has dropped below bathyT` and the column is always a thin one, so the
+    tempting fix is to damp the increment in shallow water. That
     treats a symptom: depth is a proxy, and it throws away a strong alongshore
     increment that the column could have carried perfectly well because it moves
     no water in or out.
@@ -354,9 +351,7 @@ def vanished_layers(restart):
 
         MOM_regridding: adjust_interface_motion() - implied h<0
 
-    which names the symptom several steps downstream of the cause. It is how
-    this was found: an LETKF put 16 degC into a 1.3 mm layer at level 34 of a
-    52 m column, and thirteen of eighteen members died on the first cycle.
+    which names the symptom several steps downstream of the cause.
 
     A variational analysis survives the same restart because its background
     error is a covariance model that tapers rather than a sample, so it never
@@ -428,11 +423,8 @@ def increment_relaxation(config, cycle):
     twenty *different years*, so the innovation is the largest it will ever be
     and so is the shock of correcting it. Every later background is a 24 hour
     forecast from an analysis that has already seen the observations, so the
-    innovation collapses. Measured on `osse25-3dvar`, whose writeback kept all
-    45 cycles: increment rms 0.332 at cycle 1, about 0.15 by cycle 5, and 0.11
-    from cycle 20 onwards. A constant relaxation set low enough to survive cycle
-    1 therefore throws away most of the analysis for forty cycles that never
-    needed it.
+    innovation collapses. A constant relaxation low enough to survive cycle 1
+    therefore throws away most of the analysis for every cycle after it.
 
     **This is the crude form of IAU and it is honest about being crude.** The
     thing that breaks the model is not the size of the increment but the speed
@@ -558,8 +550,7 @@ def place(target, field, mask, values, limit=None, relaxation=1.0, alive=None,
     # an h-grid field has no such face. For a velocity it is a defect: every
     # face inside moves and the outermost does not, which is a step in the
     # velocity field exactly at the domain edge, and on a regional domain that
-    # edge is an open boundary where the OBC is imposing its own solution. Left
-    # alone it reached 1.8 m/s against zero.
+    # edge is an open boundary where the OBC is imposing its own solution.
     #
     # There is no analysed value for that face to use, since SOCA's analysis is
     # tracer-sized, so it takes the increment of the face beside it. That is the

@@ -419,8 +419,8 @@ def test_the_analysed_restart_carries_the_increment_in_the_ocean_only(persist):
     # background value while the water above them moves puts a density inversion
     # at the base of a third of all columns and the model convects it away.
     # So `analysed - background` is *supposed* to differ from `ocn.incr` below
-    # the sea floor, and an assertion over the two dimensional mask alone was
-    # asserting the opposite.
+    # the sea floor, and the two dimensional ocean mask alone is the wrong mask
+    # to ask this over.
     alive = read(background, "h") >= 0.01
     wet = alive & ocean
     assert wet.sum() > 0
@@ -455,8 +455,7 @@ def test_the_restart_the_forecast_reads_carries_the_analysis(cycled):
 
     Necessary and not sufficient, which is worth being explicit about: this
     checks what writeback produced, not what the model then did with it. The
-    model's half is `test_the_model_read_the_analysed_restart` below, and the
-    gap between the two is where a whole phase of this project once lived.
+    model's half is `test_the_model_read_the_analysed_restart` below.
     """
     netCDF4 = pytest.importorskip("netCDF4")
     import numpy
@@ -534,18 +533,17 @@ def test_the_experiment_finished(persist):
         [True] * len(CYCLES)
 
 
-# --- the compressed record, which nothing used to check ----------------------
+# --- the compressed record ---------------------------------------------------
 
 def test_the_compressed_states_were_actually_written(cycled):
     """`post.state` is a leaf, so its failure does not strand the cycle.
 
     Which is right, and it is also why this test has to exist. Nothing in the
-    graph waits on the state record, so a `post.state` that raised every cycle
-    left a drained experiment, a full `run/` tree and an empty `bkg/`, and the
-    whole tier 3 suite passed. It did exactly that on this domain: a regional
-    MOM6 is built with symmetric memory and writes `u` a column wider than the
-    gridspec's staggered grid, and the reduction refused the shape instead of
-    taking the tracer-sized corner `writeback` writes into.
+    graph waits on the state record, so a `post.state` that raises every cycle
+    leaves a drained experiment, a full `run/` tree and an empty `bkg/`, with
+    the rest of the suite green. The shape trap is the live one: a regional
+    MOM6 writes `u` a column wider than the gridspec's staggered grid, and the
+    reduction has to take the tracer-sized corner `writeback` writes into.
     """
     for cycle in CYCLES:
         product = cycled.product("bkg", cycle + 1, 0)

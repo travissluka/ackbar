@@ -38,16 +38,15 @@
 #     against a spun up background before believing an analysis.
 #
 #     The layer is computed from the restart's density profile by
-#     `ackbar.diffusion`, not read from the restart's own `MLD` field, which is
-#     what an earlier version of this note said. MOM6's instantaneous `MLD`
+#     `ackbar.diffusion`, not read from the restart's own `MLD` field. MOM6's
+#     instantaneous `MLD`
 #     carries the diurnal layer, so on a summer afternoon it reports a few
 #     metres and the vertical correlation collapses to the floor over most of
 #     the domain. `src/ackbar/diffusion.py` has the criterion and the reasoning.
 #
-#     v2 recalibrated the vertical every cycle. ACKBAR does too now, under
-#     `da/corr_vt_cycled`, which rebuilds it from each cycle's own background
-#     and blends it into a rolling average; this offline run is what seeds the
-#     first cycle.
+#     ACKBAR recalibrates the vertical every cycle under `da/corr_vt_cycled`,
+#     which rebuilds it from each cycle's own background and blends it into a
+#     rolling average; this offline run is what seeds the first cycle.
 #
 #   * The horizontal normalization is a Monte Carlo estimate, so it depends on
 #     the random draws and therefore on the MPI decomposition. Two runs at

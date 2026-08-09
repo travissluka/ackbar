@@ -6,30 +6,29 @@ layer:
 .. code-block:: yaml
 
     inherit:
-      - model/mom6sis2_om_1deg
+      - domain/gom_25km
+      - model/mom6sis2
       - da/variational
-      - covariance/hybrid
-      - window/3d
-      - obs/osse
-    ens_size: 20
+      - obs/adt_j2
+      - obs/sst_metopb
+    experiment:
+      name: gom-3dvar
 
-Inheritance is declared in one place and read top to bottom. v3 layered
-implicitly, through nearest-enclosing-dict scoping during token resolution,
-which is impossible to reason about from the experiment file alone.
+The four kinds are the four directories under `config/layers/`: `domain`,
+`model`, `da`, `obs`. Inheritance is declared in one place and read top to
+bottom. v3 layered implicitly, through nearest-enclosing-dict scoping during
+token resolution, which is impossible to reason about from the experiment file
+alone.
 
-A layer may inherit too, and this file used to refuse it. The reason it refused
-was that the whole stack should be readable from the experiment file, and that
-reason was right about experiments and wrong about one case: a family of
-platforms that differ only in their name. Four altimeter layers held seventy
-identical lines each, and the copies had begun to drift.
-
-So a layer's `inherit:` is allowed, and it means something narrower than an
-experiment's. It is how a layer says *what it is a kind of*, not how a stack is
-assembled: `obs/adt_j2` inherits `obs/adt` because Jason-2 is an altimeter, and
-the experiment still lists the platforms it flies. The flattening is depth
-first, a layer lands before anything that inherits it, and the flattened list is
-what `create` freezes, so `cfg/layers/` still holds every file that contributed
-in the order it contributed.
+A layer may inherit too, and it means something narrower than an experiment's.
+It is how a layer says *what it is a kind of*, not how a stack is assembled:
+`obs/adt_j2` inherits `obs/common/adt` because Jason-2 is an altimeter, and the
+experiment still lists the platforms it flies. The constraint it bends is that
+the whole stack should be readable from the experiment file, and it bends it for
+one case only, a family of platforms that differ by name. The flattening is
+depth first and a layer lands before anything that inherits it, so the flattened
+list is the order things contributed in; `create` records it by name in
+`provenance.json`.
 
 Repeats are treated differently on the two sides, which looks inconsistent and
 is not. An experiment naming a layer twice is refused, because order decides

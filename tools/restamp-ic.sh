@@ -57,9 +57,7 @@ mkdir -p "$(dirname "$OUT")"
 # `-L` dereferences, and it is load bearing twice over. A state can be a
 # directory of symlinks (a materialized initial condition is), so without it
 # this would copy the links; and the rewrite below redirects into
-# `coupler.res`, which through a link truncates whatever it points at. That is
-# not hypothetical: it is how the first run of this tool emptied the file it
-# was reading from.
+# `coupler.res`, which through a link truncates whatever it points at.
 rm -rf "$OUT.partial"
 cp -rL "$SOURCE" "$OUT.partial"
 

@@ -120,12 +120,9 @@ def stub_io(config, paths, task, cycle, member):
         return [start], [rst(cycle, member)] + slots
     if task == "forecast.ext":
         start = restart_source(config, paths, cycle, member) / "restart.stub"
-        # Deliberately not `rst/`, which is where this used to write. Both
-        # forecasts start from the same set, so a state the long one wrote at a
-        # time the cycling one also reaches is a different trajectory from that
-        # point on, and `commit` deletes whatever it was not asked to claim. The
-        # stub exercises the separation on the scheduler, where a cycle is
-        # seconds, rather than leaving it to first run under the real model.
+        # Deliberately not `rst/`; see `paths.fcst_out`. The stub exercises the
+        # separation on the scheduler, where a cycle is seconds, rather than
+        # leaving it to first run under the real model.
         return [start], [paths.fcst_out(cycle, member, lead) / "restart.stub"
                          for lead in extended_slots(config)]
     if task == "hofx.ext":
@@ -174,9 +171,9 @@ RERUN_ALWAYS = ("stats", "cleanup")
 #: part that is hard to get right, and a phase that adds a body should not also
 #: be the phase that first discovers its dependencies were wrong.
 #:
-#: `b.corr_vt` is here **only when the experiment did not ask for it**, which is the
-#: state this entry used to describe unconditionally. The vertical background
-#: error scales are calibrated offline and once by `tools/soca-diffusion.sh`,
+#: `b.corr_vt` is here **only when the experiment did not ask for it**. The
+#: vertical background error scales are calibrated offline and once by
+#: `tools/soca-diffusion.sh`,
 #: and an analysis reads that product out of the domain's static directory; an
 #: experiment that inherits `da/corr_vt_cycled` instead rebuilds them every cycle
 #: against its own background, and then this task is in the data path and the
@@ -887,9 +884,7 @@ def _this_job():
 
     `SLURM_JOB_ID` inside an array element is that element's own id, and passing
     it to `scontrol requeue` takes the **whole array** with it: every sibling is
-    killed and rerun, including the ones that had already finished. That is not
-    a hypothetical. It is what turned a one member fault into a three member
-    one, and it cost two minutes of Slurm's post-requeue deferral each time.
+    killed and rerun, including the ones that had already finished.
     """
     array, index = (os.environ.get("SLURM_ARRAY_JOB_ID"),
                     os.environ.get("SLURM_ARRAY_TASK_ID"))
@@ -935,9 +930,7 @@ def _forecast(config, site, paths, cycle, task, member):
     # a different trajectory, and putting it in the same directory would give
     # the analysis two answers for one slot. That applies to the restart set it
     # ends on as much as to the states along the way, which is why the target
-    # moves too: both forecasts start from the same set, and `commit` deletes
-    # whatever it was not asked to claim, so one directory for the two of them
-    # is the cycling forecast's output being destroyed by the long one.
+    # moves too; see `paths.fcst_out`.
     slots, handoff = None, None
     if task == "forecast.ext":
         start = cycle_time(config, cycle)
@@ -1436,12 +1429,9 @@ def _post(config, paths, cycle, task, member):
     # now and goes to `ana/<T(n)>`.
     #
     # Reading the previous cycle's restart instead would put the same numbers in
-    # the same files, and it cost two things. It made this task a consumer of
-    # the set `cleanup` drops, so the two raced and the proof that settles the
-    # race made the last cleanup of a run refuse, permanently, because nothing
-    # comes after it to try again. And the final cycle's forecast was recorded
-    # by nobody: `post.state` only ever looked backwards, so the last state the
-    # experiment produced had no `bkg/` file and its restart was reaped.
+    # the same files and make this task a consumer of the set `cleanup` drops,
+    # so the two would race. It would also leave the final cycle's forecast
+    # recorded by nobody, since nothing runs after it to look backwards.
     #
     # The cost is that `bkg/` starts one cycle in. The state at the first
     # analysis time is the offline initial condition, which is read-only in the
@@ -1462,12 +1452,10 @@ def _post(config, paths, cycle, task, member):
         records.append((analysed, cycle_time(config, cycle), "ana"))
 
     # **Every sub-window state, not just the one that becomes a background at an
-    # analysis time.** The forecast writes at `forecast.slots` on its way, and
-    # until this reduced them the only way to keep them was to keep the restart
-    # sets they came in, which is a hundred and fifty megabytes per slot against
-    # eight for the record. That is the difference between a truth run costing
-    # forty gigabytes and costing two, and it is what lets `cleanup` reap `slot/`
-    # on its ordinary schedule instead of the experiment pinning every cycle.
+    # analysis time.** The forecast writes at `forecast.slots` on its way.
+    # Reducing them is what lets `cleanup` reap `slot/` on its ordinary schedule
+    # instead of the experiment pinning every cycle to hold the restart sets
+    # they arrived in.
     #
     # The last slot is dropped: the forecast ends on an analysis time, so FMS
     # writes an intermediate restart there *and* the final one, and they are the
@@ -1674,10 +1662,7 @@ def _cleanup(config, paths, cycle):
     # `post.state` is deliberately *not* in this proof, and that is a property
     # of what it reads rather than an omission. It reduces its own cycle's
     # output, so by the time this task considers that cycle the reduction ran
-    # two cycles ago and cannot still be pending on it. It was a consumer of the
-    # dropped set once, and the entry that settled that race also made the last
-    # cleanup of a run refuse permanently, because nothing comes after it to try
-    # again. See `_post`.
+    # two cycles ago and cannot still be pending on it. See `_post`.
 
     # A long forecast outlives the cycle it started from by construction, which
     # is the whole reason its cadence is a setting. It starts from the same
@@ -1719,11 +1704,9 @@ def _cleanup(config, paths, cycle):
         shutil.rmtree(target)
         print(f"ackbar: removed {target}")
 
-    # Scratch too, and this is the one nothing else was collecting. A task
-    # deletes its own scratch on success and *keeps* it on failure, which is
-    # right: it is the whole debugging trace. But nothing then removed it, so
-    # every failed attempt of a long experiment left a full model run directory
-    # behind for the life of the run. By the time a cycle is this far behind the
+    # Scratch too, and this is the one nothing else collects. A task deletes its
+    # own scratch on success and *keeps* it on failure, which is right: it is
+    # the whole debugging trace. By the time a cycle is this far behind the
     # horizon its logs have been kept by `keep_traces` and its trace is no
     # longer what anyone is reading.
     for target in _reapable_scratch(paths, drop):

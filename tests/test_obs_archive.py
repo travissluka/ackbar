@@ -56,10 +56,9 @@ def test_a_layout_a_single_state_cannot_place_is_refused_by_name(
     """Three layouts, one sentence, and the layout named in it.
 
     A drifter is advected by the truth's own velocities and a profile or glider
-    reads down a column. None of that exists in one state. Before this check
-    the drifter case reached `truth.state(...)` and raised
-    `AttributeError: 'FixedTruth' object has no attribute 'state'`, which names
-    an implementation detail rather than the choice the caller got wrong.
+    reads down a column. None of that exists in one state, and the refusal has
+    to name the layout rather than an implementation detail the caller has no
+    way to connect to the choice they got wrong.
     """
     said = refuse([platform], tmp_path)
     assert platform in said
@@ -70,11 +69,9 @@ def test_a_layout_a_single_state_cannot_place_is_refused_by_name(
 def test_a_field_the_anomaly_does_not_carry_is_refused_by_name(tmp_path):
     """`perturb` builds sea surface temperature and height. Salinity is neither.
 
-    This one used to be a `KeyError: 'sss'` inside the sampler, which is the
-    worst kind of failure this tool can produce: it happens after the archive
-    directory and `truth.nc` have been written, so it leaves a half built
-    archive behind that looks like an interrupted run rather than a rejected
-    request.
+    The refusal has to come before the archive directory and `truth.nc` are
+    written, or a rejected request leaves a half built archive behind that looks
+    like an interrupted run.
     """
     said = refuse(["sss_smap"], tmp_path)
     assert "sss_smap" in said and "sss" in said

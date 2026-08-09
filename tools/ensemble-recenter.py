@@ -57,14 +57,12 @@ background.
 
 ## The free surface is moved through `h`, not through `ave_ssh`
 
-An earlier version of this shifted `ave_ssh` and left `h` alone, on the argument
-that each member should keep its own layer structure. The argument is right and
-the conclusion was wrong, because under Z* the mass field *is* the free surface:
-a column's sea surface height is `sum(h) - D` and nothing else, and `ave_ssh` is
-a diagnostic MOM6 recomputes from `h` within a timestep. Shifting it alone
-therefore moves the number SOCA reads and does not move the ocean at all: the
-sample's `h` mean sat 0.26 m rms off the control before that recipe and 0.26 m
-rms off it after.
+**Shifting `ave_ssh` alone does not move the ocean.** Under Z* the mass field
+*is* the free surface: a column's sea surface height is `sum(h) - D` and nothing
+else, and `ave_ssh` is a diagnostic MOM6 recomputes from `h` within a timestep.
+Recentring the diagnostic therefore moves the number SOCA reads and leaves `h`
+exactly where it was. The tempting argument for it, that each member should keep
+its own layer structure, is right about the goal and wrong about the mechanism.
 
 That matters most now that recentring is the last step before an experiment
 starts. Nothing runs afterwards to reveal the difference, so an ensemble whose

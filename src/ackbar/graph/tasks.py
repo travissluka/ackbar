@@ -150,7 +150,7 @@ TASKS = (
     ),
     TaskDef(
         name="recenter",
-        # Not for an LETKF, which is where this used to be. Recentring an
+        # Not for an LETKF. Recentring an
         # ensemble onto a centre it already has is the identity, and the centre
         # of an LETKF's analysis ensemble is its own mean. A hybrid is the case
         # where the centre is something else: the deterministic analysis, which

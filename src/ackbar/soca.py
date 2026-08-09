@@ -151,18 +151,12 @@ def cost_template(config, trajectory):
     return COST_TEMPLATE.get(window)
 
 #: How an application is told to spread observations across ranks. ACKBAR's
-#: rather than a layer's, and this is a change from how soca-science expressed
-#: it: v2 redefined an `&obs_distribution` anchor in each solver's document, so
-#: the value lived with the DA mode and the observers substituted it in.
-#:
-#: That works exactly until a cycle contains two applications. A hybrid runs a
-#: variational analysis and an ensemble filter over the *same* observer
+#: rather than a layer's, because a cycle can contain two applications. A hybrid
+#: runs a variational analysis and an ensemble filter over the *same* observer
 #: configurations, and they need different distributions: a variational solve is
 #: global and takes the cheap round robin, while an LETKF solves each point from
 #: the observations within its localization radius and needs every rank to hold
-#: a halo that wide. One substituted value cannot be both, and v2 patched around
-#: that with `sed` markers keyed on whether the LETKF was running solo or inside
-#: a `3dhyb`.
+#: a halo that wide. One value substituted into the observers cannot be both.
 #:
 #: So the distribution is not a property of the platform, and it is not really a
 #: property of the experiment either: it is a property of the application
@@ -975,17 +969,14 @@ def _observers(observers, distribution, localization=None, *, localize=False):
     only for an application that asked (*localize*) and drops it otherwise.
 
     **It cannot be spelled out per platform in a solver layer.** The layers
-    merge on `obs space.name`, so a `da/letkf` naming platforms did two things at
-    once: it left every platform it had not heard of with no localization, and it
-    invented an observer for every platform it named that the experiment did not
-    carry. Which is what happened. The three filter layers named `adt_3a` and
-    `sst_noaa19`, so the OSSE's seven real platforms went into a twenty member
-    LETKF with no localization at all, and two phantom observers appeared whose
-    only trace was an unreadable output file in the cycle summary. The second
-    failure is visible if you look; the first is not visible in any output the
-    run produces, and it is the one that matters, because an unlocalized sample
-    covariance of twenty members has spurious correlations between every pair of
-    points in the domain.
+    merge on `obs space.name`, so a `da/letkf` naming platforms does two things
+    at once: it leaves every platform it has not heard of with no localization,
+    and it invents an observer for every platform it names that the experiment
+    does not carry. The invented observer is visible, as an unreadable output
+    file in the cycle summary. The unlocalized one is not visible in any output
+    the run produces, and it is the one that matters, because an unlocalized
+    sample covariance of twenty members has spurious correlations between every
+    pair of points in the domain.
 
     Three sources, most specific first:
 
@@ -1286,9 +1277,7 @@ def vt_config(config, cycle, *, background, scales, templates=None):
     where it must match `config/layers/da/variational.yaml`: the file this
     writes is read back through that block, and a normalization computed with
     one operator and applied by another is a background error wrong by a factor
-    nothing reports. Filling both from the same solver block used to make them
-    unable to disagree. Keeping them equal is now a thing to do by hand, which
-    is the cost of the template saying what it configures.
+    nothing reports. The two have to be kept equal by hand.
     """
     model = config["model"]
     background = Path(background)
@@ -1320,15 +1309,13 @@ def vertical_correlation_spec(solver):
     is deliberately unreadable from a job. So a cycling experiment states it,
     which is what `da/corr_vt_cycled` does.
 
-    **The operator is not joined here, and an earlier version of this docstring
-    claimed it was.** `method` and `iterations` are required of the solver block
-    below, because an experiment that recalibrates every cycle and does not say
-    what operator it reads the result back through is incomplete. But they are
-    not returned, because `vertical_scales` does not read them and the operator
-    the per-cycle calibration actually *builds* with is a pair of literals in
-    `config/soca/vt.yaml`. Requiring them here makes the experiment state its
-    intent; it does not make the two agree. What makes them agree is
-    `tests/test_diffusion.py`, which now compares that document against
+    **The operator is not joined here.** `method` and `iterations` are required
+    of the solver block below, because an experiment that recalibrates every
+    cycle and does not say what operator it reads the result back through is
+    incomplete. They are not returned: `vertical_scales` does not read them, and
+    the operator the per-cycle calibration actually *builds* with is a pair of
+    literals in `config/soca/vt.yaml`. What makes the two agree is
+    `tests/test_diffusion.py`, which compares that document against
     `config/static/diffusion.yaml` directly.
     """
     vertical = _vertical_block(solver)
@@ -1414,8 +1401,7 @@ def _vertical_block(node):
 def background_error(solver, variables, *, ensemble=None, corr_vt=None):
     """The B description, assembled from the covariance the experiment asked for.
 
-    Three shapes, and which one is built is `solver.covariance`, which until
-    this phase was validated and never read.
+    Three shapes, and which one is built is `solver.covariance`.
 
     `static`     the SABER block the layer states, and nothing else.
     `ensemble`   the ensemble alone, localized.
@@ -1428,12 +1414,11 @@ def background_error(solver, variables, *, ensemble=None, corr_vt=None):
     one that does not, rather than ignored: a static B handed an ensemble is an
     experiment whose author believes it is doing something it is not.
 
-    Public because the analysis is not the only thing that reads this B. The
-    ensemble initial condition stage draws its perturbations from the same
-    covariance, and it hit the same omission from the other side: with no
-    `output variables`, `changeVarTL` produces an increment carrying no fields
-    at all, so every member came back exactly equal to the state it was
-    perturbed from and nothing said so.
+    Public because the ensemble initial condition stage draws its perturbations
+    from the same covariance. It needs the `output variables` this sets as much
+    as the analysis does: without them `changeVarTL` produces an increment
+    carrying no fields at all, and every member comes back equal to the state it
+    was perturbed from with nothing to say so.
     """
     covariance = solver.get("covariance", "static")
     if covariance not in ("static", "ensemble", "hybrid"):
@@ -1535,9 +1520,9 @@ def member_states(locate, members, *, date, variables):
     that was forecast. *locate* is a member index to the file itself, which is a
     restart for the first two and an analysis for the third.
 
-    An explicit list rather than oops's `members from template`, and the reason
-    is the one phase 7 found: `oops::DataSetBase` numbers by position in the
-    list it was handed, so a template's `%mem%` and the index a member is
+    An explicit list rather than oops's `members from template`, because
+    `oops::DataSetBase` numbers by position in the list it was handed, so a
+    template's `%mem%` and the index a member is
     written out as disagree exactly when a member is missing. A list of twenty
     near-identical blocks is verbose in a file nobody hand-edits, and in
     exchange every member's state is a path `ackbar validate` stats before

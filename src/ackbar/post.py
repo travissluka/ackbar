@@ -40,9 +40,7 @@ import numpy as np
 #: variational analysis writes `hofx0`, `hofx1`, `EffectiveQC0` and
 #: `EffectiveQC1`, not `hofx` and `EffectiveQC`. Looking for the bare name finds
 #: nothing, and code that treats "no QC group" as "nothing was rejected" then
-#: reports every observation as assimilated forever. That is not a hypothetical:
-#: it is what the first version of this module did to a file where three of six
-#: hundred SSTs had been thrown out by the background check.
+#: reports every observation as assimilated forever.
 #:
 #: The lowest index is the background evaluation and the highest is the final
 #: one, so `ObsValue - hofx<low>` is O-B and `ObsValue - hofx<high>` is O-A. That

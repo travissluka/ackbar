@@ -114,8 +114,7 @@ def smooth(depth, ocean, target, minimum, passes=PASSES):
     for used in range(1, passes + 1):
         # Accumulated rather than applied pair by pair. A cell belongs to up to
         # four pairs, so writing each pair's answer straight back means the last
-        # one written wins and the other three are silently discarded, which is
-        # why an earlier version of this never converged.
+        # one written wins and the other three are silently discarded.
         delta = np.zeros_like(out)
         worst = 0.0
         for axis in (0, 1):

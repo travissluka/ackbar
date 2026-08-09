@@ -269,10 +269,12 @@ class Paths:
         experiment produces, and `post.state` reduces it to something two orders
         of magnitude smaller that is kept.
 
-        Deliberately *not* `rst/`, which is where `forecast.ext` used to write.
-        Both forecasts start from the same state, so a state the extended one
-        wrote at a time the cycling one also reaches is a different trajectory
-        from that point on, and one directory cannot hold two answers.
+        Deliberately *not* `rst/`. Both forecasts start from the same state, so
+        a state the extended one wrote at a time the cycling one also reaches is
+        a different trajectory from that point on, and one directory cannot hold
+        two answers. `commit` deletes whatever it was not asked to claim, so
+        sharing a directory means the long forecast destroying the cycling one's
+        output.
         """
         return self.member_out("fcst", cycle, member) / lead_name(lead)
 
