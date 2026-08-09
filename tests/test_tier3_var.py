@@ -113,6 +113,35 @@ def initial_condition():
                 .replace("$(static_root)", str(STATIC)))
 
 
+def build_archive(source, root):
+    """Generate the archive an experiment document asks for, and only that.
+
+    The platform list comes from the experiment's own `obs/*` layers rather
+    than from the generator's default, and that is load bearing rather than
+    tidy: the default is every platform the generator knows, which now includes
+    the profile ones, and those cannot be drawn from a `--state` single state
+    with a two dimensional anomaly on it. So a tier 3 test that took the
+    default started failing the moment profiles were added, in a stage that has
+    nothing to do with what it tests. Naming the platforms also makes the
+    archive and the experiment agree by construction, which is what a synthetic
+    archive is for.
+    """
+    platforms = [layer.split("/", 1)[1] for layer in source["inherit"]
+                 if layer.startswith("obs/")]
+    subprocess.run(
+        [sys.executable, str(REPO / "tools" / "obs-archive-osse.py"),
+         "--domain", DOMAIN,
+         "--state", str(initial_condition()),
+         "--start", source["cycle"]["start"],
+         "--length", source["cycle"]["length"],
+         "--count", str(source["cycle"]["count"]),
+         "--platforms", *platforms,
+         "--out", str(root)],
+        check=True, capture_output=True,
+    )
+    return root
+
+
 @pytest.fixture(scope="module")
 def archive(tmp_path_factory):
     """This test's own observation archive, with one file left out.
@@ -124,17 +153,7 @@ def archive(tmp_path_factory):
     recovered it only means anything if the two were built together.
     """
     source = yaml.safe_load((REPO / "tests/experiments/tier3_var.yaml").read_text())
-    root = tmp_path_factory.mktemp("obs")
-    subprocess.run(
-        [sys.executable, str(REPO / "tools" / "obs-archive-osse.py"),
-         "--domain", DOMAIN,
-         "--state", str(initial_condition()),
-         "--start", source["cycle"]["start"],
-         "--length", source["cycle"]["length"],
-         "--count", str(source["cycle"]["count"]),
-         "--out", str(root)],
-        check=True, capture_output=True,
-    )
+    root = build_archive(source, tmp_path_factory.mktemp("obs"))
     sorted(root.rglob(f"*/{GAP_OBSERVER}.*.nc4"))[GAP_CYCLE - 1].unlink()
     return root
 
@@ -388,10 +407,35 @@ def test_the_analysed_restart_carries_the_increment_in_the_ocean_only(persist):
     applied = read(analysed, "Temp") - read(background, "Temp")
     assert numpy.abs(applied[:, ocean]).max() > 1e-4
     assert numpy.all(applied[:, ~ocean] == 0.0)
-    # Same increment, to the precision two different writers of the same
-    # doubles agree to.
-    assert numpy.allclose(applied[:, ocean], read(increment, "Temp")[:, ocean],
-                          atol=1e-9)
+
+    # Where the column holds water, the same increment, to the precision two
+    # different writers of the same doubles agree to.
+    #
+    # **Only where it holds water**, and the exclusion is the contract rather
+    # than a tolerance. Under Z* every column carries all NK levels whether or
+    # not the sea floor leaves room, and on this domain about a third of the
+    # cells are collapsed. `ackbar.writeback.fill_down` deliberately carries the
+    # deepest live increment down through those, because leaving them at the
+    # background value while the water above them moves puts a density inversion
+    # at the base of a third of all columns and the model convects it away.
+    # So `analysed - background` is *supposed* to differ from `ocn.incr` below
+    # the sea floor, and an assertion over the two dimensional mask alone was
+    # asserting the opposite.
+    alive = read(background, "h") >= 0.01
+    wet = alive & ocean
+    assert wet.sum() > 0
+    assert numpy.allclose(applied[wet], read(increment, "Temp")[wet], atol=1e-9)
+
+    # And where it does not, the column is flat from its deepest live level
+    # down: the property `fill_down` exists to produce, checked off the written
+    # file rather than by calling the function that wrote it.
+    dead = ocean & ~alive
+    deepest = numpy.maximum.accumulate(
+        numpy.where(alive, numpy.arange(alive.shape[0]).reshape(-1, 1, 1), 0),
+        axis=0)
+    carried = numpy.take_along_axis(applied, deepest, axis=0)
+    assert numpy.allclose(applied[dead], carried[dead], atol=1e-9)
+
     assert numpy.array_equal(read(analysed, "h"), read(background, "h"))
 
 

@@ -29,8 +29,6 @@ together by its localization, exactly as `test_tier3_letkf` says at length.
 """
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -44,7 +42,7 @@ from ackbar.config.jobtime import slot_times, window_bounds
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
-from test_tier3_var import DOMAIN, STATIC, initial_condition
+from test_tier3_var import DOMAIN, STATIC, build_archive
 
 pytestmark = pytest.mark.tier3
 
@@ -88,16 +86,7 @@ def config():
 def run(config, tmp_path_factory):
     source = dict(config)
     root = tmp_path_factory.mktemp("obs")
-    subprocess.run(
-        [sys.executable, str(REPO / "tools" / "obs-archive-osse.py"),
-         "--domain", DOMAIN,
-         "--state", str(initial_condition()),
-         "--start", source["cycle"]["start"],
-         "--length", source["cycle"]["length"],
-         "--count", str(source["cycle"]["count"]),
-         "--out", str(root)],
-        check=True, capture_output=True,
-    )
+    build_archive(source, root)
     source["vars"]["obs_dir"] = str(root)
     path = tmp_path_factory.mktemp("cfg") / f"{NAME}.yaml"
     path.write_text(yaml.safe_dump(source))

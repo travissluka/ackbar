@@ -46,8 +46,6 @@ nothing here claims they are.
 """
 
 import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -60,7 +58,7 @@ from ackbar.cli import main
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
-from test_tier3_var import DOMAIN, STATIC, initial_condition
+from test_tier3_var import DOMAIN, STATIC, build_archive
 
 pytestmark = pytest.mark.tier3
 
@@ -107,16 +105,7 @@ def archive(tmp_path_factory):
     """The same synthetic archive the other two tier 3 experiments read."""
     source = yaml.safe_load((REPO / f"tests/experiments/{NAME}.yaml").read_text())
     root = tmp_path_factory.mktemp("obs")
-    subprocess.run(
-        [sys.executable, str(REPO / "tools" / "obs-archive-osse.py"),
-         "--domain", DOMAIN,
-         "--state", str(initial_condition()),
-         "--start", source["cycle"]["start"],
-         "--length", source["cycle"]["length"],
-         "--count", str(source["cycle"]["count"]),
-         "--out", str(root)],
-        check=True, capture_output=True,
-    )
+    build_archive(source, root)
     return root
 
 

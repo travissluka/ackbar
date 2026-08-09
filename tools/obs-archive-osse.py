@@ -590,7 +590,15 @@ class FixedTruth:
     def __init__(self, grid, state, seed):
         self.fields, self.anomaly = perturb(grid, state, seed)
 
-    def sample(self, grid, field, lon, lat, when):
+    def sample(self, grid, field, lon, lat, when, depth=None):
+        # `depth` is always None here and the signature says so anyway, because
+        # the caller holds one of the two truths and does not know which. A
+        # subsurface platform is refused in `main` before it reaches this, since
+        # a single state carries a two dimensional anomaly and there is nothing
+        # to sample down a column; the assertion is what turns a change to that
+        # refusal into a failure here rather than a silent surface value
+        # reported at 500 m.
+        assert depth is None, "FixedTruth has no vertical structure"
         return sample(grid, self.fields[field], lon, lat)
 
 
