@@ -1,29 +1,31 @@
 # The quarter degree OSSE's pure FGAT EnVar. A plumbing run, not a result.
 #
-# See docs/osse.md. `osse25-3dfgat` with one layer added, for the same reason
-# that experiment is `osse25-3dvar` with one key changed: everything else is
-# identical, so the difference in O-B is attributable.
+# See docs/osse.md. `osse25-hybrid` with one layer added, `da/envar`, which sets
+# `solver.covariance: ensemble`. So the background error is the twenty member
+# ensemble alone: the static B is still configured and is never read, which
+# `config/layers/da/envar.yaml` argues at length is the honest arrangement
+# rather than a tidy one.
 #
-# Half the background error from the static B and half from a twenty member
-# ensemble the filter beside it maintains. What it should show over 3D-FGAT is a
-# background error that knows where the Loop Current is *today*: the static B
-# spreads an observation isotropically over a fixed length scale, and the
-# ensemble spreads it along the flow. The Gulf is the case that makes the
-# difference visible, because almost all of its error is in the position of one
-# strongly steered current and its rings.
+# **Why run it at all, given a hybrid with the static weight at zero is the same
+# analysis.** Because it is not the same experiment. This one has no static B in
+# it to mis-weight, so the pair separates "the ensemble is carrying the
+# analysis" from "the weights happen to be tuned".
 #
 # **`window.type: fgat` means two different things to the two solvers here, and
-# both are what is wanted.** The variational analysis solves 3D-FGAT: each
+# both are what is wanted.** The variational analysis solves FGAT: each
 # observation is compared against the background nearest its own time and one
-# increment is solved at the window's centre. The ensemble filter beside it gets
-# the same trajectory, and for an ensemble filter that is 4D-LETKF, because its
-# departures and its observation-space perturbations come from the one hofx over
-# the member trajectories while the weights are applied at the analysis time.
-# So this experiment is FGAT over a static B plus a 4D-LETKF ensemble, and the
-# covariance the variational solve reads is the ensemble at the analysis time,
-# which is what FGAT means. `graph.build._check_ensemble_window` refuses `fgat`
-# only when the *experiment's* solver is the filter, which is the case where
-# there is no variational half to give the word its meaning.
+# increment is solved at the window's centre, against the ensemble's spread
+# *there*. The ensemble filter beside it gets the same trajectory, and for an
+# ensemble filter that is 4D-LETKF, because its departures and its
+# observation-space perturbations come from the one hofx over the member
+# trajectories while the weights are applied at the analysis time.
+# `graph.build._check_ensemble_window` refuses `fgat` only when the
+# *experiment's* solver is the filter, which is the case where there is no
+# variational half to give the word its meaning.
+#
+# Giving the covariance a time dimension as well is a different experiment and
+# a different file: `osse25-4denvar`, which is this one with `4d` in place of
+# `fgat`.
 #
 # **The ensemble is real ocean states, not perturbations.** The same time-lagged
 # GLORYS ensemble `osse25-letkf` uses, and that file carries how it was built
@@ -31,18 +33,13 @@
 # the variational analysis every cycle, so the ensemble follows the run being
 # reported.
 #
-# **Expect the ensemble to be weaker than it should be.** The LETKF runs
-# have it measured: this ensemble loses about a quarter of its temperature
-# spread every seven cycles and ends far overconfident, because nothing on this
-# domain grows the prior's spread between cycles. A hybrid is the configuration
-# where that is least damaging, since the static half carries the covariance the
-# ensemble stops describing, and that is the reason to run this one before the
-# pure EnVar rather than after.
-#
-# The 0.5/0.5 weights are the textbook hybrid and are not tuned, which is the
-# first thing to sweep if this does not beat 3D-FGAT. With a twenty member
-# ensemble the usual finding is that less ensemble is better than the textbook
-# says, so the sweep to run is downward.
+# **Expect this to lose, and read it for the plumbing.** `rtps: 0.95` is on and
+# the LETKF and hybrid runs measure the ensemble losing about 85% of its
+# temperature spread over twenty cycles, because nothing on this domain grows
+# the prior's spread between cycles. A pure ensemble covariance is where that
+# hurts most, since there is no static half to carry what the ensemble stops
+# describing. Six cycles, and no number here belongs in the comparison until a
+# spread source exists.
 #
 # Localization is 1.5 Rossby radii, floored at two grid cells: `loc_hz` in
 # `config/static/diffusion.yaml`, built into `loc_hz.nc` by
