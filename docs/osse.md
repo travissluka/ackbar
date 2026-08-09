@@ -341,8 +341,17 @@ declared and empty (`DEFERRED` in `run.py`), and the OSSE is what forces them.
 6. **`obs-archive-osse.py --truth-run`.** *Done.* Reads the promoted archive and
    samples the state nearest each observation's own time, refusing rather than
    clamping an observation outside it. The single-state mode stays, because the
-   smoke archive tier 3 uses is built with it, and the draw order was preserved
-   so that archive still reproduces bit for bit.
+   smoke archive tier 3 uses is built with it.
+
+   **The draw order was *not* preserved, and an earlier version of this line
+   said it was.** Observation times used to be drawn after the errors and are
+   now drawn inside `observe`, before them, off the same per-cycle generator. So
+   every draw after the first shifts, and an archive rebuilt with today's tool
+   differs from the committed one in values, times and some positions. The
+   guarantee the tool offers is that the same command at the same commit
+   reproduces the same files, which is not the same guarantee and is the one to
+   state. Rebuilding the smoke archive therefore moves tier 3's pinned numbers,
+   and that is expected rather than a regression.
 7. **The profile platform**, in the generator and as
    `config/layers/obs/insitu_pfl.yaml`. `config/obs/obsop_name_map.yml` already
    carries `waterTemperature` and `depthBelowWaterSurface`, so the alias side is

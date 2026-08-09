@@ -4,7 +4,14 @@
     .venv/bin/python tools/obs-archive-osse.py --domain gom_25km \\
         --state $ACKBAR_STATIC_ROOT/ic/gom_25km/hycom-smoke/20150105T01 \\
         --start 2015-01-05T01:00:00Z --length PT12H --count 3 \\
+        --platforms adt_3a sst_noaa19 \\
         --out $ACKBAR_STATIC_ROOT/obs/gom-osse-smoke/2015
+
+`--platforms` is not optional under `--state`, and this example omitted it until
+the profile platforms landed in the default set. A single state carries a two
+dimensional anomaly, so there is nothing to sample down a column and the
+subsurface platforms are refused; taking the default therefore fails before the
+first file is written. Name the platforms the reading experiment inherits.
 
 `obs-archive-smoke.py` retimes the real ioda files the SOCA bundle ships, which
 works on a global domain and does nothing on a regional one: those observations
@@ -424,6 +431,41 @@ _STAMP = re.compile(r"^(\d{8}T\d{4})\.nc$")
 COAST = 1
 
 
+def _refuse_fixed_truth(platforms):
+    """Every way a platform can be incompatible with `--state`, in one message.
+
+    There are two ways and only one of them used to be caught. A profile or a
+    glider reads down a column and a drifter is advected by the truth's own
+    velocities, so none of the three can be answered from one state: that is the
+    layout half, and it produced a clean sentence for profiles and an
+    `AttributeError: 'FixedTruth' object has no attribute 'state'` for drifters.
+    The other half is the *field*: `perturb` builds an anomaly for sea surface
+    temperature and height and nothing else, so any salinity platform raised
+    `KeyError: 'sss'` from inside the sampler, several hundred lines and one
+    written `truth.nc` later. Both now say the same sentence and name the same
+    fix, and both are decided from the platform table rather than from a
+    hardcoded list, so adding a platform cannot skip the check.
+    """
+    refused = {
+        name: (f"observes {PLATFORMS[name]['field']}, and a single state "
+               f"carries an anomaly only for "
+               f"{' and '.join(FixedTruth.FIELDS)}")
+        for name in platforms
+        if PLATFORMS[name]["field"] not in FixedTruth.FIELDS
+    }
+    refused.update({
+        name: (f"is a {PLATFORMS[name]['layout']}, which a single state cannot "
+               f"place: it needs the truth to evolve")
+        for name in platforms
+        if PLATFORMS[name]["layout"] in FixedTruth.UNSUPPORTED_LAYOUTS
+    })
+    if refused:
+        detail = "\n".join(f"  {name} {why}" for name, why in sorted(refused.items()))
+        sys.exit(f"obs-archive-osse: --state cannot produce these platforms:\n"
+                 f"{detail}\nUse --truth-run against a promoted nature run, or "
+                 f"drop them from --platforms.")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--domain", required=True,
@@ -446,6 +488,19 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=0,
                         help="everything random here derives from this")
     args = parser.parse_args(argv)
+
+    # Everything decidable from the arguments alone, decided before a file is
+    # opened. Which platforms exist and which of them a single state can produce
+    # are both properties of the table above, so answering them needs no
+    # gridspec, no restart and no built domain. Someone choosing a platform list
+    # should get the answer on any machine, and should not be told to build a
+    # domain in order to be told they picked a platform that cannot work.
+    unknown = [name for name in args.platforms if name not in PLATFORMS]
+    if unknown:
+        sys.exit(f"obs-archive-osse: no such platform: {', '.join(unknown)}. "
+                 f"It has {', '.join(sorted(PLATFORMS))}.")
+    if args.state:
+        _refuse_fixed_truth(args.platforms)
 
     grid = read_grid(args.gridspec or gridspec_for(args.domain))
     args.out.mkdir(parents=True, exist_ok=True)
@@ -476,10 +531,6 @@ def main(argv=None):
         truth = TruthRun(args.truth_run, deep=bool(profiling))
         print(f"obs-archive-osse: {truth}")
     else:
-        if profiling:
-            sys.exit(f"obs-archive-osse: {', '.join(profiling)} observe below "
-                     f"the surface, and --state is a single state with a "
-                     f"two dimensional anomaly on it. Use --truth-run.")
         truth = FixedTruth(grid, read_state(args.state), args.seed)
         write_truth(args.out / "truth.nc", grid, truth.anomaly, args.seed)
 
@@ -522,12 +573,20 @@ def main(argv=None):
         rng = np.random.default_rng([args.seed, index])
         for platform in args.platforms:
             spec = PLATFORMS[platform]
-            # Draw order is load bearing: locations, then errors, all off one
-            # generator per cycle. The archive's guarantee is that the same
-            # command reproduces the same files, so a change here is a change to
-            # every archive ever built with this tool, including the committed
-            # one tier 3 reads. Sampling happens after both rather than between
-            # them for exactly that reason.
+            # Draw order is load bearing: locations and times inside `observe`,
+            # then errors, all off one generator per cycle. A change anywhere in
+            # that sequence shifts every draw after it, so the guarantee here is
+            # narrow and worth stating exactly: **the same command at the same
+            # commit reproduces the same files.** It is not that an archive
+            # survives a change to this tool.
+            #
+            # It has not survived one. Times used to be drawn here, after the
+            # errors; they moved inside `observe` when the platforms grew
+            # trajectories, which put them before. So an archive rebuilt today
+            # differs from one built before that change in values, times and
+            # some positions, and rebuilding the smoke archive moves tier 3's
+            # pinned numbers. That is expected. What would be a bug is believing
+            # otherwise and hunting the difference somewhere else.
             lon, lat, when, depth = observe(grid, spec, begin, begin + length, rng)
             path = target / f"{platform}.{begin.strftime('%Y%m%d%H')}.nc4"
             if lon.size == 0:
@@ -586,6 +645,18 @@ class FixedTruth:
     `TruthRun` and is stated here rather than at the call site so that the
     caller does not have to know which one it holds.
     """
+
+    #: The fields `perturb` builds an anomaly for, and therefore the only ones
+    #: this can be asked about. Named here rather than discovered from the
+    #: instance because `main` refuses an incompatible platform before it
+    #: constructs one, and the refusal wants to say which fields exist.
+    FIELDS = ("sst", "ssh")
+
+    #: Layouts that need the truth to be a run rather than a state, whatever
+    #: field they observe. A drifter is advected by the truth's own velocities
+    #: and a profile or a glider reads down a column; neither is something a
+    #: single state with a two dimensional anomaly on it can answer.
+    UNSUPPORTED_LAYOUTS = ("drifter", "profile", "glider")
 
     def __init__(self, grid, state, seed):
         self.fields, self.anomaly = perturb(grid, state, seed)
