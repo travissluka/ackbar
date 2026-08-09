@@ -540,10 +540,16 @@ properties:
             additionalProperties: false
             required: [amplitude, length_scale, timescale]
             properties:
-              # The standard deviation of the multiplier around one, before
-              # MOM6 clips it into [0, 2]. Above about 1.0 the clipping is
-              # doing most of the work and the perturbation stops being the
-              # distribution it claims to be.
+              # The standard deviation of the *pattern*, which is not the
+              # standard deviation of the multiplier the model applies.
+              # `run_stochastic_physics_ocn` passes the pattern through
+              # `2 / (1 + exp(-x))`, which maps the real line into (0, 2), so
+              # the multiplier is bounded by construction and never clipped.
+              # Near one that transform is `1 + x/2`, so the delivered spread
+              # is half this number, and less than half as the logistic
+              # saturates: 0.4 delivers 0.17 here, 0.8 delivers 0.31 and 1.5
+              # delivers 0.46. Raising it past about 1 buys progressively
+              # less.
               amplitude: { type: number, exclusiveMinimum: 0 }
               # Metres. It is the pattern's decorrelation scale, not the grid's,
               # and a scale below a few cells is smoothed away by the model

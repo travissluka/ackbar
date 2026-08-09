@@ -147,6 +147,14 @@ def namelist(stochastic, member, cycle):
     and timescale in JCSDA's UFS-marine quarter degree namelist). Those are
     global configurations, so the length scale in particular deserves a second
     thought on a basin that is only a few of them across.
+
+    `amplitude` is the pattern's standard deviation and not the multiplier's.
+    `run_stochastic_physics_ocn` maps the pattern through `2 / (1 + exp(-x))`,
+    which carries the real line into `(0, 2)`, so the multiplier is bounded by
+    construction rather than clipped, and its mean is one because the transform
+    is odd-symmetric about `(0, 1)`. Near one it is `1 + x/2`, so what the model
+    applies has about half the spread asked for here, and less than half as the
+    logistic saturates.
     """
     # `length_scale` is an e-folding length in metres, and this line is what
     # makes it one. `setvarspect` in `stochy_patterngenerator.F90` carries two

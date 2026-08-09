@@ -89,9 +89,10 @@ ensemble:
     # regional domain better has not been measured inside a cycling filter, and
     # is the first thing to sweep here.
     sppt:
-      # MOM6 clips the multiplier into [0, 2], so above about 1.0 the clipping
-      # does the work and the perturbation stops being the distribution it
-      # claims to be. 0.8 is near the top of what the scheme can mean.
+      # The pattern's spread, not the multiplier's: the generator maps the
+      # pattern through `2 / (1 + exp(-x))`, so the multiplier the model
+      # applies has about half this spread. Measured on this domain, 0.8
+      # delivers 0.31 and 1.5 delivers 0.46, so 0.8 is at the knee.
       amplitude: 0.8
       # Metres, as an e-folding length. `ackbar/stochastic.py` sets
       # `new_lscale`, without which the generator's default makes a pattern
