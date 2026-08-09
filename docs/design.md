@@ -395,6 +395,17 @@ Tasks that need specific care, in order of how badly they fail:
   it happened. Always start from the pristine background, write to a temp path, commit by
   rename. IAU is structurally safer here, since the increment is a forecast input rather than a
   restart mutation.
+
+  **That variable list is v2's *regional* list, and it is short by one that matters.**
+  It has no `hocn`, so under Z\*, where a column's sea surface height is `sum(h) - D`
+  and `ave_ssh` is a diagnostic MOM6 recomputes within a timestep, the sea level
+  analysis is written into a field the model erases and the mass field never
+  moves. v2's global path did write `hocn`, through the checkpoint app. ACKBAR
+  copied the regional list, which `CLAUDE.md` says in as many words is not the
+  model to follow, and inherited the omission: measured across three OSSE
+  experiments, `max|dh| = 0` while `ave_ssh` moves by up to 0.18 m. `docs/osse.md`
+  has the numbers and the fix, which is the column scaling
+  `tools/ensemble-recenter.py` already derives rather than a per-layer offset.
 - **Cleanup.** Retention keys off **artifact existence**, not job state: a cycle's inputs may be
   removed once every declared consumer's output exists. Keying off job state instead means a
   retried cleanup evaluates a regenerated subgraph with new job ids, concludes the old

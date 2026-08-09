@@ -418,6 +418,34 @@ caveats afterwards.
   Gulf where soca-science set it to exactly zero, and the SSH increment is
   written to `ave_ssh`, which MOM6 overwrites within a timestep. Part of every
   ADT innovation is being fitted into a field the model erases.
+
+  **That second half is worse than "part of", and it is measured.**
+  `sea_water_cell_thickness` is a *background* variable and not an *analysis*
+  variable in every DA layer, and `ackbar.writeback` writes exactly the analysis
+  list, so the mass field is never touched at all. Across `osse25-4dletkf`,
+  `osse25-3dfgat` and `osse25-hybrid`, the control member's analysis minus its
+  own background gives `max|dh| = 0` in all three while `ave_ssh` moves by up to
+  0.18 m. Under Z\* a column's sea surface height is `sum(h) - D` and nothing
+  else, so **the whole direct SSH increment is discarded at the first model
+  step, every cycle, in every experiment here.** The four altimeters reach the
+  ocean only through whatever temperature, salinity and velocity increment the
+  covariance implies.
+
+  This repository already established the physics and acted on it once:
+  `tools/ensemble-recenter.py` moves the free surface through `h` precisely
+  because shifting `ave_ssh` alone "moves the number SOCA reads and does not
+  move the ocean at all", measured there as 0.26 m rms off the control before
+  the change and 0.26 m rms off it after. The offline tool was fixed and the
+  in-cycle writeback was not. Note also where the omission came from: v2's
+  *global* path wrote `hocn` through the checkpoint app, and only its regional
+  hack dropped it, which is the script ACKBAR's direct write was modelled on.
+
+  It does not disturb the OSSE's relative ranking, because all six experiments
+  lack it equally, but no SSH number here should be read as the altimeter
+  constraining the model directly. The fix is not a config line: adding the
+  offset per layer drives 0.8% of this domain's cells negative, which is the
+  `implied h<0` crash, so the recipe is the column scaling
+  `tools/ensemble-recenter.py` already works out.
 - **`sst: {fixed value: 1.0}`** is a flat placeholder. The GODAS field is in the
   checkout at `pkg/jedi/soca/test/Data/godas_sst_bgerr.nc`, mean 0.49 K with
   real structure.
