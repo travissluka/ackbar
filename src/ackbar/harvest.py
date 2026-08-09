@@ -51,7 +51,13 @@ def harvest_cycle(paths, cycle, launcher=""):
         if record["cycle"] == cycle
     }
     if not wanted:
-        return {"cycle": cycle, "launcher": launcher, "jobs": []}
+        # The same shape as a cycle that ran, because every consumer reads
+        # `totals`, and "no jobs" is the answer for every cycle of a running
+        # experiment that has not been reached yet. A short dict here makes
+        # `ackbar harvest` raise on the first such cycle, which is the state it
+        # is most often run in.
+        return {"cycle": cycle, "launcher": launcher, "jobs": [],
+                "totals": _totals([])}
 
     rows = _sacct(sorted(wanted))
     jobs = {}

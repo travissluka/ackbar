@@ -26,9 +26,11 @@ class TestBuiltins:
 
     def test_the_on_disk_layout_is_built_in_rather_than_spelled_out_by_layers(self):
         symbols = builtin_symbols(config(), SITE)
-        assert symbols["rst_dir"] == "/out/exp1/rst"
         assert symbols["obs_out_dir"] == "/out/exp1/obs_out"
         assert symbols["cfg_dir"] == "/out/exp1/cfg"
+        assert symbols["run_dir"] == "/out/exp1/run"
+        # `rst` is inside a cycle, not beside them, so there is no symbol for it.
+        assert "rst_dir" not in symbols
 
     def test_a_var_may_not_shadow_a_builtin(self):
         # Otherwise what a symbol means depends on which layer defined it.
@@ -133,3 +135,31 @@ class TestUnresolved:
 
     def test_it_finds_a_token_that_slipped_through(self):
         assert unresolved({"a": {"b": "$(x)"}}) == [("a.b", "$(x)")]
+
+
+class TestLayoutSymbols:
+    """`$(<sub>_dir)` has to be a directory the workflow creates.
+
+    These are published so a layer never spells a path out, on the argument
+    that two spellings can disagree. That only holds while the list here is
+    the list in `paths.SUBDIRS`, and for a while it was not: five entries
+    (`ledger`, `stats`, `log`, `rst`, `done`) named top-level directories that
+    had moved under `run/<date>/`, so a layer using one resolved to a path
+    nothing ever creates. `validate` cannot catch it either, because anything
+    under the output root is taken to be this experiment's own product.
+
+    `resolve` cannot import `paths` (it would close a cycle through
+    `config.jobtime`), so the join is here.
+    """
+
+    def test_every_layout_symbol_is_a_directory_the_workflow_creates(self):
+        from ackbar.paths import SUBDIRS
+        table = symbol_table(config(), SITE)
+        published = {name[:-len("_dir")] for name in table
+                     if name.endswith("_dir")}
+        assert published - {"experiment", "scratch"} == set(SUBDIRS)
+
+    def test_the_one_layer_uses_resolves_under_the_experiment(self):
+        table = symbol_table(config(), SITE)
+        assert table["obs_out_dir"].endswith("/obs_out")
+        assert table["obs_out_dir"].startswith(table["experiment_dir"])

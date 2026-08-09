@@ -432,6 +432,22 @@ class TestCadence:
         with pytest.raises(GraphError, match="do not exist"):
             build_graph(config)
 
+    def test_an_empty_member_list_is_refused_rather_than_read_as_the_default(
+            self, keys):
+        """`[]` and absent are different, and the difference reaches the job.
+
+        An empty list built `forecast.ext` as a *scalar* node instead of a
+        one-element array. `emit` then omits `--member`, `run_task` runs with
+        `None`, and the job dies in `member_dir(None)` on every long-forecast
+        cycle. Step 6 of `validate` cannot see it either: it exempts
+        `forecast.ext` from the canonical-index-set check precisely because its
+        member set is allowed to differ.
+        """
+        config = load("hybrid_om1deg", keys)
+        config["forecast"]["extended"]["members"] = []
+        with pytest.raises(GraphError, match="is empty"):
+            build_graph(config)
+
 
 class TestTheLongForecastsTwoCadences:
     """`keep_states` keeps states, `slots` writes them for the departures.

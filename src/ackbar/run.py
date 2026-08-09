@@ -457,7 +457,7 @@ def task_io(config, paths, task, cycle, member):
     if real_writeback(config, task):
         return _writeback_io(config, paths, cycle, member)
     if real_observations(config, task):
-        return _observation_io(config, paths, task, cycle)
+        return _observation_io(config, paths, task, cycle, member)
     if real_post(config, task):
         return _post_io(config, paths, task, cycle, member)
     return stub_io(config, paths, task, cycle, member)
@@ -624,7 +624,7 @@ def _writeback_io(config, paths, cycle, member):
     return inputs, [paths.member_out("ana", cycle, member) / stamp]
 
 
-def _observation_io(config, paths, task, cycle):
+def _observation_io(config, paths, task, cycle, member):
     """What the observation tasks read and write.
 
     `stage.obs` deliberately declares no inputs. Its whole job is that an
@@ -636,9 +636,33 @@ def _observation_io(config, paths, task, cycle):
     because the configuration names every observer and only the staged ones ran.
     Before the list exists there is nothing to declare, which is exactly when
     the skip rule must not fire.
+
+    `hofx.ext` reads several cycles' observer lists and redirects every one of
+    them under `fcst/`, so neither half of `hofx`'s answer describes it: its
+    inputs are the long forecast's trajectory and its outputs are nowhere near
+    `obs_out/`. Declaring `hofx`'s would make a manual rerun that deleted the
+    forecast departures skip, on the strength of cycling departures it never
+    wrote.
     """
     if task == "stage.obs":
         return [], [paths.observer_list(cycle)]
+
+    if task == "hofx.ext":
+        length = extended_length(config)
+        section = paths.fcst_obs(cycle, length, member)
+        inputs, outputs = [], []
+        for lead in extended_lead_cycles(config):
+            covered = cycle + int(lead.total_seconds()
+                                  // cycle_length(config).total_seconds())
+            if not paths.observer_list(covered).exists():
+                continue
+            inputs.append(paths.observer_list(covered))
+            outputs.extend(section / Path(record["output"]).name
+                           for record in observations.read(paths, covered)
+                           if record["present"])
+        inputs.extend(paths.fcst_out(cycle, member, lead) / restart_stamp(config)
+                      for lead in extended_slots(config))
+        return inputs, outputs
 
     inputs = [background(config, paths, cycle) / restart_stamp(config),
               paths.observer_list(cycle)]
@@ -1338,9 +1362,21 @@ def _stage_obs(config, paths, cycle):
 def _hofx_ext(config, site, paths, cycle, task, member):
     """Evaluate the long forecast's trajectory, over every cycle it reaches.
 
-    The observers are every covered cycle's own, which is what makes the result
-    comparable: a lead is scored against exactly the observations the cycling
-    background was scored against at that time. Their output is redirected under
+    The observers are every covered cycle's own, which is what makes leads
+    comparable *across experiments*: every one of them scores the same
+    observations at the same lead.
+
+    **The last covered cycle is scored over half its window**, and that is
+    arithmetic rather than a setting. Windows are centred on their analysis time,
+    so the cycle at lead `kC` spans `[kC - C/2, kC + C/2]`, while this
+    application's window ends at the forecast's own length `kC`. There is no
+    forecast state past that for the upper half to be evaluated against. So the
+    longest lead's sample is the first half of its window, which is fair between
+    experiments and *not* the same sample as the cycling departures at that time.
+    Comparing a lead against the cycling background at the same instant is the
+    comparison that has to know this.
+
+    Their output is redirected under
     `fcst/`, and that is not tidiness. The observer layer's `obsdataout` is
     `obs_out/<T>/...`, rendered at the cycle being evaluated, so leaving it
     alone would have a five day forecast overwrite the cycling departures of
@@ -1659,10 +1695,14 @@ def _cleanup(config, paths, cycle):
     if BY_NAME["hofx"].when(config):
         proof.append(paths.sentinel(keep, "hofx"))
 
-    # `post.state` is deliberately *not* in this proof, and that is a property
-    # of what it reads rather than an omission. It reduces its own cycle's
-    # output, so by the time this task considers that cycle the reduction ran
-    # two cycles ago and cannot still be pending on it. See `_post`.
+    # `post.state(keep)` is the second, and it is the one the `ana` offset
+    # creates. That offset reaps `run/<keep>/ana` a cycle earlier than the rest
+    # of `REAPED`, which is the same cycle whose `post.state` reduces it into the
+    # kept `ana/<T>` product. Both this task and that one are released by
+    # `forecast(keep)` finishing, so they race, and losing the race is silent:
+    # `_post` reads a missing `ana/mem###/MOM.res.nc` as "this is a free run" and
+    # writes the background record alone. Per member, because it is member level.
+    proof.extend(paths.sentinel(keep, "post.state", m) for m in members)
 
     # A long forecast outlives the cycle it started from by construction, which
     # is the whole reason its cadence is a setting. It starts from the same

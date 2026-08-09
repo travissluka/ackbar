@@ -185,7 +185,10 @@ def _merge_keyed(base, over, key, merge_keys, path):
 def _removing(element, key, path):
     """Whether this element is a removal, refusing a marker that is not a bool.
 
-    `false` is allowed and means what it says.
+    Refused rather than ignored, because `_strip_remove` drops the marker from
+    every element that survives: a non-bool treated as "not a removal" would
+    merge normally and leave nothing anywhere to say a deletion was asked for
+    and did not happen. `false` is allowed and means what it says.
     """
     if not isinstance(element, dict) or REMOVE not in element:
         return False

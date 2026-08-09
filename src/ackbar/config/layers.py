@@ -95,6 +95,19 @@ def resolve_layers(experiment_path, search_root):
                 f"{experiment_path}: layer {name!r} is inherited twice; "
                 f"order decides precedence, so a repeat is always a mistake"
             )
+        if name in loaded:
+            # Already placed as an earlier layer's parent, and `_load_layer`
+            # would drop this entry on the floor. Silently, and the experiment
+            # would then merge in an order it did not write: the layer sits
+            # wherever its child pulled it in, so it loses to everything it was
+            # named after rather than winning, which is the opposite of the one
+            # rule the list has.
+            raise LayerError(
+                f"{experiment_path}: layer {name!r} is listed after a layer "
+                f"that inherits it, so it has already been merged and this "
+                f"entry would change nothing; list it before that layer, or "
+                f"drop it"
+            )
         declared.add(name)
         _load_layer(name, search_root, layers, loaded, ())
 

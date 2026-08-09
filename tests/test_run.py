@@ -198,22 +198,25 @@ def test_a_long_forecast_with_nothing_configured_is_an_error_not_a_traceback(env
 
 # --- cleanup -----------------------------------------------------------------
 
-def _complete_cycle(env, cycle):
+def _complete_cycle(env, cycle, *, reduced=True):
     """The restart set *and* the proof every declared consumer is done with it.
 
-    `post.state` reads `rst/<n-1>`, is a leaf off the same forecast cleanup
-    keys on, and is therefore in cleanup's proof for exactly the reason hofx is.
-    A helper that writes the restarts alone would describe a cycle that has not
+    `post.state` reduces `ana/<n>`, is a leaf off the same forecast cleanup keys
+    on, and is therefore in cleanup's proof for exactly the reason hofx is. A
+    helper that writes the restarts alone would describe a cycle that has not
     finished, so every test built on it would be testing the refusal.
+
+    *reduced* is how the one test that wants that refusal asks for it.
     """
     _, _, paths = env
     for member in (1, 2):
         target = paths.member_out("rst", cycle, member) / "restart.stub"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"x")
-        proof = paths.sentinel(cycle, "post.state", member)
-        proof.parent.mkdir(parents=True, exist_ok=True)
-        proof.write_text("{}")
+        if reduced:
+            proof = paths.sentinel(cycle, "post.state", member)
+            proof.parent.mkdir(parents=True, exist_ok=True)
+            proof.write_text("{}")
 
 
 def test_cleanup_drops_only_what_no_forecast_can_still_read(env):
@@ -464,6 +467,41 @@ def test_cleanup_waits_for_the_hofx_reading_the_set_it_would_delete(env):
     paths.sentinel(2, "hofx").write_text("{}")
     do(env, 3, "cleanup")
     assert not paths.cycle_out("rst", 1).exists()
+
+
+def test_cleanup_waits_for_the_reduction_of_the_analysis_it_would_delete(env):
+    """The `ana` offset puts this task and `post.state` on the same cycle.
+
+    `ana` is reaped a cycle earlier than the rest of `REAPED`, which makes
+    `cleanup(n)` the one that deletes `run/<n-1>/ana` and `post.state(n-1)` the
+    one that reduces it. Both are released by `forecast(n-1)`, so nothing orders
+    them.
+
+    Losing that race is the reason this is a test rather than a comment: `_post`
+    reads a missing `ana/mem###/MOM.res.nc` as "this cycle had no analysis",
+    which is how a free run is spelled, so the cycle's headline product would go
+    missing with nothing raised and no heal able to rebuild it.
+    """
+    _, _, paths = env
+    _complete_cycle(env, 1)
+    _complete_cycle(env, 2, reduced=False)
+    for cycle in (1, 2):
+        for member in (1, 2):
+            analysis = paths.member_out("ana", cycle, member) / "MOM.res.nc"
+            analysis.parent.mkdir(parents=True, exist_ok=True)
+            analysis.write_bytes(b"x")
+
+    do(env, 3, "cleanup")
+    assert paths.cycle_out("ana", 2).is_dir()
+    # And nothing else went either, because the proof is all or nothing.
+    assert paths.cycle_out("rst", 1).is_dir()
+
+    for member in (1, 2):
+        proof = paths.sentinel(2, "post.state", member)
+        proof.parent.mkdir(parents=True, exist_ok=True)
+        proof.write_text("{}")
+    do(env, 3, "cleanup")
+    assert not paths.cycle_out("ana", 2).exists()
 
 
 def test_cleanup_waits_for_the_long_forecast_still_integrating(env):

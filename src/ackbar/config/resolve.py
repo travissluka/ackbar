@@ -57,9 +57,16 @@ def builtin_symbols(config, site):
         "scratch_dir": f"{site['scratch_root']}/{name}",
     })
     # The on-disk layout, so that no layer spells these out and they cannot
-    # disagree with what the workflow actually creates.
-    for sub in ("cfg", "ledger", "stats", "log", "rst", "bkg", "ana", "obs_out",
-                "done"):
+    # disagree with what the workflow actually creates. This list is
+    # `paths.SUBDIRS` and has to stay it; `tests/test_resolve.py` is what makes
+    # that true, because importing `paths` from here would close a cycle
+    # (`paths` imports `config.jobtime`).
+    #
+    # Only the top level. `ledger`, `stats`, `log`, `rst` and `done` are not
+    # here because they are not experiment-time directories at all: they live
+    # under `run/<date>/`, so there is no one path a layer could be given, and
+    # publishing one meant publishing a directory nothing creates.
+    for sub in ("cfg", "ana", "bkg", "corr_vt", "fcst", "obs_out", "run"):
         symbols[f"{sub}_dir"] = f"{experiment_dir}/{sub}"
 
     # The roots a layer needs in order to name a file that is not the

@@ -180,8 +180,15 @@ def _replace(config, paths, cycle, member, present, stamp):
                   _mean(paths, cycle, present, restart, field["io name"],
                         mask.shape))
 
-    # Last, so that a set that has one is a set that is whole.
-    (target / stamp).write_bytes((source / stamp).read_bytes())
+    # Last, and by rename, so that a set that has one is a set that is whole.
+    # `coupler.res` existing is the workflow's universal proof of a complete
+    # restart set, and both things that ask (`ensemble.available`,
+    # `mom6sis2.stage`) ask by existence. A direct write creates the file before
+    # it holds anything, so a kill inside that window leaves a member that counts
+    # as present, is never rebuilt, and fails in the model instead.
+    temp = (target / stamp).with_name(stamp + ".partial")
+    temp.write_bytes((source / stamp).read_bytes())
+    temp.replace(target / stamp)
     return member
 
 

@@ -57,10 +57,24 @@ def member_set(config):
 
 
 def extended_members(config, canonical):
-    """Which members get a long forecast. Defaults to the control alone."""
+    """Which members get a long forecast. Defaults to the control alone.
+
+    An empty list is refused rather than read as the default. It would build
+    `forecast.ext` as a scalar node instead of a one-element array, which is a
+    different thing: `emit` then omits `--member`, `run_task` is called with
+    `None`, and the job dies in `member_dir(None)` on every long-forecast cycle.
+    Turning the long forecast off is `forecast.extended` absent, which is a
+    thing an experiment can already say.
+    """
     declared = config.get("forecast", {}).get("extended", {}).get("members")
     if declared is None:
         return (canonical[0],)
+    if not declared:
+        raise GraphError(
+            "forecast.extended.members is empty; name at least one member, or "
+            "drop the whole forecast.extended block to turn the long forecast "
+            "off"
+        )
     unknown = sorted(set(declared) - set(canonical))
     if unknown:
         raise GraphError(

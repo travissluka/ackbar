@@ -67,6 +67,22 @@ def test_an_unsubmitted_cycle_harvests_to_an_empty_file(env):
     assert env.asked == []      # and does not ask Slurm about nothing
 
 
+def test_an_unsubmitted_cycle_still_carries_totals(env):
+    """The empty answer has to be the same shape as every other one.
+
+    `ackbar harvest` with no `--cycle` walks every cycle in the graph, and on a
+    running experiment most of them have not been submitted. A short dict makes
+    it raise `KeyError` at the first, which is the state the command is most
+    often typed in, and leaves a `stats.json` on disk that no reader can parse
+    the same way as its siblings.
+    """
+    payload = harvest.harvest_cycle(env.paths, 3)
+    ran = harvest.harvest_cycle(env.paths, 1)
+    assert payload["totals"].keys() == ran["totals"].keys()
+    assert payload["totals"]["jobs"] == 0
+    assert payload["totals"]["core_seconds"] == 0
+
+
 def test_memory_comes_off_the_step_row_not_the_job_row(env):
     """The reason the query does not use `-X`.
 

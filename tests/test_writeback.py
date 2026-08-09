@@ -215,8 +215,7 @@ def test_a_staggered_variable_would_be_written_on_its_own_grid(scene):
     keeping the background, and the difference is not cosmetic: every face
     inside moving while the outermost stays put is a step in the velocity field
     at the domain edge, and on a regional domain that edge is an open boundary
-    where the OBC is imposing its own solution. Measured before this was
-    handled, the step reached 1.8 m/s against zero.
+    where the OBC is imposing its own solution.
 
     Copying the neighbour is the weakest assumption that does not invent a
     gradient. Leaving the face alone is not neutral, it asserts the increment

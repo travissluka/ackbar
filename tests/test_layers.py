@@ -80,6 +80,34 @@ def test_inheriting_the_same_layer_twice_is_an_error(tree):
         resolve_layers(path, root)
 
 
+def test_naming_a_layer_after_something_that_inherits_it_is_refused(tree):
+    """Because dropping it silently merges in an order the experiment did not write.
+
+    `_load_layer` skips a name already placed, which is right for a diamond and
+    wrong for an explicit entry: the layer keeps the position its child pulled
+    it in at, so it loses to everything it was listed *after* rather than
+    winning. That is the reverse of the one rule the list has, and nothing said
+    so.
+    """
+    root, tmp = tree
+    (root / "da" / "hybrid.yaml").write_text(
+        "inherit: [da/variational]\nsolver: {name: hybrid}\n")
+    path = experiment(tmp, "inherit: [da/hybrid, da/variational]\n")
+    with pytest.raises(LayerError, match="already been merged"):
+        resolve_layers(path, root)
+
+
+def test_the_same_two_layers_in_the_order_that_does_work(tree):
+    """The shipped experiments list parents first, which is the legal order."""
+    root, tmp = tree
+    (root / "da" / "hybrid.yaml").write_text(
+        "inherit: [da/variational]\nsolver: {name: hybrid}\n")
+    layers = resolve_layers(
+        experiment(tmp, "inherit: [da/variational, da/hybrid]\n"), root)
+    assert [layer.name for layer in layers] == \
+        ["da/variational", "da/hybrid", "exp"]
+
+
 def test_a_layer_may_declare_its_own_inheritance(tree):
     """And what it inherits lands before it, so the layer still wins."""
     root, tmp = tree
