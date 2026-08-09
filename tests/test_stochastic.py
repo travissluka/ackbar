@@ -1,0 +1,145 @@
+"""Tier 0: the stochastic physics a member's forecast is given.
+
+What the model does with it is tier 3's problem and, past that, the ensemble's.
+What is checkable here in milliseconds is the part that is easy to get wrong and
+silent when it is: whether the two halves agree, whether two members ever share
+a draw, and whether a rerun reproduces one.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from ackbar import stochastic
+from ackbar.config.layers import merge_layers, resolve_layers
+from ackbar.config.resolve import resolve
+from ackbar.config.schema import load_schema, merge_keys
+from ackbar.graph import GraphError, build_graph
+
+REPO = Path(__file__).resolve().parents[1]
+LAYERS = REPO / "config" / "layers"
+EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
+SITE = {"scratch_root": "/scratch", "output_root": "/out",
+        "static_root": "/static", "root": str(REPO)}
+
+SPPT = {"amplitude": 0.8, "length_scale": 500000.0, "timescale": "PT6H"}
+EPBL = {"amplitude": 0.5, "length_scale": 500000.0, "timescale": "PT6H"}
+BOTH = {"seed": 20150712, "sppt": SPPT, "epbl": EPBL}
+
+
+# --- the two halves ----------------------------------------------------------
+
+def test_each_scheme_switches_on_in_mom6_and_in_the_generator_together():
+    # `init_stochastic_physics_ocn` compares them and returns an error code that
+    # `MOM_stochastics` turns into a FATAL, so half of a scheme is a run that
+    # does not start rather than one that quietly does nothing.
+    text = stochastic.parameters(BOTH)
+    group = stochastic.namelist(BOTH, member=1, cycle=1)
+    assert "DO_SPPT = True" in text and "ocnsppt = 0.8" in group
+    assert "PERT_EPBL = True" in text and "epbl = 0.5" in group
+
+
+def test_a_scheme_that_was_not_asked_for_appears_in_neither_half():
+    only = {"seed": 1, "sppt": SPPT}
+    assert "PERT_EPBL" not in stochastic.parameters(only)
+    assert "epbl" not in stochastic.namelist(only, member=1, cycle=1)
+
+
+def test_the_timescale_reaches_the_generator_in_seconds():
+    # ACKBAR writes durations as ISO 8601 everywhere and the generator's
+    # namelist is seconds, so this conversion is the whole interface.
+    group = stochastic.namelist({"seed": 1, "sppt": SPPT}, member=1, cycle=1)
+    assert "ocnsppt_tau = 21600.0" in group
+
+
+def test_the_group_is_a_namelist_group_the_generator_can_read():
+    group = stochastic.namelist(BOTH, member=1, cycle=1)
+    assert group.startswith("&nam_stochy\n") and group.endswith("/\n")
+
+
+# --- the seed ----------------------------------------------------------------
+
+def test_no_two_members_of_a_cycle_share_a_seed():
+    seeds = {stochastic.seed(20150712, member, 7, "sppt") for member in range(21)}
+    assert len(seeds) == 21
+
+
+def test_no_two_cycles_of_a_member_share_a_seed():
+    seeds = {stochastic.seed(20150712, 3, cycle, "sppt") for cycle in range(1, 46)}
+    assert len(seeds) == 45
+
+
+def test_the_two_schemes_of_one_member_do_not_share_a_pattern():
+    assert (stochastic.seed(20150712, 3, 7, "sppt")
+            != stochastic.seed(20150712, 3, 7, "epbl"))
+
+
+def test_the_derived_epbl_dissipation_seed_is_no_members_own():
+    """`compns_stochy.F90` sets `iseed_epbl2 = iseed_epbl - 1234567`.
+
+    It is not settable, so the only defence is that no seed ACKBAR issues is
+    1234567 below another. Every seed ends in its scheme's offset digit and
+    1234567 does not end in zero, which is what keeps them apart.
+    """
+    issued = {stochastic.seed(20150712, member, cycle, scheme)
+              for member in range(21) for cycle in range(1, 46)
+              for scheme in ("sppt", "epbl")}
+    derived = {stochastic.seed(20150712, member, cycle, "epbl") - 1234567
+               for member in range(21) for cycle in range(1, 46)}
+    assert not issued & derived
+
+
+def test_a_seed_is_never_zero_because_zero_means_ask_the_clock():
+    assert stochastic.seed(1, 0, 0, "sppt") > 0
+
+
+def test_rerunning_a_cycle_reproduces_the_draw_it_had():
+    # What `ackbar heal` rests on: the failed attempt and the healed one have to
+    # be the same forecast.
+    assert (stochastic.seed(20150712, 4, 12, "sppt")
+            == stochastic.seed(20150712, 4, 12, "sppt"))
+
+
+def test_two_experiments_that_differ_only_in_the_base_seed_are_independent():
+    assert (stochastic.seed(20150712, 4, 12, "sppt")
+            != stochastic.seed(20150713, 4, 12, "sppt"))
+
+
+def test_a_member_number_the_seed_cannot_encode_is_refused():
+    # Rather than silently colliding with another member's seed.
+    with pytest.raises(stochastic.StochasticError):
+        stochastic.seed(20150712, 1000, 1, "sppt")
+
+
+# --- which members ------------------------------------------------------------
+
+def test_every_member_but_the_control_is_perturbed():
+    assert not stochastic.perturbs(0)
+    assert all(stochastic.perturbs(member) for member in range(1, 21))
+
+
+# --- the configuration --------------------------------------------------------
+
+def test_an_experiment_with_no_ensemble_has_no_stochastic_physics():
+    assert stochastic.settings({"model": {"name": "mom6sis2"}}) is None
+    assert stochastic.settings({"ensemble": {"size": 4}}) is None
+
+
+def test_stochastic_physics_on_a_model_that_integrates_nothing_is_refused(letkf):
+    # `stub_letkf` runs the stub model, so this is the config as written rather
+    # than one edited into an unlikely shape.
+    letkf["ensemble"]["stochastic"] = BOTH
+    with pytest.raises(GraphError, match=letkf["model"]["name"]):
+        build_graph(letkf)
+
+
+def test_an_ensemble_of_real_forecasts_takes_it(letkf):
+    letkf["model"]["name"] = "mom6sis2"
+    letkf["ensemble"]["stochastic"] = BOTH
+    build_graph(letkf)
+
+
+@pytest.fixture
+def letkf():
+    layers = resolve_layers(EXPERIMENTS / "stub_letkf.yaml", LAYERS)
+    return resolve(merge_layers(layers, merge_keys(load_schema())), SITE)

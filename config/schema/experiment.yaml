@@ -495,6 +495,67 @@ properties:
       # policy is per experiment and is stated rather than defaulted silently.
       on_missing_member:
         enum: [fail_cycle, run_degraded, replace_from_mean]
+      # Stochastic physics in the forecast model, which is what makes one
+      # member's *model* differ from another's rather than only its state. A
+      # filter removes spread every cycle and a free forecast from a common
+      # atmosphere puts back very little, so without something here an ensemble
+      # collapses towards its own mean. `ackbar/stochastic.py` says where each
+      # scheme acts and why the seed is derived rather than drawn.
+      #
+      # Absent is off, and off is byte for byte the model with no generator
+      # compiled in at all, so every experiment written before this reproduces.
+      # It applies to every member but the control, which is scored.
+      #
+      # MOM6 only. `model/persistence` and `model/stub` integrate nothing to
+      # perturb, and `ackbar validate` says so rather than staging a parameter
+      # file nothing reads.
+      stochastic:
+        type: object
+        additionalProperties: false
+        required: [seed]
+        # One scheme at least, or the block is an ensemble asking for spread and
+        # naming none.
+        anyOf:
+          - required: [sppt]
+          - required: [epbl]
+        properties:
+          # What makes this experiment's draws its own. Two experiments that
+          # share it draw the same patterns, which is how a controlled
+          # comparison is written; two that differ in it are independent.
+          #
+          # Bounded so the derived seed stays inside the `integer(8)` the
+          # pattern generator declares. A cycle date, `20150712`, is the
+          # obvious thing to put here and fits.
+          seed: { type: integer, minimum: 1, maximum: 99999999 }
+          # Perturbs the whole diabatic tendency, so it reaches the column and
+          # moves sea level through the thickness.
+          sppt:
+            type: object
+            additionalProperties: false
+            required: [amplitude, length_scale, timescale]
+            properties:
+              # The standard deviation of the multiplier around one, before
+              # MOM6 clips it into [0, 2]. Above about 1.0 the clipping is
+              # doing most of the work and the perturbation stops being the
+              # distribution it claims to be.
+              amplitude: { type: number, exclusiveMinimum: 0 }
+              # Metres. It is the pattern's decorrelation scale, not the grid's,
+              # and a scale below a few cells is smoothed away by the model
+              # before it can grow.
+              length_scale: { type: number, exclusiveMinimum: 0 }
+              # The pattern's AR(1) decorrelation time. Well inside a cycle, or
+              # a member's perturbation is one draw held nearly constant.
+              timescale: { type: string }
+          # Perturbs the boundary layer's TKE generation and dissipation, so it
+          # reaches the mixed layer and very little below it.
+          epbl:
+            type: object
+            additionalProperties: false
+            required: [amplitude, length_scale, timescale]
+            properties:
+              amplitude: { type: number, exclusiveMinimum: 0 }
+              length_scale: { type: number, exclusiveMinimum: 0 }
+              timescale: { type: string }
 
   observations:
     # The list the keyed-merge machinery exists for. The example it used to give

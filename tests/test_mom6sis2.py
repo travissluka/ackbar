@@ -174,7 +174,7 @@ def staged(env, cycle=1, task="forecast", member=0, source=None):
     config, _, paths = env
     run_dir = paths.scratch(cycle, task, member)
     source = source or restart_set(paths.member_out("rst", cycle - 1, member))
-    mom6sis2.stage(config, run_dir, cycle, task, source=source)
+    mom6sis2.stage(config, run_dir, cycle, task, source=source, member=member)
     return run_dir
 
 
@@ -286,6 +286,86 @@ def test_the_override_is_read_because_ackbar_puts_it_in_the_parameter_list(env):
     text = (run_dir / "input.nml").read_text()
     assert "parameter_filename = 'MOM_input', 'MOM_override'" in text
     assert "parameter_filename = 'SIS_input', 'SIS_override'" in text
+
+
+# --- stochastic physics ------------------------------------------------------
+
+SPPT = {"seed": 20150712,
+        "sppt": {"amplitude": 0.8, "length_scale": 500000.0, "timescale": "PT6H"}}
+
+
+def test_a_run_with_no_stochastic_physics_configured_writes_none_of_it(env):
+    # Every experiment written before this existed, and the reason the schemes
+    # can be compiled into one executable rather than two: no parameter file, no
+    # namelist group, and the same bytes MOM6 read before.
+    run_dir = staged(env, member=1)
+    assert not (run_dir / mom6sis2.STOCHASTIC).exists()
+    assert "nam_stochy" not in (run_dir / "input.nml").read_text()
+
+
+def test_a_perturbed_member_gets_both_halves_or_the_generator_refuses_the_run(env):
+    # `init_stochastic_physics_ocn` compares the two and fails when they
+    # disagree, so writing either alone is a run that does not start.
+    config, _, paths = env
+    config["ensemble"] = {"size": 2, "control": True, "stochastic": SPPT}
+    run_dir = staged(env, member=1)
+    assert "DO_SPPT = True" in (run_dir / mom6sis2.STOCHASTIC).read_text()
+    assert "ocnsppt = 0.8" in (run_dir / "input.nml").read_text()
+
+
+def test_the_perturbation_file_is_read_because_it_is_in_the_parameter_list(env):
+    # Last, so it wins, and only for the member that has one: a run staged
+    # without the file must not name it, or MOM6 fails on the missing file.
+    config, _, paths = env
+    config["ensemble"] = {"size": 2, "control": True, "stochastic": SPPT}
+    perturbed = (staged(env, member=1) / "input.nml").read_text()
+    control = (staged(env, member=0) / "input.nml").read_text()
+    assert ("parameter_filename = 'MOM_input', 'MOM_override', "
+            "'MOM_stochastic'") in perturbed
+    assert "parameter_filename = 'MOM_input', 'MOM_override'\n" in control
+
+
+def test_the_control_is_not_perturbed_because_it_is_what_is_scored(env):
+    config, _, paths = env
+    config["ensemble"] = {"size": 2, "control": True, "stochastic": SPPT}
+    run_dir = staged(env, member=0)
+    assert not (run_dir / mom6sis2.STOCHASTIC).exists()
+    assert "nam_stochy" not in (run_dir / "input.nml").read_text()
+
+
+def test_two_members_of_one_cycle_draw_different_patterns(env):
+    config, _, paths = env
+    config["ensemble"] = {"size": 2, "control": True, "stochastic": SPPT}
+    first = (staged(env, member=1) / "input.nml").read_text()
+    second = (staged(env, member=2) / "input.nml").read_text()
+    assert _seed_line(first) != _seed_line(second)
+
+
+def test_one_member_draws_a_different_pattern_each_cycle(env):
+    # Otherwise every cycle perturbs a member the same way, which is a fixed
+    # offset rather than a random walk, and the ensemble stops growing.
+    config, _, paths = env
+    config["ensemble"] = {"size": 2, "control": True, "stochastic": SPPT}
+    first = (staged(env, cycle=1, member=1) / "input.nml").read_text()
+    second = (staged(env, cycle=2, member=1) / "input.nml").read_text()
+    assert _seed_line(first) != _seed_line(second)
+
+
+def test_the_long_forecast_continues_the_cycle_rather_than_re_drawing(env):
+    # Both start from the same state, so a different seed would make the long
+    # forecast's first day a different trajectory from the cycle it extends.
+    config, _, paths = env
+    config["ensemble"] = {"size": 2, "control": True, "stochastic": SPPT}
+    config["model"]["diag_table"]["forecast.ext"] = \
+        config["model"]["diag_table"]["forecast"]
+    config.setdefault("forecast", {})["extended"] = {"length": "P2D"}
+    cycling = (staged(env, member=1) / "input.nml").read_text()
+    extended = (staged(env, task="forecast.ext", member=1) / "input.nml").read_text()
+    assert _seed_line(cycling) == _seed_line(extended)
+
+
+def _seed_line(text):
+    return next(line for line in text.splitlines() if "iseed_ocnsppt" in line)
 
 
 def test_the_model_is_told_to_resume_rather_than_start_new(env):

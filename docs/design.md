@@ -45,6 +45,7 @@ pkg/
     soca/          submodule
     ...
   mom6sis2/        submodule, NOAA-GFDL/MOM6-examples
+  stochastic_physics/  submodule, NOAA-PSL/stochastic_physics
 build-jedi.sh
 build-model.sh
 ```
@@ -408,8 +409,10 @@ Tasks that need specific care, in order of how badly they fail:
   survive until the destination is committed.
 - **Anything with a random seed.** Perturbation-based ensemble sources are not reproducible
   across a rerun unless the seed derives deterministically from experiment, cycle, and member.
-  v2 had a `__SEED__` token for exactly this. Decide it at design time, not when the first heal
-  produces a different ensemble than the original run.
+  v2 had a `__SEED__` token for exactly this. Settled for stochastic physics in
+  `ackbar/stochastic.py`, whose seed is a pure function of `ensemble.stochastic.seed` (frozen
+  into `cfg/` at create time), the member and the cycle, and of nothing else, so a healed
+  forecast integrates the trajectory the failed attempt was producing.
 - **Forecast and analysis.** Safe with temp-then-rename, provided the completion check is a
   complete artifact set including `coupler.res` at the expected date, not directory existence.
   Which file carries that proof is model-specific, so it is asked of the model rather than
@@ -1210,6 +1213,26 @@ the members that succeeded, or replace the missing member from the mean. These h
 graph shapes and different science, and the choice is per experiment. Related, v2 clamped
 temperature to `[-1.9, 33]` and salinity to `[0.1, 38]` inside its checkpoint; that divergence
 guard needs a home in whatever replaces that code path.
+
+**Where the ensemble's spread comes from is a configuration axis, not a property of the
+solver.** An ensemble filter removes spread every cycle and a free forecast from one atmosphere
+puts back very little, so an ensemble maintained only by its own analysis narrows towards a
+mean the observations then cannot move. Relaxation to prior spread rescales what is there; it
+cannot create structure the ensemble does not carry. Three sources were measured on `gom_25km`
+against a control ensemble perturbed at two parts in a billion, so that the model's own
+divergence rate could be subtracted rather than counted:
+
+| source | where it acts | day 5 surface temperature spread, in excess of the divergence floor |
+|---|---|---|
+| ensemble atmospheric forcing | mixed layer, and still growing at day 5 | 0.84 degC |
+| stochastic physics, oSPPT | the whole column, stationary | 0.21 degC |
+| perturbed parameters | nowhere much; a fixed offset that does not grow | at most 0.18 degC |
+
+Only the first two are implemented. `ensemble.stochastic` is the second, and it is *stochastic*
+rather than a perturbed-parameter ensemble on purpose: a member with its own parameter values is
+a different model every cycle, so the ensemble covariance stops being the covariance of anything
+and the mean is biased by whatever the parameter offsets do. A stochastic scheme draws afresh
+each cycle, and its members stay exchangeable.
 
 **Writeback is one node with one contract:** produce the restart set the next forecast reads.
 Direct restart write is the first implementation. IAU is then an alternate implementation
