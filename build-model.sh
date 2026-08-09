@@ -17,7 +17,11 @@ export FCFLAGS="-g -O2 -fallow-argument-mismatch -fallow-invalid-boz"
 # LDFLAGS may carry "-fuse-ld=mold" from the site environment; harmless here.
 
 # MOM6-examples reaches its input data through this symlink. The root it points
-# at is machine dependent, so the site file owns it.
+# at is machine dependent, so the site file owns it. Named here rather than left
+# to `ln`, which fails on an empty target saying only "No such file or
+# directory" about neither the variable nor the site file, and this is the first
+# build command anyone runs on a new host.
+: "${ACKBAR_DATASETS_ROOT:?is not set. build-model.sh symlinks it into the model tree as .datasets; set it in site/\$ACKBAR_SITE.sh. See docs/model-data.md}"
 ln -sfn "$ACKBAR_DATASETS_ROOT" "$MODEL_DIR/.datasets"
 
 cd "$MODEL_DIR"

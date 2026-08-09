@@ -28,10 +28,10 @@ host** below before running anything.
 | | |
 |---|---|
 | Solver | `da/none` (free run), `da/variational`, `da/letkf`, `da/eakf` |
-| Covariance | `da/variational` alone is static; `+ da/hybrid` adds an ensemble term; `+ da/envar` makes it fully ensemble |
+| Covariance | `da/variational` alone is static; `+ da/hybrid` adds an ensemble term, `+ da/envar` makes it fully ensemble. Both also need an `ensemble:` block in the experiment file |
 | Window | `solver.window.type`: `3d`, `fgat`, `4d` |
 | Forecast model | `model/mom6sis2`, `model/persistence` |
-| Domain | `domain/om_1deg`, `domain/gom_{25,12,8,4}km` |
+| Domain | `domain/gom_{25,12,8,4}km`. `domain/om_1deg` exists for the graph fixtures and is not a domain to run |
 | Observers | one layer per platform under `config/layers/obs/`; list as many as you fly |
 
 The named DA methods fall out of the first three rather than from a mode flag: 3DVar is
@@ -109,7 +109,7 @@ inherit:
   - obs/sst_metopb
 
 experiment:
-  name: gom-3dvar
+  name: osse25-3dvar
 
 vars:
   # Layers interpolate this; every observer layer needs it.
@@ -124,9 +124,16 @@ model:
   initial_condition: $(static_root)/ic/gom_25km/spinup/20150105T00
 ```
 
-An ensemble solver additionally needs an `ensemble:` block (`size`, `control`, `source`), and a
-`fgat` or `4d` window needs `solver.window.type` and `forecast.slots`. The authority on every
-key is [`config/schema/experiment.yaml`](config/schema/experiment.yaml), which is commented.
+An ensemble solver additionally needs an `ensemble:` block. `size`, `control` and `source`
+decide its shape; `initial_condition` is what gives the members spread, and an ensemble filter
+without it starts every member from the same state and has nothing to work with.
+`tools/ensemble-ic.sh` builds one. A `fgat` or `4d` window needs `solver.window.type` and
+`forecast.slots`. The authority on every key is
+[`config/schema/experiment.yaml`](config/schema/experiment.yaml), which is commented.
+
+`experiments/` holds the studies that have actually been run, with an
+[index](experiments/README.md). `osse25-3dvar.yaml` is the nearest thing to the above and is
+the one to copy.
 
 ### How layers combine
 
@@ -172,14 +179,18 @@ substitution syntaxes, each naming who fills it and when:
 | `{{lowercase}}` | per job | a closed set that `ackbar config symbols` prints |
 | `$(UPPERCASE)` | per task | `src/ackbar/soca.py`, into a `config/soca/` document template |
 
+One CLI rule worth knowing before the commands below: **`validate`, `create`, `graph` and
+`config` take a path to an experiment file; everything else takes an experiment name.** Before
+`create` there is nothing to name, and after it the layer tree is never read again.
+
 Inspect any of it before running anything:
 
 ```bash
-.venv/bin/ackbar validate       experiments/gom-3dvar.yaml            # six checks, says which ran
-.venv/bin/ackbar validate       experiments/gom-3dvar.yaml --offline  # skip the three touching disk
-.venv/bin/ackbar config resolve experiments/gom-3dvar.yaml --cycle 2 --member 3
-.venv/bin/ackbar config why     experiments/gom-3dvar.yaml 'vars.obs_land_mask_min'
-.venv/bin/ackbar graph --dot    experiments/gom-3dvar.yaml --cycle 1 | dot -Tpng -o graph.png
+.venv/bin/ackbar validate       experiments/osse25-3dvar.yaml            # six checks, says which ran
+.venv/bin/ackbar validate       experiments/osse25-3dvar.yaml --offline  # skip the three touching disk
+.venv/bin/ackbar config resolve experiments/osse25-3dvar.yaml --cycle 2 --member 3
+.venv/bin/ackbar config why     experiments/osse25-3dvar.yaml 'vars.ninner'
+.venv/bin/ackbar graph --dot    experiments/osse25-3dvar.yaml --cycle 1 | dot -Tpng -o graph.png
 ```
 
 ### The pieces an experiment does not build
@@ -195,12 +206,19 @@ tools/soca-diffusion.sh gom_25km      # correlation lengths for the static B, an
 tools/soca-dirac.sh     gom_25km      # check that calibration with a dirac through B
 tools/coldstart-ic.sh   gom_25km 2015-01-04T12 12 hycom-smoke   # a first restart set
 tools/ensemble-ic.sh    gom_25km 20                             # one restart set per member
-tools/obs-archive-osse.py --domain gom_25km ...                 # a synthetic archive
 ```
 
 They depend on each other in that order: the diffusion stage reads the gridspec, and ensemble
 initial conditions are drawn from the B the diffusion stage built. See
 [`docs/domains.md`](docs/domains.md) and [`docs/background-error.md`](docs/background-error.md).
+
+**Observations are not on that list, and the difference matters.** The five commands above are
+one command each and are all a domain needs in order to *run*. An observation archive is
+sampled from a nature run, so it comes after a spinup, a truth run and a promotion step, and
+`tools/obs-archive-osse.py` is the last stage of that rather than a thing you invoke cold.
+[`docs/osse.md`](docs/osse.md) is the recipe end to end and the `experiments/osse-*` files are
+its stages in order. Read it before copying an experiment file, because every shipped
+experiment names an archive that recipe produces.
 
 ## Running an experiment
 
@@ -209,12 +227,12 @@ resolved config with the commit that produced it, and emits every cycle's job sc
 which nothing reads the layer tree again: editing a layer cannot change a run already in flight.
 
 ```bash
-.venv/bin/ackbar create experiments/gom-3dvar.yaml
-.venv/bin/ackbar start  gom-3dvar
-.venv/bin/ackbar start  gom-3dvar --dry-run     # show the edges, submit nothing
-.venv/bin/ackbar pause  gom-3dvar               # stop at the next cycle boundary
-.venv/bin/ackbar resume gom-3dvar               # clear the halt flag and re-arm
-.venv/bin/ackbar cancel gom-3dvar               # cancel everything still queued
+.venv/bin/ackbar create experiments/osse25-3dvar.yaml
+.venv/bin/ackbar start  osse25-3dvar
+.venv/bin/ackbar start  osse25-3dvar --dry-run     # show the edges, submit nothing
+.venv/bin/ackbar pause  osse25-3dvar               # stop at the next cycle boundary
+.venv/bin/ackbar resume osse25-3dvar               # clear the halt flag and re-arm
+.venv/bin/ackbar cancel osse25-3dvar               # cancel everything still queued
 ```
 
 There is no daemon: cycle *n*'s graph contains a job that submits cycle *n+1*, gated `afterok`,
@@ -224,11 +242,11 @@ so a failed cycle stops the chain rather than producing cycles of garbage off a 
 ## Watching it, and fixing it
 
 ```bash
-.venv/bin/ackbar status  gom-3dvar            # a grid of tasks by cycle, and what is broken
-.venv/bin/ackbar status  gom-3dvar --verbose  # which job id was cycle 7's writeback
-.venv/bin/ackbar heal    gom-3dvar --dry-run  # the blast radius and what would be cancelled
-.venv/bin/ackbar heal    gom-3dvar            # cancel the stranded closure, resubmit it
-.venv/bin/ackbar harvest gom-3dvar --cycle 7  # pull sacct into that cycle's stats.json
+.venv/bin/ackbar status  osse25-3dvar            # a grid of tasks by cycle, and what is broken
+.venv/bin/ackbar status  osse25-3dvar --verbose  # which job id was cycle 7's writeback
+.venv/bin/ackbar heal    osse25-3dvar --dry-run  # the blast radius and what would be cancelled
+.venv/bin/ackbar heal    osse25-3dvar            # cancel the stranded closure, resubmit it
+.venv/bin/ackbar harvest osse25-3dvar --cycle 7  # pull sacct into that cycle's stats.json
 ```
 
 `status` is read-only and holds nothing, so closing it does nothing. `heal` cancels the
@@ -248,6 +266,7 @@ reaps it on the schedule the experiment sets.
   cfg/                                   resolved config, provenance, job scripts
   ana/20150105T000000Z/mem000.nc         the analysis, compressed
   bkg/20150105T000000Z/mem000.nc         the background, compressed
+  corr_vt/20150105T000000Z/              the vertical correlation, if rebuilt per cycle
   obs_out/20150105T000000Z/              departures, and a per-cycle summary
   fcst/20150105T000000Z/F120/mem000.nc   an extended forecast at that lead
   run/
@@ -272,6 +291,24 @@ cleanup:
 `keep_cycles: 1` is the tightest correct answer: cycle *n*'s forecast reads cycle *n-1*'s
 restarts and nothing reads further back. `keep_every` is what makes a long run branchable, since
 `model.initial_condition` can name another experiment's `run/<date>/rst/mem000`.
+
+## Seeing whether it worked
+
+`status` and `heal` are about jobs. The science is in two places.
+
+**Departures**, per cycle, under `obs_out/<T>/`: one ioda file per observer carrying `ObsValue`,
+`hofx<n>` and `EffectiveQC<n>`, plus a `summary.json` that `post.obs` writes with per-observer
+counts and O-B and O-A statistics. The group names carry an outer-iteration index, so the lowest
+is the background evaluation and the highest the analysis: `ObsValue - hofx<low>` is O-B and
+`ObsValue - hofx<high>` is O-A.
+
+**States**, under `ana/<T>/` and `bkg/<T>/`, on the model grid and compressed. Same instant, same
+filename, so an increment is a subtraction.
+
+Two things that are *not* there. The `verify` task is in the graph and does nothing: it is
+declared, writes a deferred sentinel, and produces no product, so a green `verify` row in
+`ackbar status` means only that the job ran. And comparing two experiments is `tools/local/`,
+which is not in the repository (see the note at the end of this file).
 
 ## Where to read next
 

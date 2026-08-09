@@ -207,7 +207,9 @@ def _require(config, path):
     cur = config
     for part in path:
         if not isinstance(cur, dict) or part not in cur:
-            raise ResolveError("required for substitution", ".".join(path))
+            raise ResolveError(
+                "is not set, and the layers interpolate it; set it in your "
+                "experiment file", ".".join(path))
         cur = cur[part]
     return cur
 

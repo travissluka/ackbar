@@ -102,6 +102,12 @@ properties:
     required: [start, length, count]
     additionalProperties: false
     properties:
+      # ISO 8601, and `parse_instant` is the real gate: JSON Schema `format` is
+      # annotation-only, so this line refuses nothing on its own. What that
+      # accepts is looser than it looks. A bare date and a naive form are both
+      # legal and are read as UTC; an offset form is *converted* to UTC, which
+      # silently moves every cycle directory name, and those names are how an
+      # experiment joins to its truth archive. Write the Z form.
       start: { type: string, format: date-time }
       length: { type: string, pattern: '^P' }
       count: { type: integer, minimum: 1 }

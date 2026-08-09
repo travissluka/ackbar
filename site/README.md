@@ -30,7 +30,8 @@ Two are required. `ackbar` refuses to start without them, naming this file in th
 | `ACKBAR_OUTPUT_ROOT` | Where experiments live, and how `ackbar <cmd> <name>` resolves a name to a directory. **Required** |
 
 The rest are optional in the sense that ackbar starts without them. Several are optional the way
-a parachute is optional.
+a parachute is optional, and one is not optional at all: `build-model.sh` refuses without
+`ACKBAR_DATASETS_ROOT`, which makes it the first thing to set on a new host.
 
 | Variable | |
 |---|---|

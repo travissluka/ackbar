@@ -425,74 +425,86 @@ def main(argv=None):
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("validate", help="check an experiment before anything is submitted")
-    p.add_argument("experiment", type=Path)
+    p = sub.add_parser("validate", help="check an experiment before anything is submitted",
+        description="Check an experiment before anything is submitted. Six steps, each reported individually, so a partial check is visible rather than implied.")
+    p.add_argument("experiment", type=Path, help="path to an experiment YAML file, not an experiment name")
     p.add_argument(
         "--offline", action="store_true",
         help="skip the steps that need the filesystem or the site's queue limits",
     )
     p.set_defaults(func=cmd_validate)
 
-    p = sub.add_parser("create", help="freeze an experiment on disk and emit its jobs")
-    p.add_argument("experiment", type=Path)
+    p = sub.add_parser("create", help="freeze an experiment on disk and emit its jobs",
+        description="Freeze an experiment on disk and emit every cycle's job scripts. After this the layer tree is never read again, so editing a layer cannot change a run already in flight.")
+    p.add_argument("experiment", type=Path, help="path to an experiment YAML file, not an experiment name")
     p.add_argument(
         "--force", action="store_true",
         help="overwrite an existing experiment that has not submitted anything",
     )
     p.set_defaults(func=cmd_create)
 
-    p = sub.add_parser("start", help="submit the first cycle")
+    p = sub.add_parser("start", help="submit the first cycle",
+        description="Submit the first cycle. Each cycle's graph contains the job that submits the next, so this is the only submission you make by hand.")
     p.add_argument("name", help="experiment name, as given to `ackbar create`")
     p.add_argument("--dry-run", action="store_true",
                    help="show what would be submitted, and submit nothing")
     p.set_defaults(func=cmd_start)
 
-    p = sub.add_parser("submit", help="submit one cycle; the submitter job's own verb")
-    p.add_argument("name")
+    p = sub.add_parser("submit", help="submit one cycle; the submitter job's own verb",
+        description="Submit one cycle. This is the submitter job's own verb and is not meant to be typed.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.add_argument("--cycle", type=int, required=True)
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_submit)
 
-    p = sub.add_parser("run", help="run one task; this is what a job script calls")
-    p.add_argument("name")
+    p = sub.add_parser("run", help="run one task; this is what a job script calls",
+        description="Run one task. This is what a job script calls and is not meant to be typed.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.add_argument("--cycle", type=int, required=True)
     p.add_argument("--task", required=True)
     p.add_argument("--member", type=int, default=None)
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("pause", help="stop cleanly at the next cycle boundary")
-    p.add_argument("name")
+    p = sub.add_parser("pause", help="stop cleanly at the next cycle boundary",
+        description="Set the halt flag. The experiment stops at the next cycle boundary rather than mid-cycle, so nothing is left half written.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.set_defaults(func=cmd_pause)
 
-    p = sub.add_parser("resume", help="clear the halt flag and re-arm")
-    p.add_argument("name")
+    p = sub.add_parser("resume", help="clear the halt flag and re-arm",
+        description="Clear the halt flag and submit the cycle the experiment stopped before.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_resume)
 
-    p = sub.add_parser("cancel", help="cancel every live job of an experiment")
-    p.add_argument("name")
+    p = sub.add_parser("cancel", help="cancel every live job of an experiment",
+        description="Cancel every live job of an experiment. Artifacts already written are left alone.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.set_defaults(func=cmd_cancel)
 
-    p = sub.add_parser("status", help="a read-only view of what the experiment is doing")
-    p.add_argument("name")
+    p = sub.add_parser("status", help="a read-only view of what the experiment is doing",
+        description="A read-only view of what the experiment is doing: a grid of tasks by cycle. Holds nothing, so closing it does nothing.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.add_argument("--verbose", "-v", action="store_true",
                    help="detail every broken node, not only when something is")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("heal", help="resubmit the subgraph affected by a failure")
-    p.add_argument("name")
+    p = sub.add_parser("heal", help="resubmit the subgraph affected by a failure",
+        description="Cancel the transitive closure of a failure's dependents and resubmit it with fresh job ids. Does not fix the cause: a genuine nonzero exit resubmitted unchanged fails the same way.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.add_argument("--dry-run", action="store_true",
                    help="show the closure and what would be cancelled")
     p.set_defaults(func=cmd_heal)
 
-    p = sub.add_parser("harvest", help="pull sacct into stats/<cycle>.json")
-    p.add_argument("name")
+    p = sub.add_parser("harvest", help="pull sacct into run/<date>/stats.json",
+        description="Pull sacct accounting into each cycle's run/<date>/stats.json.")
+    p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.add_argument("--cycle", dest="cycles", type=int, action="append",
                    help="only this cycle; repeatable. Default is all of them")
     p.set_defaults(func=cmd_harvest)
 
-    p = sub.add_parser("graph", help="show the task graph")
-    p.add_argument("experiment", type=Path)
+    p = sub.add_parser("graph", help="show the task graph",
+        description="Show the task graph: nodes, dependency edges and their kinds. Reads the layer tree, so it works before `create`.")
+    p.add_argument("experiment", type=Path, help="path to an experiment YAML file, not an experiment name")
     p.add_argument(
         "--cycle", dest="cycles", type=int, action="append",
         help="show only this cycle; repeatable",
@@ -515,11 +527,11 @@ def main(argv=None):
         help="also run the job-time pass, as the job for this cycle would see it",
     )
     p.add_argument("--member", type=int, default=0, help="member for --cycle")
-    p.add_argument("experiment", type=Path)
+    p.add_argument("experiment", type=Path, help="path to an experiment YAML file, not an experiment name")
     p.set_defaults(func=cmd_resolve)
 
     p = config_sub.add_parser("why", help="explain where a value came from")
-    p.add_argument("experiment", type=Path)
+    p.add_argument("experiment", type=Path, help="path to an experiment YAML file, not an experiment name")
     p.add_argument("key", help="dotted path, e.g. observations[0].obs error.covariance model")
     p.set_defaults(func=cmd_why)
 
@@ -533,6 +545,15 @@ def main(argv=None):
             GraphError, DurationError, CreateError, SubmitError,
             slurm.SlurmError, run.TaskError, heal.HealError) as error:
         print(f"ackbar: {error}", file=sys.stderr)
+        return 2
+    # The two mistakes a newcomer actually makes. Both used to be tracebacks,
+    # which reads as ACKBAR crashing rather than as a wrong path or a bad indent.
+    except yaml.YAMLError as error:
+        print(f"ackbar: not parseable as YAML: {error}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        where = error.filename or ""
+        print(f"ackbar: {where}: {error.strerror}".lstrip(": "), file=sys.stderr)
         return 2
 
 

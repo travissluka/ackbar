@@ -242,12 +242,13 @@ TASKS = (
     TaskDef(
         name="verify",
         when=lambda config: True,
-        description="scoring against the verification source",
+        description="scoring against the verification source (not implemented: "
+                    "the job writes a deferred sentinel and no product)",
     ),
     TaskDef(
         name="stats",
         when=lambda config: True,
-        description="harvest this cycle's resource usage into stats/<cycle>.json",
+        description="harvest this cycle's resource usage into run/<date>/stats.json",
     ),
     TaskDef(
         name="submit",
