@@ -131,8 +131,13 @@ def write_script(config, paths, node, *, root, python):
     """
     target = paths.job_script(node.cycle, node.task)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(script_text(config, paths, node, root=root, python=python))
-    target.chmod(target.stat().st_mode | stat.S_IXUSR)
+    # By rename, like every other artifact: an interrupted `create` otherwise
+    # leaves a truncated job script that looks finished, and `create` writes
+    # every cycle's scripts up front so there are a lot of chances.
+    temp = target.with_name(target.name + ".partial")
+    temp.write_text(script_text(config, paths, node, root=root, python=python))
+    temp.chmod(temp.stat().st_mode | stat.S_IXUSR)
+    temp.replace(target)
     return target
 
 

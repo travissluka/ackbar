@@ -53,6 +53,11 @@ OUT=${3:?$USAGE}
 COUNT=${4:?$USAGE}
 
 [ -d "$RST" ] || { echo "ensemble-collect: $RST does not exist" >&2; exit 1; }
+# Checked for the same reason, and it is the one that used to be silent: every
+# read of $LAGGED swallows its own error, so a wrong path here does not fail, it
+# writes `GLORYS ?` into every line of the provenance file and then reports
+# "Every member survived this settle" over an ensemble that lost members.
+[ -d "$LAGGED" ] || { echo "ensemble-collect: $LAGGED does not exist (it is a path, not a name; ensemble-ic-lagged.sh prints a bare basename)" >&2; exit 1; }
 
 # The control's stamp, which is the date the members are asserted at.
 STAMP=$(basename "$(dirname "$OUT")")                       # 20150712T00

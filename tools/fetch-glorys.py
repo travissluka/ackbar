@@ -94,6 +94,7 @@ data is still written low index first, the same as 003.
 """
 
 import argparse
+import calendar
 import datetime as dt
 import os
 import sys
@@ -487,10 +488,20 @@ def main():
     else:
         start = dt.datetime.strptime(args.start, "%Y-%m-%d")
         end = dt.datetime.strptime(args.end, "%Y-%m-%d")
+        # `write_obc` stamps its time axis with real-calendar day counts under
+        # `calendar = "NOLEAP"`, which agrees only while the span contains no
+        # 29 February. Crossing one shifts every record after it by a day, for
+        # the rest of the file, with nothing to report it.
         if start.year != end.year:
-            # The NOLEAP epoch trick in write_obc holds within one non-leap
-            # year and stops holding across a February.
             sys.exit("fetch-glorys: keep a boundary file inside one year")
+        leap_day = dt.datetime(start.year, 2, 29) if calendar.isleap(start.year) \
+            else None
+        if leap_day is not None and start <= leap_day <= end:
+            sys.exit(
+                f"fetch-glorys: {start.year} is a leap year and this span "
+                f"crosses 29 February, which the NOLEAP time axis cannot "
+                f"represent; split it either side of the leap day"
+            )
         print(f"fetch-glorys: {args.domain} boundaries {args.start} to {args.end}")
         geometry = segment_geometry(sx, sy)
         segments, depth, dates = {}, None, None

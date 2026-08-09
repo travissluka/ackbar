@@ -60,6 +60,13 @@ def main(argv=None):
                         help=f"a subset of {sorted(PLATFORMS)}")
     args = parser.parse_args(argv)
 
+    # Before the output directory is touched, so a typo is a rejected request
+    # rather than a half-built archive plus a KeyError from inside the loop.
+    unknown = sorted(set(args.platforms) - set(PLATFORMS))
+    if unknown:
+        parser.error(f"no such platform: {', '.join(unknown)}. "
+                     f"The platforms are {', '.join(sorted(PLATFORMS))}")
+
     start = parse_instant(args.start)
     length = parse_duration(args.length)
 

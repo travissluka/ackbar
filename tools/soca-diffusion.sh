@@ -290,9 +290,8 @@ for path, variable, groups in ((hz_out, HZ_VARIABLE, horizontal),
                        sort_keys=False, default_flow_style=False)
 PY
 
-# Eight ranks because that is what this machine has physical cores for, and the
-# randomization is the whole cost. See the note above about this not being bit
-# reproducible across a change to this number.
+# The randomization is the whole cost here. See the note above about this not
+# being bit reproducible across a change to the rank count.
 #
 # How many ranks is a property of the machine, so the site file owns it and
 # nothing here may name a number. See site/rancor.sh.
@@ -327,6 +326,16 @@ if config.get("vertical"):
     names.append("corr_vt")
 print("\n".join([only] if only else names))
 ' "$CONFIG" "$ONLY")
+
+# `mapfile` reports its own success, never the process substitution's, so a
+# python that died leaves NAMES empty and both loops below iterate zero times:
+# nothing is verified, nothing is moved, the trap deletes the calibration, and
+# this exits 0 saying it wrote an empty list. The check that verifies the
+# artifacts must not be able to vanish silently itself.
+[[ ${#NAMES[@]} -gt 0 ]] || {
+    echo "soca-diffusion: could not read the group list out of $CONFIG" >&2
+    exit 1
+}
 
 for name in "${NAMES[@]}"; do
     [[ -s out/$name.nc ]] || {

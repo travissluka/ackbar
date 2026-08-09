@@ -39,6 +39,8 @@ import netCDF4
 import numpy as np
 import yaml
 
+from ackbar.diffusion import THIN_LAYER
+
 #: Fixed by SOCA. `ifdir` indexes a hardcoded table in `soca_increment_mod`, not
 #: the increment's own variable list, so these numbers are the same whatever the
 #: configuration asks for. See `soca_increment_dirac`.
@@ -153,7 +155,13 @@ def read_restart(path, grid):
         h = np.asarray(src.variables["h"][0])
     if h.shape[1:] != grid["mask"].shape:
         sys.exit("dirac: the restart and the gridspec are different grids")
-    thick = h > 0.01
+    # `THIN_LAYER`, not a literal, and not `writeback.VANISHED`. This counts
+    # levels, which is what `ackbar.diffusion` uses it for: at a centimetre the
+    # Z* layers pressed under the sea floor still count, so a 10 m shelf column
+    # reads as fifty levels deep and a dirac aimed at its middle lands in a
+    # collapsed layer. `judge` then reports the operator returning zero and
+    # blames the calibration.
+    thick = h > THIN_LAYER
     return np.where(grid["mask"], (thick * h).sum(axis=0), 0.0), thick.sum(axis=0)
 
 

@@ -192,6 +192,15 @@ def main():
     # replacement and not a second shift. Recentring twice is silent: the states
     # stay plausible and the ensemble is centred somewhere no state ever was.
     out = args.output or args.ensemble.with_name(args.ensemble.name + "-recentred")
+    # Refused before the rmtree, because `--output <the ensemble>` is the
+    # obvious way to ask for an edit in place and this is not that: it would
+    # delete the members it is about to read, then die in `copytree`. Same for
+    # the control.
+    for name, taken in (("--ensemble", args.ensemble), ("--control", args.control)):
+        if out.resolve() == taken.resolve():
+            sys.exit(f"ensemble-recenter: --output is the same directory as "
+                     f"{name}, and this rebuilds its output from scratch; "
+                     f"name somewhere new")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)

@@ -50,7 +50,9 @@ for ((stage = 1; stage <= STAGES; stage++)); do
 done
 
 printf 'waiting'
-while squeue -h -n "$(IFS=,; echo "${ids[*]/#/}")" -o '%i' 2>/dev/null | grep -q . ||
+# `-j` takes job ids. `-n` takes job *names*, so the first clause used to be
+# dead and the loop rested entirely on the tag match below it.
+while squeue -h -j "$(IFS=,; echo "${ids[*]}")" -o '%i' 2>/dev/null | grep -q . ||
       squeue -h -o '%j' | grep -q "^${TAG}\."; do
   printf '.'
   sleep 5

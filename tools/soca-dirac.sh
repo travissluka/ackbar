@@ -164,8 +164,13 @@ mpiexec -n "$NTASKS" "$TOOLBOX" dirac.yaml > toolbox.log 2>&1 || {
 # One line per group, in the order the groups are declared, which is why the
 # horizontal count appears more than once: each scale file gets its own
 # operator and the longer scales cost more.
+#
+# `|| true`, because this is a print and not a check. Under `pipefail` a grep
+# that matches nothing exits 1, `set -e` takes the script down before the report
+# runs, and the EXIT trap deletes the increment: a successful toolbox run thrown
+# away because a log line was reworded upstream.
 grep "Diffusion: \(horizontal\|vertical\) iterations" toolbox.log |
-    sed 's/^.*Diffusion: /soca-dirac: /'
+    sed 's/^.*Diffusion: /soca-dirac: /' || true
 
 # `|| status=$?` rather than a bare call: the report exits non-zero when a check
 # fails, and `set -e` would take the script down with it before `--keep` ran.
