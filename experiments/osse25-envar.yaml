@@ -1,4 +1,4 @@
-# The quarter degree OSSE's hybrid FGAT EnVar, with a 4D-LETKF ensemble.
+# The quarter degree OSSE's pure FGAT EnVar. A plumbing run, not a result.
 #
 # See docs/osse.md. `osse25-3dfgat` with one layer added, for the same reason
 # that experiment is `osse25-3dvar` with one key changed: everything else is
@@ -31,7 +31,7 @@
 # the variational analysis every cycle, so the ensemble follows the run being
 # reported.
 #
-# **Expect the ensemble half to be weaker than it should be.** The LETKF runs
+# **Expect the ensemble to be weaker than it should be.** The LETKF runs
 # have it measured: this ensemble loses about a quarter of its temperature
 # spread every seven cycles and ends far overconfident, because nothing on this
 # domain grows the prior's spread between cycles. A hybrid is the configuration
@@ -44,21 +44,6 @@
 # ensemble the usual finding is that less ensemble is better than the textbook
 # says, so the sweep to run is downward.
 #
-# **Read the two components' amplitudes before believing a weight sweep.**
-# `oops::HybridCovariance::doMultiply` scales each component's *covariance* by
-# its weight, so these are variance weights and 0.5/0.5 preserves the total
-# variance only while the two halves have similar amplitude. They do not stay
-# similar here: the ensemble starts near the static B and shrinks with every
-# cycle, so the hybrid's total background error falls below what the pure static
-# run draws, and the analysis makes smaller corrections for a reason that has
-# nothing to do with flow dependence. A hybrid that trails 3D-FGAT is therefore
-# ambiguous until this is ruled out.
-#
-# To check it, compare the filter's prior spread against the static B's mixed
-# layer error: `ana/mem000/analysis/ensemble/ocn.sprdb.an.<date>.nc` holds the
-# first, `$(domain_static)/sst_bgerr.nc` the second, and the ratio between them
-# at the first and last cycle is the whole diagnosis.
-#
 # Localization is 1.5 Rossby radii, floored at two grid cells: `loc_hz` in
 # `config/static/diffusion.yaml`, built into `loc_hz.nc` by
 # `tools/soca-diffusion.sh`. Changing the multiplier means rebuilding that file.
@@ -67,7 +52,7 @@ inherit:
   - model/mom6sis2
   - da/variational
   - da/hybrid
-  - da/corr_vt_cycled
+  - da/envar
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2
@@ -83,13 +68,13 @@ inherit:
   - obs/glider_s
 
 experiment:
-  name: osse25-hybrid
-  description: OSSE, gom_25km hybrid FGAT EnVar with a 4D-LETKF ensemble
+  name: osse25-envar
+  description: OSSE, gom_25km pure FGAT EnVar, plumbing only
 
 cycle:
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  count: 30
+  count: 6
 
 solver:
   window:
