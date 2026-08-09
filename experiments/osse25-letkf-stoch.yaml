@@ -82,7 +82,9 @@ ensemble:
     seed: 20150712
     # All three numbers below are NOAA-PSL's own, from `NOAA-PSL/NestedReplay`,
     # and the length scale and timescale are also what JCSDA's UFS-marine
-    # quarter degree namelist carries. They are a *global* configuration, and
+    # quarter degree namelist carries. ePBL ran here too and was removed after
+    # it measured null twice; `src/ackbar/stochastic.py` records what it did and
+    # what would justify bringing it back. They are a *global* configuration, and
     # the length scale is the one that does not obviously transfer: 500 km
     # across a basin 1500 km wide is three e-folding lengths, so the pattern is
     # a handful of patches rather than a field. Whether a shorter scale suits a
@@ -102,25 +104,6 @@ ensemble:
       # over the forecast rather than one offset held constant. Doubling it to
       # 24 hours was measured and produced less.
       timescale: PT6H
-    # Carried, and expected to do very little. Measured twice on this domain,
-    # once as free forecasts from a common state and once as a cycle of this
-    # experiment's own ensemble, it moved surface temperature spread by 2% and
-    # the column not at all; mixed layer depth spread by about a tenth. It is
-    # here because it is the right *place* for mixed layer spread and costs one
-    # namelist line, and because a null measured under climatological forcing
-    # may not stay null under an ensemble atmosphere, which is the next thing
-    # to arrive. Drop it if it is still doing nothing then.
-    epbl:
-      amplitude: 0.8
-      length_scale: 500000.0
-      timescale: PT6H
-
-forecast:
-  extended:
-    length: P5D
-    every: PT24H
-    keep_states: PT24H
-    slots: PT6H
 
 cleanup:
   keep_cycles: 1

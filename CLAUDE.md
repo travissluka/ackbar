@@ -314,7 +314,7 @@ Closed, and recorded here because the reasoning is easy to reopen by mistake:
   covariance stops being the covariance of anything and the mean carries whatever bias the
   offsets produce. It was measured as well as argued: seventeen parameter groups swept five
   ways each, and all of them produce a fixed offset that does not grow, most of it sitting on
-  the model's own divergence floor. `ensemble.stochastic` (oSPPT and ePBL) is the implemented
+  the model's own divergence floor. `ensemble.stochastic` (oSPPT) is the implemented
   answer, and ensemble atmospheric forcing is the larger one still to build. The full
   measurement is `site/monitor/spread/report.html`.
 - **The back-compat pins are dropped.** Every domain's `MOM_override` sets

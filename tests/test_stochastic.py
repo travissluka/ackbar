@@ -23,8 +23,7 @@ SITE = {"scratch_root": "/scratch", "output_root": "/out",
         "static_root": "/static", "root": str(REPO)}
 
 SPPT = {"amplitude": 0.8, "length_scale": 500000.0, "timescale": "PT6H"}
-EPBL = {"amplitude": 0.5, "length_scale": 500000.0, "timescale": "PT6H"}
-BOTH = {"seed": 20150712, "sppt": SPPT, "epbl": EPBL}
+BLOCK = {"seed": 20150712, "sppt": SPPT}
 
 
 # --- the two halves ----------------------------------------------------------
@@ -33,25 +32,18 @@ def test_each_scheme_switches_on_in_mom6_and_in_the_generator_together():
     # `init_stochastic_physics_ocn` compares them and returns an error code that
     # `MOM_stochastics` turns into a FATAL, so half of a scheme is a run that
     # does not start rather than one that quietly does nothing.
-    text = stochastic.parameters(BOTH)
-    group = stochastic.namelist(BOTH, member=1, cycle=1)
+    text = stochastic.parameters(BLOCK)
+    group = stochastic.namelist(BLOCK, member=1, cycle=1)
     assert "DO_SPPT = True" in text and "ocnsppt = 0.8" in group
-    assert "PERT_EPBL = True" in text and "epbl = 0.5" in group
-
-
-def test_a_scheme_that_was_not_asked_for_appears_in_neither_half():
-    only = {"seed": 1, "sppt": SPPT}
-    assert "PERT_EPBL" not in stochastic.parameters(only)
-    assert "epbl" not in stochastic.namelist(only, member=1, cycle=1)
 
 
 def test_the_two_halves_agree_about_an_empty_scheme_rather_than_disagreeing():
     # The schema rejects this, and is one `required:` away from not rejecting
     # it. Disagreeing is the failure mode that costs a whole cycle: the
     # generator refuses the run rather than skipping the scheme.
-    empty = {"seed": 1, "sppt": SPPT, "epbl": {}}
-    assert "PERT_EPBL" not in stochastic.parameters(empty)
-    assert "epbl =" not in stochastic.namelist(empty, member=1, cycle=1)
+    empty = {"seed": 1, "sppt": {}}
+    assert "DO_SPPT" not in stochastic.parameters(empty)
+    assert "ocnsppt =" not in stochastic.namelist(empty, member=1, cycle=1)
 
 
 def test_the_timescale_reaches_the_generator_in_seconds():
@@ -69,11 +61,11 @@ def test_the_length_scale_is_an_e_folding_length_and_not_twice_one():
     for. On a basin a few length scales across that is the difference between a
     field of errors and one multiplier with a gradient across it.
     """
-    assert "new_lscale = .true." in stochastic.namelist(BOTH, member=1, cycle=1)
+    assert "new_lscale = .true." in stochastic.namelist(BLOCK, member=1, cycle=1)
 
 
 def test_the_group_is_a_namelist_group_the_generator_can_read():
-    group = stochastic.namelist(BOTH, member=1, cycle=1)
+    group = stochastic.namelist(BLOCK, member=1, cycle=1)
     assert group.startswith("&nam_stochy\n") and group.endswith("/\n")
 
 
@@ -87,26 +79,6 @@ def test_no_two_members_of_a_cycle_share_a_seed():
 def test_no_two_cycles_of_a_member_share_a_seed():
     seeds = {stochastic.seed(20150712, 3, cycle, "sppt") for cycle in range(1, 46)}
     assert len(seeds) == 45
-
-
-def test_the_two_schemes_of_one_member_do_not_share_a_pattern():
-    assert (stochastic.seed(20150712, 3, 7, "sppt")
-            != stochastic.seed(20150712, 3, 7, "epbl"))
-
-
-def test_the_derived_epbl_dissipation_seed_is_no_members_own():
-    """`compns_stochy.F90` sets `iseed_epbl2 = iseed_epbl - 1234567`.
-
-    It is not settable, so the only defence is that no seed ACKBAR issues is
-    1234567 below another. Every seed ends in its scheme's offset digit and
-    1234567 does not end in zero, which is what keeps them apart.
-    """
-    issued = {stochastic.seed(20150712, member, cycle, scheme)
-              for member in range(21) for cycle in range(1, 46)
-              for scheme in ("sppt", "epbl")}
-    derived = {stochastic.seed(20150712, member, cycle, "epbl") - 1234567
-               for member in range(21) for cycle in range(1, 46)}
-    assert not issued & derived
 
 
 def test_a_seed_is_never_zero_because_zero_means_ask_the_clock():
@@ -148,14 +120,14 @@ def test_an_experiment_with_no_ensemble_has_no_stochastic_physics():
 def test_stochastic_physics_on_a_model_that_integrates_nothing_is_refused(letkf):
     # `stub_letkf` runs the stub model, so this is the config as written rather
     # than one edited into an unlikely shape.
-    letkf["ensemble"]["stochastic"] = BOTH
+    letkf["ensemble"]["stochastic"] = BLOCK
     with pytest.raises(GraphError, match=letkf["model"]["name"]):
         build_graph(letkf)
 
 
 def test_an_ensemble_of_real_forecasts_takes_it(letkf):
     letkf["model"]["name"] = "mom6sis2"
-    letkf["ensemble"]["stochastic"] = BOTH
+    letkf["ensemble"]["stochastic"] = BLOCK
     build_graph(letkf)
 
 

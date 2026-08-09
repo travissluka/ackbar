@@ -506,7 +506,9 @@ properties:
       # filter removes spread every cycle and a free forecast from a common
       # atmosphere puts back very little, so without something here an ensemble
       # collapses towards its own mean. `ackbar/stochastic.py` says where each
-      # scheme acts and why the seed is derived rather than drawn.
+      # scheme acts and why the seed is derived rather than drawn. oSPPT is the
+      # only scheme here; that file says which two MOM6 also offers and why
+      # neither is carried.
       #
       # Absent is off, and off is byte for byte the model with no generator
       # compiled in at all, so every experiment written before this reproduces.
@@ -518,12 +520,7 @@ properties:
       stochastic:
         type: object
         additionalProperties: false
-        required: [seed]
-        # One scheme at least, or the block is an ensemble asking for spread and
-        # naming none.
-        anyOf:
-          - required: [sppt]
-          - required: [epbl]
+        required: [seed, sppt]
         properties:
           # What makes this experiment's draws its own. Two experiments that
           # share it draw the same patterns, which is how a controlled
@@ -557,16 +554,6 @@ properties:
               length_scale: { type: number, exclusiveMinimum: 0 }
               # The pattern's AR(1) decorrelation time. Well inside a cycle, or
               # a member's perturbation is one draw held nearly constant.
-              timescale: { type: string }
-          # Perturbs the boundary layer's TKE generation and dissipation, so it
-          # reaches the mixed layer and very little below it.
-          epbl:
-            type: object
-            additionalProperties: false
-            required: [amplitude, length_scale, timescale]
-            properties:
-              amplitude: { type: number, exclusiveMinimum: 0 }
-              length_scale: { type: number, exclusiveMinimum: 0 }
               timescale: { type: string }
 
   observations:
