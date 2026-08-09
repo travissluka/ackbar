@@ -37,6 +37,19 @@ fi
 # surrounding environment.
 export CMAKE_GENERATOR=$ACKBAR_CMAKE_GENERATOR
 
+# The checkout this was sourced from wins the `ackbar` import, which is what
+# CLAUDE.md already promises: "a running experiment imports the working tree,
+# not a snapshot of it". `pip install -e` resolves to one fixed path, so without
+# this a job launched from a git worktree sources that worktree's site file,
+# exports that worktree's ACKBAR_ROOT, and then imports the *other* checkout's
+# Python. A new key staged by code only the worktree has is silently not staged,
+# and the experiment runs as though the feature were not there: a null result
+# produced by a path collision rather than by the ocean.
+#
+# A no-op when sourced from the checkout pip was pointed at, which is the
+# ordinary case.
+export PYTHONPATH="$ACKBAR_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
 export ACKBAR_ROOT ACKBAR_SITE
 export ACKBAR_NJOBS ACKBAR_MPI_TASKS ACKBAR_BUILD_TYPE ACKBAR_CMAKE_GENERATOR
 export ACKBAR_DATASETS_ROOT ACKBAR_STATIC_ROOT

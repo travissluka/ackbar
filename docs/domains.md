@@ -379,13 +379,29 @@ $EDITOR config/model/mom6sis2/domain/gom/<res>/MOM_override  # reduce the import
                                                             # and MOM_override.soca
 $EDITOR config/layers/domain/<domain>.yaml                  # the three vars, resources
 tools/soca-gridspec.sh <domain>                                # the static stage
+env -u PYTHONPATH .venv-data/bin/python \
+    tools/fetch-glorys.py obc <domain> <start> <end>            # the boundary, if it has one
 tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <slug>  # the IC stage
 tools/soca-diffusion.sh <domain>                               # for a DA experiment
 tools/soca-dirac.sh <domain>                                   # and check it
 tools/obs-archive-osse.py --domain <domain> ...                # observations that reach it
 tools/ensemble-ic.sh <domain> <members>                        # for an ensemble experiment
+env -u PYTHONPATH .venv-data/bin/python tools/obc-lagged.py \
+    --span 21 --members <members> \
+    --out $ACKBAR_STATIC_ROOT/obc/<domain>/<product>-lag21 \
+    <domain>                                                   # a boundary ensemble, if wanted
 ackbar validate <experiment>.yaml
 ```
+
+**The boundary is fetched once per domain and the ensemble is built once per
+experiment family, both offline, both before anything is submitted.** Neither is
+a cycle task and neither reaches the network from inside a job: `fetch-glorys.py`
+writes `$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/obc.nc`, which every experiment
+on that domain shares read-only, and `obc-lagged.py` reads that file and writes
+`mem000.nc` and up into a directory an experiment then names in
+`ensemble.inputs`. The order matters only in that the second reads the first.
+Fetch the source long enough for the experiment plus twice the span, for the
+reason below.
 
 The background error and the observations are only needed by an experiment that
 assimilates; a free run names no B and reads no observations. The ensemble

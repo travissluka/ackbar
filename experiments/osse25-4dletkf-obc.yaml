@@ -1,0 +1,100 @@
+# The quarter degree OSSE's 4D LETKF, with a per-member open boundary.
+#
+# `osse25-4dletkf` with one key added and the cycle count cut, so the pair is a
+# controlled difference on where the ensemble's spread comes from. Same domain,
+# same dates, same control and ensemble initial conditions, same thirteen
+# observers, same observation archive, same solver settings, same `rtps`.
+#
+# **What it exists to answer.** Every member of `osse25-4dletkf` integrates the
+# same open boundary, so at the edge the ensemble has no spread at all, and the
+# interior spread it does have drains out through an edge every member agrees
+# about. That is not a property of the ocean, it is a property of having fetched
+# one boundary. This is whether giving each member its own changes the
+# covariance the filter works with.
+#
+# **What was measured before this was written.** Seven free forecasts from one
+# initial condition differing only in their boundary, thirty days on this
+# domain: 0.14 degC of surface temperature spread by day 30 and still rising,
+# temperature spread peaking below the thermocline rather than at the surface,
+# and two thirds of the sea surface height spread more than 200 km from any
+# segment. `tools/obc-lagged.py` carries the numbers and
+# `site/monitor/osse/obc/` the figures.
+#
+# **Ten cycles, not thirty.** The boundary needs about three weeks to mature in
+# a free forecast, so ten cycles cannot show what this does to skill. What it
+# can show is whether the filter's prior spread moves, which is the thing that
+# was zero at the boundary before.
+#
+# **The amplitude is 1.0 and that is probably low.** Differencing GLORYS against
+# HYCOM on the same day, each as an anomaly about its own boundary mean, implies
+# 1.4 to 2.1 depending on the field, median 1.6. This runs at 1 because it is
+# the paired difference that is wanted first and the amplitude is a second axis.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf-obc
+  description: OSSE, gom_25km 4D LETKF against the gom_12km truth
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 10
+
+solver:
+  window:
+    type: '4d'
+
+forecast:
+  # Six hourly, the same cadence and for the same reason as `osse25-3dfgat`:
+  # the truth the observations were drawn from is six hourly, and the archive
+  # samples the nearest state rather than interpolating, so no trajectory
+  # resolved finer than that can remove the representativeness error already in
+  # the observations. That file carries the full argument.
+  #
+  # Four states inside the 24 hour window, plus the background at its start.
+  slots: PT6H
+
+  # Identical to the other four experiments'. The comparison at each lead is a
+  # paired difference, so the launches and the valid times have to match.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  # Each member reads its own lagged GLORYS boundary as INPUT/obc.nc.
+  # mem000 gets the unperturbed one, so the control is scored against
+  # exactly the boundary `osse25-4dletkf` used.
+  inputs:
+    obc.nc: $(static_root)/obc/gom_25km/glorys-lag21-m20/{{member_dir}}.nc
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00
