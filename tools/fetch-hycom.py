@@ -147,6 +147,18 @@ def die(message):
     obc_grid.die(WHO, message)
 
 
+def experiment_of(template):
+    """Which HYCOM experiment a URL template names, for the `:source` stamp.
+
+    Read from the template rather than written as a constant, because the whole
+    purpose of this tool is provable independence from GLORYS, and a file that
+    names the 1994-2015 reanalysis while holding 2017 from the analysis family
+    is worse than one with no provenance at all.
+    """
+    parts = [p for p in template.split("/") if p.startswith("expt_") or p.startswith("GLB")]
+    return " ".join(parts) or template
+
+
 def open_dataset(template, year):
     url = template.format(year=year)
     for attempt in range(ATTEMPTS):
@@ -268,23 +280,57 @@ def sample_segment(dataset, geo, when, depth):
     return obc_grid.sample_onto(geo, fields, src_lon, src_lat)
 
 
-def ssh_offset(built, reference, geometry):
+def ssh_offset(built, reference, geometry, dates):
     """Mean `zeta` here minus mean `zeta` in *reference*, over the whole boundary.
 
     One number for the file rather than one per segment: the thing being removed
     is the two products' different datum, which is global to each, and a per
     segment correction would put a step in sea surface height at the corner
     where two segments meet.
+
+    **Over the same days on both sides**, which is the part that is easy to get
+    wrong and expensive when it is. A reference covering a year while this fetch
+    covers a summer would otherwise contribute its own seasonal cycle to the
+    "datum": the Gulf's steric range is about 10 cm against a 16 cm datum
+    difference, so most of what got removed would be real signal the interior
+    still has, and it would be removed as a constant.
+
+    The same segments on both sides too. A reference missing one of three is a
+    comparison between different geography, and a mean over a different piece of
+    coastline is not a datum.
     """
-    mine = np.concatenate([built[name]["zeta"].ravel() for name in geometry])
     with nc.Dataset(reference) as f:
-        theirs = np.concatenate(
-            [np.asarray(f[f"zeta_segment_{name}"][:]).ravel()
-             for name in geometry if f"zeta_segment_{name}" in f.variables])
-    if not len(theirs):
-        die(f"{reference} carries no zeta_segment_ variables for the segments "
-            f"of this domain, so there is nothing to match against")
-    return float(np.nanmean(mine) - np.nanmean(theirs))
+        carried = [name for name in geometry
+                   if f"zeta_segment_{name}" in f.variables]
+        if sorted(carried) != sorted(geometry):
+            die(f"{reference} carries zeta for segment(s) "
+                f"{sorted(carried) or 'none'} where this domain has "
+                f"{sorted(geometry)}. Matching against a different piece of "
+                f"the boundary would produce a number, and it would not be a "
+                f"datum.")
+        when = nc.num2date(f["time"][:], f["time"].units, f["time"].calendar,
+                           only_use_cftime_datetimes=False)
+        pairs = []
+        for ours, day in enumerate(dates):
+            theirs = int(np.argmin([abs((b - day).days) for b in when]))
+            if abs((when[theirs] - day).days) <= 1:
+                pairs.append((ours, theirs))
+        if not pairs:
+            die(f"{reference} covers {when[0]:%Y-%m-%d} to {when[-1]:%Y-%m-%d}, "
+                f"which does not overlap {dates[0]:%Y-%m-%d} to "
+                f"{dates[-1]:%Y-%m-%d}. An offset taken across that gap is a "
+                f"season, not a datum.")
+        if len(pairs) < len(dates):
+            print(f"{WHO}:   matching on the {len(pairs)} of {len(dates)} "
+                  f"day(s) {reference.name} also covers")
+        here = [ours for ours, _ in pairs]
+        there = [theirs for _, theirs in pairs]
+        reference_ssh = np.concatenate(
+            [np.asarray(f[f"zeta_segment_{name}"][there]).ravel()
+             for name in geometry])
+
+    mine = np.concatenate([built[name]["zeta"][here].ravel() for name in geometry])
+    return float(np.nanmean(mine) - np.nanmean(reference_ssh))
 
 
 def main():
@@ -354,9 +400,10 @@ def main():
             partial, src_lon, src_lat, depth,
             {HYCOM_IC[name]: values for name, values in raw.items()},
             asserted,
-            source=f"HYCOM GOFS 3.1 GLBv0.08 expt_53.X, {when:%Y-%m-%d} "
-                   f"{HOUR:02d}Z, in-situ temperature converted to potential",
-            comment=comment)
+            source=f"HYCOM GOFS 3.1 {experiment_of(args.dataset)}, "
+                   f"{when:%Y-%m-%d} {HOUR:02d}Z, in-situ temperature "
+                   f"converted to potential",
+            valid_at=valid_at, comment=comment)
         partial.rename(args.out)
         print(f"{WHO}: wrote {args.out}")
         return
@@ -388,14 +435,14 @@ def main():
 
     offset = None
     if args.match_ssh:
-        offset = ssh_offset(segments, args.match_ssh, geometry)
+        offset = ssh_offset(segments, args.match_ssh, geometry, dates)
         print(f"{WHO}: mean sea surface height is {offset:+.4f} m against "
               f"{args.match_ssh.name}, removing it")
         for name in segments:
             segments[name]["zeta"] = segments[name]["zeta"] - offset
 
-    source = (f"HYCOM GOFS 3.1 GLBv0.08 expt_53.X {HOUR:02d}Z snapshots, "
-              f"{dates[0]:%Y-%m-%d} to {dates[-1]:%Y-%m-%d}, in-situ "
+    source = (f"HYCOM GOFS 3.1 {experiment_of(args.dataset)} {HOUR:02d}Z "
+              f"snapshots, {dates[0]:%Y-%m-%d} to {dates[-1]:%Y-%m-%d}, in-situ "
               f"temperature converted to potential")
     if offset is not None:
         source += (f", sea surface height shifted by {-offset:+.4f} m to match "

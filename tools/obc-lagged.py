@@ -213,8 +213,23 @@ def ladder(span, members):
     magnitudes = [span * (k + 1) / ((members + 1) // 2)
                   for k in range((members + 1) // 2)]
     lags = [int(round(sign * value))
-            for value in magnitudes for sign in (1, -1)]
-    return lags[:members]
+            for value in magnitudes for sign in (1, -1)][:members]
+
+    # Rounding to whole days collapses the ladder when the span cannot carry the
+    # member count: span 5 with 12 members gives a repeated 2 and a repeated -2,
+    # and span 1 with 6 gives two members lagged by nothing at all. Both are two
+    # bit-identical forecasts costing two forecasts and lowering the rank, and
+    # nothing downstream can tell them from an ensemble that happened to be
+    # degenerate. The requested spacing is the thing to state, since it is what
+    # the caller has to change.
+    duplicates = len(lags) - len(set(lags))
+    if duplicates:
+        die(f"span {span} over {members} members needs a spacing of "
+            f"{span / ((members + 1) // 2):.2f} days, which rounds to "
+            f"{duplicates + 1} identical lag(s) in {lags}. Widen the span or "
+            f"cut the members: whole days are the resolution a daily boundary "
+            f"has.")
+    return lags
 
 
 def die(message):
@@ -415,6 +430,22 @@ def main():
             print("Unobservable, not small. See the head that nothing can "
                   "correct, above.")
 
+        # A member this run did not write is a member from a previous one, and
+        # every consumer addresses these files by name: `spike-obc.sh` globs
+        # `mem*.nc`, and `ensemble.inputs` resolves `mem007.nc` and checks only
+        # that it exists. So a shorter ladder written over a longer one leaves an
+        # ensemble whose tail is the old ladder, and whose mean is therefore no
+        # longer `mem000`, which is the single property the anomaly form exists
+        # to provide. Nothing downstream can detect it: with the same span the
+        # record counts match too.
+        expected = {f"{name}.nc" for name, _, _ in written}
+        stale = sorted(p for p in args.out.glob("mem*.nc") if p.name not in expected)
+        for path in stale:
+            path.unlink()
+        if stale:
+            print(f"\nRemoved {len(stale)} member(s) left by an earlier run with "
+                  f"a longer ladder: " + ", ".join(p.name for p in stale))
+
     print(f"\nobc-lagged: wrote {len(written)} files to {args.out}")
 
 
@@ -436,9 +467,17 @@ def write_member(source, path, keep, values):
             out.createDimension(name, None if dimension.isunlimited()
                                 else len(dimension))
         for name, variable in source.variables.items():
-            copy = out.createVariable(name, variable.datatype, variable.dimensions)
-            copy.setncatts({key: variable.getncattr(key)
-                            for key in variable.ncattrs()})
+            # `_FillValue` is settable only at creation time, and on a
+            # NETCDF4_CLASSIC file setting it afterwards is a hard error rather
+            # than a no-op. The files this tool writes carry none, so this is
+            # only reachable through `--source`, which is exactly the case where
+            # the file came from somewhere else.
+            attributes = {key: variable.getncattr(key)
+                          for key in variable.ncattrs()}
+            fill = attributes.pop("_FillValue", None)
+            copy = out.createVariable(name, variable.datatype, variable.dimensions,
+                                      **({} if fill is None else {"fill_value": fill}))
+            copy.setncatts(attributes)
             if name in perturbed:
                 copy[:] = perturbed[name]
             elif "time" in variable.dimensions:

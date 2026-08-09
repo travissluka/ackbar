@@ -2,10 +2,12 @@
 """How many independent directions a perturbation ensemble actually spans.
 
     tools/spike-rank.py <dir-of-mem###.nc>
-    tools/spike-rank.py /data/ackbar/spike/obc-lag21/obc \
+    tools/spike-rank.py /data/ackbar/static/obc/gom_25km/glorys-lag21 \
         --merge '(\\w+)_segment_\\w+'
-    tools/spike-rank.py $ACKBAR_STATIC_ROOT/forcing/gefs-lagged/2021070100 \
-        --vars T2,Q2,U10,V10,DSWRF
+
+The directory has to hold `mem000.nc` and up, which is the layout
+`tools/obc-lagged.py` writes and the one `ensemble.inputs` reads. A perturbation
+archive laid out any other way has to be renamed before this can read it.
 
 Reads `mem000.nc` (the unperturbed member) and every `mem001.nc` onwards beside
 it, and for each field reports the singular value spectrum of the member anomaly
@@ -115,6 +117,16 @@ def main():
         raise SystemExit(f"spike-rank: {args.root} holds {len(paths)} mem*.nc "
                          f"files; a spectrum needs the unperturbed member plus "
                          f"at least two others")
+    # Named rather than taken as the first file. Anomalies are about the
+    # unperturbed member, and a directory numbered from mem001 would silently
+    # make mem001 the reference: every anomaly would become member-minus-member-1,
+    # the printed ceiling would be wrong by one, and the centring diagnostic
+    # below would report the opposite of the truth.
+    if paths[0].name != "mem000.nc":
+        raise SystemExit(f"spike-rank: {args.root} has no mem000.nc, and its "
+                         f"lowest member is {paths[0].name}. The anomalies are "
+                         f"taken about the unperturbed member, so there has to "
+                         f"be one.")
     base, members = paths[0], paths[1:]
     wanted = [v.strip() for v in args.vars.split(",") if v.strip()]
     fields = fields_of(base, wanted, args.merge)
