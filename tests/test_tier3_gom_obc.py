@@ -34,10 +34,9 @@ import numpy as np
 import pytest
 import yaml
 
-from conftest import experiment_paths
-
 from ackbar import slurm
 from ackbar.cli import main
+from ackbar.paths import Paths
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -62,6 +61,47 @@ def require_everything():
         pytest.skip("no sbatch on this machine")
     if not os.environ.get("ACKBAR_OUTPUT_ROOT"):
         pytest.skip("run `source site/activate.sh` first")
+    covered_or_skip()
+
+
+def covered_or_skip():
+    """Skip, loudly, if `tier3_gom`'s dates are outside the domain's boundary.
+
+    This is not a check about the boundary ensemble; it is a check about the
+    fixture this module inherits. `tier3_gom` starts at 2015-01-05 because that
+    is where `ic/gom_25km/hycom-smoke` leaves off, and the domain's `obc.nc` is
+    GLORYS covering 2015-05-28 to 2015-09-10. MOM6 stops on that, and it stops
+    with `time_interp_external ... is before range of list`, four minutes into a
+    job, from whichever PE owns a segment.
+
+    Skipping rather than failing because a red test here would be reporting
+    someone else's bug in this module's name: `test_tier3.py`,
+    `test_tier3_gom.py` and `test_tier3_diffusion.py` inherit the same fixture
+    and are blocked on the same thing. The message names the real blocker so it
+    cannot be read as a boundary-ensemble problem.
+    """
+    config = yaml.safe_load(SOURCE.read_text())
+    boundary = Path(os.environ["ACKBAR_STATIC_ROOT"]) / "domain" / "gom_25km" \
+        / "INPUT" / "obc.nc"
+    if not boundary.exists():
+        pytest.skip(f"{boundary} is not staged")
+    with netCDF4.Dataset(boundary) as f:
+        units, t = f["time"].units, f["time"]
+        calendar = getattr(t, "calendar", "standard")
+        # Built from the fields rather than formatted. A NOLEAP axis comes back
+        # as a cftime object, and the one pinned here implements neither
+        # `__format__` nor `isoformat`; year, month and day it does have.
+        def day(value):
+            d = netCDF4.num2date(value, units, calendar)
+            return f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
+
+        first, last = day(t[0]), day(t[-1])
+    start = str(config["cycle"]["start"])[:10]
+    if not first <= start <= last:
+        pytest.skip(
+            f"tier3_gom starts {start}, outside the gom_25km boundary's "
+            f"{first} to {last}. Every tier 3 test on this fixture is blocked "
+            f"on it, not just this one.")
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +132,11 @@ def experiment(tmp_path, name, boundary):
 
 
 def cycled(path, name):
-    paths = experiment_paths(name, load_site())
+    # `Paths` from the generated config rather than `conftest.experiment_paths`,
+    # which resolves a name against `tests/experiments/`. These two experiments
+    # are written per run into a tmp dir, because the boundary archive they point
+    # at is built per run and its path cannot be committed.
+    paths = Paths.of(yaml.safe_load(path.read_text()), load_site())
     _purge(paths)
     assert main(["create", str(path), "--force"]) == 0
     assert main(["start", name]) == 0
