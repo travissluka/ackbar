@@ -103,6 +103,19 @@ mpiexec -n 1 "$GRIDGEN" gridgen.yml
     exit 1
 }
 
+# The staggered fields as generated describe the *east* and *north* faces,
+# because that is the only face set a non-symmetric MOM6 has an index for, and
+# they are moved onto the west and south faces, which are the ones SOCA's reader
+# actually loads out of a symmetric restart. Without this every velocity in the
+# system is masked and labelled one cell away from where it is. The reasoning,
+# the evidence and how to re-check it are in `ackbar.gridspec`.
+#
+# Here rather than inside the reader because the reader cannot be told which
+# columns to take: `commit_reader_strided` starts at the tracer origin for every
+# variable. So the gridspec has to describe the columns it takes.
+python -c "from ackbar.gridspec import shift_staggered; \
+shift_staggered('soca_gridspec.nc')"
+
 mkdir -p "$OUT"
 mv soca_gridspec.nc "$OUT/soca_gridspec.nc"
 echo "soca-gridspec: wrote $OUT/soca_gridspec.nc"

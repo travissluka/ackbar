@@ -27,6 +27,14 @@ forecast's MOM6 is built with symmetric memory, so its restart carries `u` on
 that straight in would shift every velocity by one cell, which looks like a
 model that develops a strange coastal jet a week later.
 
+Which end of the wider array the analysis corresponds to is not this module's
+choice to make: SOCA's reader takes the *leading* tracer-sized corner of every
+variable, so that is what an analysis holds and that is what this writes back
+into. What makes those the right cells is that the domain's gridspec has been
+shifted onto the same faces, which is `ackbar.gridspec` and is where the whole
+argument lives. The mask this applies comes from that gridspec, so the two
+cannot drift apart.
+
 **The `checksum` attribute is a claim about the data.** MOM6 reads it back and
 aborts on a mismatch, which is exactly right and exactly what a modified restart
 triggers. The attribute is dropped from the variables this writes, and from no
