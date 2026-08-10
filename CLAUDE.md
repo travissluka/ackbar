@@ -261,7 +261,10 @@ layered configuration, the DA mode decomposition, cross-cycle overlap, resource 
 and monitoring and healing. **`docs/build-order.md`** carries the implementation phases, the
 test tier each is verified at, and the spikes that must land before particular phases.
 **`docs/prior-workflows.md`** records what the two prior attempts did and which of their
-mistakes the design exists to avoid.
+mistakes the design exists to avoid. **`docs/forcing.md`** covers atmospheric forcing: what
+each source and each GEFS era can supply, why the archive is keyed by domain, the
+de-averaging that is the one place a fetch can be quietly wrong, and how a source reaches
+the model.
 
 The decisions those docs rest on, in one place, because they are the ones an agent is most
 likely to relitigate by accident: Slurm is assumed rather than abstracted over, and rancor's

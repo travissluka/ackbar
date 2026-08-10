@@ -12,23 +12,28 @@
 # forecast was looking. Real forecast uncertainty about the actual verifying
 # date, in physically calibrated units, with no amplitude to tune.
 #
-#     tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84 \
-#         --members 20 --domain gom_25km \
+#     tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84,108 \
+#         --members 21 --domain gom_25km \
 #         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
 #
-# **On this period the twenty members are five forecasts on a four rung
-# ladder**, because the GEFS reforecast has five members before 2020-09. They
-# are not exchangeable: a member at 84 hours is drawn from a wider error
-# distribution than one at 12, so the ensemble is a mixture of four
-# distributions rather than a sample of one, the spread is larger than any
-# single lead's, and a rank histogram will not be flat even with a perfect
-# filter. The alternative is a five member ensemble. `tools/forcing-gefs.py`
-# carries the full argument, and a period after 2020-09 retires the ladder with
-# 31 native members.
+# **Count the runs, not the members.** `ensemble.size: N` with `control: true`
+# is N+1 runs, `mem000` through `memN`, and each needs its own atmosphere. A
+# twenty member experiment is twenty-one atmospheres, which is five rungs and
+# not four; four rungs is twenty files and the twenty-first member has nothing
+# to read. Adjust the ladder to the experiment that inherits this.
 #
-# `mem000` is the control at the shortest lead, which is the same file
-# `forcing/gefs` names, so the deterministic experiment and this one's control
-# member read the same atmosphere.
+# **On this period the members are five forecasts on a lead ladder**, because
+# the GEFS reforecast has five members before 2020-09. They are not
+# exchangeable: a member at 84 hours is drawn from a wider error distribution
+# than one at 12, so the ensemble is a mixture of as many distributions as there
+# are rungs, the spread is larger than any single lead's, and a rank histogram
+# will not be flat even with a perfect filter. The alternative is a five member
+# ensemble. `tools/forcing-gefs.py` carries the full argument, and a period
+# after 2020-09 retires the ladder with 31 native members.
+#
+# `mem000` is the control at the shortest lead, so if a deterministic layer is
+# ever written against the same archive its file and this one's control member
+# are the same atmosphere.
 
 inherit:
   - forcing/common

@@ -98,12 +98,25 @@ property of the forcing and not of the domain, so it travels with the data table
 rather than living in the domain's `SIS_override`, which is where `NIGLOBAL` and
 `NJGLOBAL` live and must not be replaced.
 
+**This is load bearing, not a formality.** SIS2's code default is False, but the
+Gulf case sets `ADD_DIURNAL_SW = True` in `SIS_input` and no `SIS_override`
+mentions it, which is correct for the daily-mean climatology every other
+experiment reads. So `SIS_forcing` flips a value the case actively sets, on the
+first run that uses it, and the both-or-neither check guards a live
+misconfiguration rather than a hypothetical one.
+
 ## The twin
 
-**ERA5 forces the truth. GEFS forces every experiment**, the deterministic ones
-included. That last part is not a detail: if 3DVar read ERA5 while the LETKF read
-GEFS, the solver comparison this repository exists to make would be decided by
-which experiments got a free atmosphere.
+**The intent is that ERA5 forces the truth and GEFS forces every experiment**,
+the deterministic ones included. That last part is not a detail: if 3DVar read
+ERA5 while the LETKF read GEFS, the solver comparison this repository exists to
+make would be decided by which experiments got a free atmosphere.
+
+Neither half holds yet. The truth run is still climatology-forced, and the only
+experiment reading GEFS is `osse25-4dletkf-atm`. Until the truth is rebuilt on
+ERA5, an experiment on GEFS carries a forcing error against the truth that the
+climatology-forced experiments do not, so the two are comparable on spread and
+not on skill.
 
 ERA5 is hourly, quarter degree, instantaneous analysis for the state fields and
 hourly *mean rates* for the fluxes, so there is no de-accumulation step and
@@ -127,6 +140,20 @@ clamping, since those manufacture spread and this spread is measured; physical
 consistency for free, since a member's seven fields come out of one model run;
 no rule about lagging every variable together, since nothing is lagged; and one
 knob.
+
+**More members than an era has forecasts means more than one lead.** The
+reforecast has five members before 2020-09, so an ensemble larger than five is
+the outer product of those members with a ladder of leads, and everything below
+about a single lead has to be read with that in mind. Members drawn from
+different rungs **are not exchangeable and the filter assumes they are**: a
+member at 84 hours comes from a wider error distribution than one at 12, so the
+ensemble is a mixture rather than a sample, its spread exceeds any single lead's,
+and a rank histogram will not be flat even with a perfect filter. Every number
+measured on this branch was measured on a five rung ladder. From 2020-09 onward,
+31 native members retire the ladder.
+
+Size the ladder by counting *runs*: `ensemble.size: N` with a control is N+1
+runs and therefore N+1 atmospheres.
 
 **That knob is the lead**, and it sets two things at once: how much spread the
 ensemble has, and how wrong the experiments' atmosphere is against the truth's.
@@ -156,10 +183,19 @@ carries the table.
 | `operational-half` | 2018-07 to 2020-09 | 21 | 4 | 6 h | 0.5 deg | dewpoint | every field at one lead |
 | `operational-quarter` | 2020-09 on | 31 | 4 | 3 h | 0.25 deg | dewpoint | every field at one lead |
 
-`reforecast` and `operational-quarter` are implemented and tested. The two middle
-eras are in the table with their cadence, member count and grid, and are refused
-by name until someone reads their layout, because an archive built from a guessed
-directory shape is worse than no archive.
+`reforecast` is implemented and is the only era anything has been fetched from.
+`operational-quarter` is implemented and **has never been executed**: it takes a
+different code path (one file per lead rather than per field, dewpoint rather
+than specific humidity, whole-file download rather than byte ranges), so treat
+its first run as a spike rather than as a fetch. The two middle eras are in the
+table with their cadence, member count and grid, and are refused by name until
+someone reads their layout, because an archive built from a guessed directory
+shape is worse than no archive.
+
+There are no automated tests over the fetchers as wholes; what is tested is the
+de-averaging arithmetic (`tests/test_forcing_deaverage.py`) and the staging half
+in `mom6sis2` (`tests/test_mom6sis2.py`). Everything else about a fetcher is
+checked by running it.
 
 Nothing is silently approximate. A period no era covers, a period two eras cover
 (2017 to 2019, where the reforecast and the operational archive are different
@@ -198,10 +234,51 @@ residue, and the first version of the check rejected -8 W m-2 "against a range o
 8". Both bounds sit far below what a real misreading costs, which is hundreds of
 W m-2.
 
+## How an experiment reads it
+
+A member selects a *file* and a source selects *two config values*, and those
+are separate mechanisms.
+
+The file comes through `ensemble.inputs`, which maps a name inside `INPUT/` to a
+path template that may carry `{{member_dir}}`. `forcing/gefs-ensemble` sets
+`atm.nc` to `$(forcing_archive)/gefs/{{member_dir}}.nc` and that is the whole of
+the per-member half. The mechanism is not this stage's: it is the same one a
+per-member open boundary uses, and `mom6sis2.member_inputs` documents it. A
+template with no `{{member_dir}}` in it is how an ensemble would read one shared
+atmosphere.
+
+The config values are `model.data_table`, naming the table that points at
+`INPUT/atm.nc`, and `model.override.SIS_forcing`, a fourth SIS parameter file
+holding `ADD_DIURNAL_SW = False`. `mom6sis2.stage` refuses one without the
+other, because a sub-daily shortwave read with that flag left on is the one
+misconfiguration here that runs to completion and reports success. `SIS_forcing`
+is a separate file rather than a line in the domain's `SIS_override` because
+that file carries `NIGLOBAL` and `NJGLOBAL`.
+
+There is no `forcing.source` axis and no `data_table.<source>`: every source is
+normalized into the same file shape, so one table serves all of them and
+swapping source is swapping which archive directory the template names.
+
+## What this has actually been run against
+
+One experiment, `osse25-4dletkf-atm`: `gom_25km`, ten cycles from 2015-07-12,
+twenty-one members on a five rung ladder, against `osse25-4dletkf` with
+everything else identical. Measured there, the surface temperature spread
+collapse is largely arrested: the cycle-mean falls 65% over ten cycles with the
+shared climatology and 16% with a GEFS member per member. Salinity is barely
+moved, and the thickness-weighted column mean does not move at all, which is
+worth knowing because the column mean is what `tools/local/letkf-spread.py`
+reports and it called the whole thing a null result.
+
+That run's truth is still climatology-forced, so it measures spread and not
+skill. Nothing here has been run on another domain, with stochastic physics, or
+with per-member boundaries.
+
 ## Not built yet
 
-- The per-member overlay in `mom6sis2.py`, and the `forcing.source` config axis.
-- The `data_table` and `SIS_override` source variants as config rather than as
-  spike files.
-- The lagged-difference scheme, for member counts above what an era holds.
+- The ERA5 and deterministic-GEFS source layers. `forcing/gefs-ensemble` is the
+  only source layer in the tree; `tools/forcing-era5.py` builds an archive that
+  no layer yet reads.
+- The ERA5-forced truth run, without which there is no skill number.
+- The lagged-difference scheme, for member counts above what a ladder holds.
 - The two middle GEFS eras.

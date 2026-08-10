@@ -3,8 +3,10 @@
 #
 # Not a source: this sets no input, so an experiment that inherited it alone
 # would run with `INPUT/atm.nc` missing and fail inside `data_override` rather
-# than at validate time. Inherit `forcing/era5`, `forcing/gefs` or
-# `forcing/gefs-ensemble`.
+# than at validate time. Inherit a source layer, which today is
+# `forcing/gefs-ensemble` and nothing else. Deterministic single-source layers
+# (one shared ERA5 or GEFS atmosphere for every member) are a template with no
+# `{{member_dir}}` in it and have not been written.
 #
 # The archive every one of them reads is built by `tools/forcing-era5.py` and
 # `tools/forcing-gefs.py` into
@@ -18,8 +20,13 @@ vars:
   forcing_archive: $(static_root)/forcing/$(domain_slug)
 
 model:
-  # Seven variables out of one `INPUT/atm.nc`. Domain-scoped only because that
-  # is where the Gulf case's text lives; nothing in it is about the Gulf.
+  # Seven variables out of one `INPUT/atm.nc`. Nothing in the table is about the
+  # Gulf, but it is resolved out of the domain's own base directory, so it only
+  # exists for a domain whose base directory is one ACKBAR wrote: `om_1deg`'s is
+  # stock MOM6-examples and has no `data_table.atm` in it. Inheriting this on
+  # such a domain fails at validate step 3 on a missing path. Giving every
+  # source one shared copy is the fix when a second domain needs it; a single
+  # copy in the Gulf tree is not worth a new root today.
   data_table: $(mom6_base_dir)/data_table.atm
 
   override:
