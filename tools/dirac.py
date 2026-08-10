@@ -69,17 +69,40 @@ from ackbar.diffusion import THIN_LAYER
 
 #: Fixed by SOCA. `ifdir` indexes a hardcoded table in `soca_increment_mod`, not
 #: the increment's own variable list, so these numbers are the same whatever the
-#: configuration asks for. See `soca_increment_dirac`.
+#: configuration asks for. See `soca_increment_dirac`, whose table runs to nine
+#: entries; these are the five an ocean analysis here carries, and the four
+#: skipped between them are ice and biogeochemistry.
 IFDIR = {"sea_water_potential_temperature": 1,
          "sea_water_salinity": 2,
-         "sea_surface_height_above_geoid": 3}
+         "sea_surface_height_above_geoid": 3,
+         "eastward_sea_water_velocity": 8,
+         "northward_sea_water_velocity": 9}
 
 #: The restart variable each of those is written to, which is how the increment
 #: comes back off disk. `config/model/mom6sis2/fields_metadata.yaml` owns this
 #: mapping; it is repeated here because this reads the file directly.
+#:
+#: `u` and `v` come back on the tracer array shape rather than on a staggered
+#: one, and index `i` of `u` is the face on the *low* side of tracer `i`. That is
+#: not a property of the increment, it is what SOCA's reader does to every
+#: staggered field and what `ackbar.gridspec` moved the gridspec's `lonu` and
+#: `mask2du` to match. Anything drawing a velocity increment has to place it at
+#: `lonu`/`latu` rather than at `lon`/`lat`, which is what `tools/dirac-page.py`
+#: does.
 IO_NAME = {"sea_water_potential_temperature": "Temp",
            "sea_water_salinity": "Salt",
-           "sea_surface_height_above_geoid": "ave_ssh"}
+           "sea_surface_height_above_geoid": "ave_ssh",
+           "eastward_sea_water_velocity": "u",
+           "northward_sea_water_velocity": "v"}
+
+#: What the background carries in `correlation` mode. The three the static B's
+#: central block has a group for, which is what that mode applies, and not
+#: `IFDIR`: velocity is in the table above because a *covariance* can reach it,
+#: and asking the background for a field no group in the correlation will touch
+#: reads two more full arrays off disk to describe nothing.
+CORRELATION_STATE = ("sea_water_potential_temperature",
+                     "sea_water_salinity",
+                     "sea_surface_height_above_geoid")
 
 DATADIR = "out"
 EXPERIMENT = "dirac_%id%"
@@ -115,7 +138,9 @@ DIAGS = "stddev"
 #: Only for printing; nothing computes with them.
 UNITS = {"sea_water_potential_temperature": "degC",
          "sea_water_salinity": "psu",
-         "sea_surface_height_above_geoid": "m"}
+         "sea_surface_height_above_geoid": "m",
+         "eastward_sea_water_velocity": "m/s",
+         "northward_sea_water_velocity": "m/s"}
 
 #: The fraction of the peak whose distance is reported. For a Gaussian kernel of
 #: Daley length L the response is exp(-0.5) at exactly L, which makes the
@@ -137,8 +162,8 @@ PEAK_TOLERANCE = 0.05
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("plan", "report"):
         sys.exit(__doc__.strip())
-    rest, mode, ensemble = options(argv[2:])
-    return (plan(rest, mode, ensemble) if argv[1] == "plan"
+    rest, mode, ensemble, overrides = options(argv[2:])
+    return (plan(rest, mode, ensemble, overrides) if argv[1] == "plan"
             else report(rest, mode))
 
 
@@ -148,8 +173,15 @@ def options(argv):
     One flag and not several: the modes are alternatives, and a run that was
     given two of them is a run whose author believes it applied a covariance it
     did not. Refusing here is cheaper than reading a report of the wrong B.
+
+    `--localization <name>` is the one layer *var* this can override, and it
+    exists so that the masked and the unmasked localization can be applied to
+    the same dirac on the same day. `config/layers/da/hybrid.yaml` declares
+    `localization_hz`, an experiment overrides it by restating it in its own
+    `vars:`, and this is that same override for a run with no experiment behind
+    it. Anything else in the layer stack is read as written.
     """
-    rest, mode, ensemble = [], "correlation", None
+    rest, mode, ensemble, overrides = [], "correlation", None, {}
     words = list(argv)
     while words:
         word = words.pop(0)
@@ -161,18 +193,23 @@ def options(argv):
                 if not words:
                     sys.exit(f"dirac: {word} needs a directory of members")
                 ensemble = words.pop(0)
+        elif word == "--localization":
+            if not words:
+                sys.exit("dirac: --localization needs a calibration name, such "
+                         "as loc_hz or loc_hz_open")
+            overrides["localization_hz"] = words.pop(0)
         elif word.startswith("-"):
             sys.exit(f"dirac: unknown option {word}")
         else:
             rest.append(word)
-    return rest, mode, ensemble
+    return rest, mode, ensemble, overrides
 
 
 # ------------------------------------------------------------------------------
 # plan
 
 
-def plan(argv, mode="correlation", ensemble=None):
+def plan(argv, mode="correlation", ensemble=None, overrides=None):
     layers, static, levels, metadata, gridspec, restart = argv[0:6]
     out_yaml, out_points = argv[6:8]
     requested = argv[8:]
@@ -192,7 +229,7 @@ def plan(argv, mode="correlation", ensemble=None):
         json.dump(points, stream, indent=2)
     with open(out_yaml, "w") as stream:
         yaml.safe_dump(document(layers, static, levels, metadata, restart, points,
-                                mode, ensemble),
+                                mode, ensemble, overrides),
                        stream, sort_keys=False, default_flow_style=False)
 
     for point in points:
@@ -368,7 +405,10 @@ def place(grid, cells, deepest_level, full=False):
 def short(variable):
     return {"sea_water_potential_temperature": "temperature",
             "sea_water_salinity": "salinity",
-            "sea_surface_height_above_geoid": "height"}.get(variable, variable)
+            "sea_surface_height_above_geoid": "height",
+            "eastward_sea_water_velocity": "eastward velocity",
+            "northward_sea_water_velocity": "northward velocity"}.get(
+                variable, variable)
 
 
 def warn_if_crowded(grid, points, static):
@@ -394,7 +434,7 @@ def warn_if_crowded(grid, points, static):
 
 
 def solver_of(layers, mode):
-    """The solver block of the layer stack *mode* names, merged as ackbar merges it.
+    """The solver block and the `vars` of the stack *mode* names, merged as ackbar merges it.
 
     Merged rather than read out of one file, because a hybrid's solver is
     `da/variational` with `da/hybrid` on top of it and reading either alone
@@ -408,6 +448,12 @@ def solver_of(layers, mode):
     jsonschema, which is in the project venv and not in the interpreter
     `tools/soca-dirac.sh` runs under, to resolve a key that cannot appear in
     what is being merged.
+
+    The `vars` come back beside the solver because a layer is allowed to select
+    a file through one: `da/hybrid` names its localization as
+    `$(domain_static)/diffusion/$(localization_hz)`. Resolving that here rather
+    than hardcoding a filename is what makes this read the localization the
+    experiment reads, which is the whole rule this file is built on.
     """
     if mode not in STACK:
         sys.exit(f"dirac: {mode!r} is not a covariance this builds")
@@ -416,7 +462,8 @@ def solver_of(layers, mode):
         with open(path, "w") as stream:
             yaml.safe_dump({"inherit": STACK[mode]}, stream)
         stack = resolve_layers(path, layers)
-    return merge_layers(stack)["solver"]
+    merged = merge_layers(stack)
+    return merged["solver"], dict(merged.get("vars") or {})
 
 
 def members_of(directory):
@@ -433,7 +480,7 @@ def members_of(directory):
 
 
 def document(layers, static, levels, metadata, restart, points, mode="correlation",
-             ensemble=None):
+             ensemble=None, overrides=None):
     """The experiment's own background error, lifted out of the layer stack.
 
     Lifted rather than written here: a dirac test against a second description
@@ -447,9 +494,10 @@ def document(layers, static, levels, metadata, restart, points, mode="correlatio
     call the analysis job makes, and the peak means something else instead; see
     the module docstring.
     """
-    solver = solver_of(layers, mode)
+    solver, variables = solver_of(layers, mode)
+    variables.update(overrides or {})
     analysis_variables = solver["analysis variables"]
-    state_variables = list(IFDIR)
+    state_variables = list(CORRELATION_STATE)
 
     if mode == "correlation":
         background_error = solver["background error"]
@@ -481,7 +529,8 @@ def document(layers, static, levels, metadata, restart, points, mode="correlatio
         state_variables = solver["background variables"]
 
     covariance = substitute(
-        wanted, {"domain_static": static, "diffusion_levels": levels})
+        wanted, dict(variables,
+                     **{"domain_static": static, "diffusion_levels": levels}))
 
     return {
         "geometry": {
@@ -545,9 +594,11 @@ def with_diagnostics(blocks):
 def substitute(node, values):
     """Resolve the experiment-time tokens a background error block can contain.
 
-    Only those two. Anything else surviving is a token this does not know how to
-    resolve, and it fails rather than handing `$(...)` to eckit, which would
-    read it as a filename.
+    *values* is the layer stack's own `vars` with the two paths ACKBAR supplies
+    at create time laid over them, so a token resolves here to what it would
+    resolve to in a frozen `cfg/`. Anything left unresolved is a token nothing
+    in the stack declares, and it fails rather than handing `$(...)` to eckit,
+    which would read it as a filename.
     """
     if isinstance(node, dict):
         return {key: substitute(value, values) for key, value in node.items()}

@@ -382,13 +382,39 @@ def test_the_model_layer_still_names_every_analysis_variable(scene):
     """
     repo = Path(__file__).resolve().parents[1]
     fields = writeback.fields_of({"model": {"fields metadata": str(METADATA)}})
-    for solver in ("variational", "letkf"):
+    for solver in ("variational", "letkf", "hybrid"):
         layer = yaml.safe_load(
             (repo / f"config/layers/da/{solver}.yaml").read_text())
         for name in layer["solver"]["analysis variables"]:
             assert name in fields, f"{solver}: {name}"
             assert fields[name]["io file"] in writeback.IO_FILES
             assert fields[name]["grid"] in writeback.MASKS
+
+
+def test_the_ensemble_solvers_analyse_the_same_variables():
+    """`da/hybrid` and `da/letkf` correct the same fields, and have to.
+
+    `osse-letkf`, `osse-envar` and `osse-hybrid` are meant to differ by their
+    covariance and by nothing else, and `da/envar` is `da/hybrid` with one key
+    changed. A pair that analyses different variables is a pair whose velocity
+    scores are not comparable, and nothing downstream would say so: the run with
+    the shorter list simply leaves those fields at the background and reports a
+    healthy cycle.
+
+    Every analysis variable also has to be a background variable, on both sides.
+    A field the solver writes and the background never read is one the increment
+    has nowhere to come from, and for the ensemble half it is a variable the
+    localization names in its group and the member states do not carry.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    layers = {name: yaml.safe_load(
+        (repo / f"config/layers/da/{name}.yaml").read_text())["solver"]
+        for name in ("letkf", "hybrid")}
+    assert (layers["hybrid"]["analysis variables"]
+            == layers["letkf"]["analysis variables"])
+    for name, solver in layers.items():
+        assert set(solver["analysis variables"]) <= set(
+            solver["background variables"]), name
 
 
 def velocities(analysis, u, v):

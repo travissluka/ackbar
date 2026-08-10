@@ -7,12 +7,19 @@
 #   tools/soca-dirac.sh gom_25km --full --keep ~/dirac
 #   tools/soca-dirac.sh gom_25km --ensemble <dir of mem*/MOM.res.nc>
 #   tools/soca-dirac.sh gom_25km --hybrid   <dir of mem*/MOM.res.nc>
+#   tools/soca-dirac.sh gom_25km --ensemble <dir> --localization loc_hz
 #
 # `--full` applies the whole static background error rather than the correlation
 # alone: the standard deviations, the depth taper and the balance operator.
 # `--ensemble` applies the localized ensemble covariance instead, and `--hybrid`
 # applies both weighted together and each of them separately. See the section
 # below and the header of tools/dirac.py.
+#
+# `--localization <name>` overrides the `localization_hz` var the layer stack
+# declares, which is how an ensemble mode picks between the calibration's masked
+# `loc_hz` and unmasked `loc_hz_open`. The two differ by the land mask and by
+# nothing else, so a dirac through each at the same point is the measurement of
+# what masking a localization costs on a shelf.
 #
 # `--keep` copies the increment, the document that produced it and the placement
 # record into a directory instead of dropping them with the working directory.
@@ -83,11 +90,19 @@ KEEP=
 # and the report cannot disagree about which covariance was applied. Empty means
 # the correlation alone.
 MODE=()
+# Which of the calibration's two localization fields an ensemble mode reads,
+# when it is not the one `config/layers/da/hybrid.yaml` defaults to. The pair
+# differs by the land mask and by nothing else, so running a dirac through each
+# is the measurement of what the mask costs. See config/static/diffusion.yaml.
+LOCALIZATION=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --full) MODE=(--full); shift ;;
         --ensemble|--hybrid)
             MODE=("$1" "$(cd "${2:?$1 needs a directory of members}" && pwd)")
+            shift 2 ;;
+        --localization)
+            LOCALIZATION=(--localization "${2:?--localization needs a name}")
             shift 2 ;;
         --keep) KEEP=${2:?--keep needs a directory}; shift 2 ;;
         -*) echo "soca-dirac: unknown option $1" >&2; exit 1 ;;
@@ -131,9 +146,14 @@ REQUIRED=("$TOOLBOX" "$LAYERS" "$NAMELIST" "$METADATA" "$GRIDSPEC" "$RESTART"
 # deviations, so it needs the file they are floored by (tools/sst-bgerr.py), and
 # any mode with an ensemble in it reads the localization the same offline stage
 # calibrated.
+#
+# The localization file is not listed here and is checked after the document is
+# planned instead: which of the two an ensemble mode reads is a layer var, and a
+# list here would be a second answer to that question. See the `filepath` check
+# below.
 [[ ${#MODE[@]} -gt 0 ]] && REQUIRED+=("$STATIC/sst_bgerr.nc")
 case ${MODE[0]:-} in
-    --ensemble|--hybrid) REQUIRED+=("$STATIC/diffusion/loc_hz.nc" "${MODE[1]}") ;;
+    --ensemble|--hybrid) REQUIRED+=("${MODE[1]}") ;;
 esac
 
 for path in "${REQUIRED[@]}"; do
@@ -161,7 +181,47 @@ mkdir -p out
 
 python3 "$ACKBAR_ROOT/tools/dirac.py" plan \
     "$LAYERS" "$STATIC" "$LEVELS" "$METADATA" "$GRIDSPEC" "$RESTART" \
-    dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"} ${MODE[@]+"${MODE[@]}"}
+    dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"} ${MODE[@]+"${MODE[@]}"} \
+    ${LOCALIZATION[@]+"${LOCALIZATION[@]}"}
+
+# Every calibration the planned document names, checked before the toolbox is
+# asked to open it. saber's `filepath` is a stem and saber's failure to find one
+# is an eckit exception forty lines into a log, so this is the cheaper place to
+# find out. Read out of the document rather than listed, because the document is
+# what says which localization this run selected.
+python3 - dirac.yaml <<'PY'
+import os, sys, yaml
+
+#: A `filepath` under this key is where a block will *write*, not where it
+#: reads. `--full` and `--hybrid` ask the parametric block to save its standard
+#: deviations, and a check that demanded that file exist would fail every run
+#: that asked for it.
+WRITTEN = "save diagnostics"
+
+
+def stems(node, parent=None):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "filepath" and isinstance(value, str):
+                if parent != WRITTEN:
+                    yield value
+            else:
+                yield from stems(value, key)
+    elif isinstance(node, list):
+        for value in node:
+            yield from stems(value, parent)
+
+
+# A stem plus `.nc` is saber's convention for the diffusion blocks, and a whole
+# filename is `readNcAndInterp`'s for the parametric block's `sst`. Both spellings
+# appear in one document, so both are accepted here rather than guessed at.
+missing = [stem for stem in stems(yaml.safe_load(open(sys.argv[1])))
+           if not os.path.exists(stem) and not os.path.exists(f"{stem}.nc")]
+if missing:
+    sys.exit("soca-dirac: the document names calibrations that do not exist:\n"
+             + "\n".join(f"soca-dirac:   {path}" for path in missing)
+             + "\nsoca-dirac: run tools/soca-diffusion.sh for that domain first")
+PY
 
 # How many ranks is a property of the machine, so the site file owns it and
 # nothing here may name a number. See site/rancor.sh.

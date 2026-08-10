@@ -57,9 +57,19 @@ import matplotlib.pyplot as plt                              # noqa: E402
 from matplotlib.colors import TwoSlopeNorm                   # noqa: E402
 
 #: The restart variable each analysis variable comes back as, and how to say it.
+#:
+#: The two velocities are here because `da/hybrid` analyses them, and they are
+#: drawn on the tracer grid like everything else, which is half a cell out: index
+#: `i` of `u` is the west face of tracer `i`. That is close enough for the maps
+#: and the decay plot here, whose subject is how far a response reaches, and it
+#: is not close enough to say anything about placement.
+#: `tools/dirac-uv-page.py` is the page that draws them where they are and checks
+#: that they are there.
 FIELDS = (("Temp", "temperature", "degC"),
           ("Salt", "salinity", "psu"),
-          ("ave_ssh", "sea surface height", "m"))
+          ("ave_ssh", "sea surface height", "m"),
+          ("u", "eastward velocity", "m/s"),
+          ("v", "northward velocity", "m/s"))
 
 #: What counts as "the increment has reached here" when measuring how much of
 #: the basin one dirac moved. A fraction of the response at the dirac itself,
@@ -378,10 +388,16 @@ def moments(directory, point):
     """
     import glob
     level, j, i = point["level"] - 1, point["j"], point["i"]
-    columns = {"Temp": [], "Salt": [], "ave_ssh": []}
+    columns = {io: [] for io, _, _ in FIELDS}
     for path in sorted(glob.glob(f"{directory}/mem*/MOM.res.nc")):
         with netCDF4.Dataset(path) as src:
             for io in columns:
+                # A member restart is symmetric, so `u` is one column wider than
+                # the tracer grid and `v` one row taller. Neither is sliced,
+                # because index `i` is the west face of tracer `i` in both
+                # layouts and the extra index sits at the far end, where nothing
+                # here reads. `tools/dirac-uv-page.py` is where that is checked
+                # rather than assumed.
                 data = np.asarray(src.variables[io][0])
                 columns[io].append(float(data[level, j, i] if data.ndim == 3
                                          else data[j, i]))

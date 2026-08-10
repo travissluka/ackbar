@@ -96,6 +96,23 @@ The two are separate entries and separate files rather than one entry that chang
 mind, because every EnVar and hybrid result already on disk was run against `loc_hz.nc` and
 has to keep naming the file it read.
 
+**The unmasked field is not unmasked once it has been through the calibration, and that is
+where this stands today.** `tools/diffusion-scales.py` writes the land values, and
+`tests/test_diffusion_mask.py` holds it to that. What loses them is the read: the calibration
+hands the scale field to SOCA as an ordinary state named
+`sea_surface_height_above_geoid`, whose entry in `config/model/mom6sis2/fields_metadata.yaml`
+is masked, and `soca_fields_read` replaces every masked cell with the field's fill value
+before saber sees it. So `loc_hz_open.nc` and `loc_hz.nc` come out of the toolbox carrying
+bit identical `hzScales`, and on a pair calibrated by one run they carry bit identical
+`hzNorm` as well. A dirac through each returns the same increment to the last bit.
+
+Carrying an unmasked scale through means naming a variable the metadata marks
+`masked: false`, and every entry that does today lives in the surface restart rather than the
+ocean one, so the fix is in how `tools/soca-diffusion.sh` writes and names its scale file
+rather than in a multiplier. Until it lands, `loc_hz_open` is `loc_hz` under another name, the
+default in `da/hybrid` costs nothing and buys nothing, and no measurement anywhere is a
+measurement of the mask. `site/monitor/dirac-velocity/` carries the numbers.
+
 **How an experiment chooses.** `da/hybrid` declares a var:
 
 ```yaml
@@ -107,6 +124,9 @@ and the layer's `filepath` is `$(domain_static)/diffusion/$(localization_hz)`. A
 experiment that wants the masked field restates the var in its own `vars:` block. The
 choice is frozen into the experiment's `cfg/` at create time, so what a run read is
 answerable from the run.
+
+`tools/soca-dirac.sh --localization <name>` overrides the var for one run, which is how the
+pair is compared without an experiment behind it.
 
 Reading the wrong one does not fail. Both files exist on a fully calibrated domain, both
 are correctly normalized for their own scales, and the analysis solves either way. A run
@@ -227,6 +247,33 @@ component is at 0.66 of its peak at 371 m and still 0.09 at 1028 m: whatever
 vertical structure the members have, an observation sees all of it. That is the
 honest starting point recorded in the layer, and it is the first thing to
 measure if a hybrid analysis turns out to be moving the deep ocean.
+
+**Velocity is in the EnVar's and the hybrid's analysis variables and not in the pure
+variational one's**, which is `da/hybrid` restating both variable lists. The ensemble carries a
+sampled covariance between the flow and everything else, so those two can correct velocity
+directly; the static B cannot, since `BalanceSOCA` has no velocity row and
+`SOCAParametricOceanStdDev` builds no velocity standard deviation. The asymmetry costs nothing
+and needs no repair. There are no velocity observations, so Jo has no velocity sensitivity, the
+gradient in those control components is zero, and the minimizer never moves them through the
+static half; the static central block simply has no group naming them, and
+`saber::DiffusionImpl` leaves a variable no group names alone. The list is `da/letkf`'s to the
+entry, so the three solvers analyse the same variables and their velocity scores are
+comparable.
+
+A velocity increment is the one field that can be wrong in a way no picture of it shows.
+SOCA carries `u` and `v` on the tracer array and reads a symmetric-memory restart from the
+tracer origin, so index `i` is the face on the *low* side of tracer `i`, and
+`ackbar.gridspec` moved the gridspec's `lonu` and `mask2du` to match; a velocity increment
+displaced by one cell is smooth, localized, the right size and written into faces the model
+treats as land. `tools/dirac-uv-page.py` is what settles it, and it does not settle it with a
+picture: an ensemble covariance applied to a dirac is exactly
+`L . sum_m X'_m . X'_m,T(dirac) / (N-1)`, with `L` the localization increment the same run
+writes, every term of it computable from the member restarts, and the slice taken out of the
+symmetric velocity array is the hypothesis under test. On `gom_25km` at four coastal points the
+low-side slice reproduces the increment to 1e-15 of its peak in nineteen of the twenty
+variable and point pairs, and to 1e-11 in the twentieth, and the
+high-side slice is wrong by 36 to 110 per cent of it. `site/monitor/dirac-velocity/` is the
+page.
 
 The last row is the configuration `8b71c18` fixed, and it is not "unlocalized":
 a localization over an empty variable list is the identity, which collapses

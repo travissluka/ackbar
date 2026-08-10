@@ -47,6 +47,45 @@ vars:
 solver:
   covariance: hybrid
 
+  # **Velocity, which `da/variational` does not analyse and this does.** The
+  # ensemble carries a sampled covariance between the flow and everything else,
+  # so an EnVar or a hybrid can correct velocity directly and a static B here
+  # cannot: `BalanceSOCA` has no velocity row, and `SOCAParametricOceanStdDev`
+  # builds no velocity standard deviation. That asymmetry is not a problem to
+  # solve. There are no velocity observations, so Jo has no velocity
+  # sensitivity, the gradient in those control components is zero and the
+  # minimizer never moves them through the static half; what moves them is the
+  # ensemble half, through the sample covariance with the variables that *are*
+  # observed. The static half's central block simply has no group naming them,
+  # and `saber::DiffusionImpl` leaves a variable no group names alone.
+  #
+  # The list is `da/letkf`'s, to the entry, and for the reason recorded there:
+  # `osse-letkf`, `osse-envar` and `osse-hybrid` are meant to differ by their
+  # covariance and by nothing else, and a pair that analyses different variables
+  # is a pair whose velocity scores cannot be compared.
+  #
+  # Both lists, and both are needed. `analysis variables` is what the increment
+  # carries, what `soca._localization` puts in every localization group, and
+  # what `ackbar.writeback` writes into the restart. `background variables` is
+  # what each member state is read with (`run.py:_ensemble`), and a velocity
+  # localized but never read is a field the Schur product multiplies by nothing.
+  analysis variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+  - eastward_sea_water_velocity
+  - northward_sea_water_velocity
+
+  background variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+  - sea_water_cell_thickness
+  - ocean_mixed_layer_thickness
+  - sea_water_depth
+  - eastward_sea_water_velocity
+  - northward_sea_water_velocity
+
   # Both required, neither defaulted. 0.5/0.5 is the textbook hybrid and is
   # therefore not the right answer for any particular ocean: with the small
   # ensembles a regional testbed can afford, the ensemble component is noisy and
