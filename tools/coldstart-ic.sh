@@ -14,10 +14,15 @@
 # that is `start + n * cycle.length`. So the hour picked here is the hour every
 # experiment built on this initial condition cycles on, for as long as it exists.
 #
-# The smoke initial condition is valid at 01:00, so every tier 3 experiment
-# cycles at 01Z and 13Z, which is off-synoptic. Analysis times are synoptic
-# everywhere in operational and reanalysis practice, and observation archives
-# are binned on them.
+# The tier 3 smoke initial condition is valid at 00:00, so every tier 3
+# experiment cycles at 00Z and 12Z. Synoptic on purpose: analysis times are
+# synoptic everywhere in operational and reanalysis practice, and observation
+# archives are binned on them.
+#
+# **The date has to sit inside what the domain's `obc.nc` covers**, along with
+# every cycle the experiment built on this state will run. A regional cold start
+# reads the boundary from its first timestep, so a date outside it fails here
+# rather than later. See docs/domains.md.
 #
 # Cycling needs a restart set to start from, and a domain that initializes from
 # z-level temperature and salinity does not have one: MOM6 builds its state from

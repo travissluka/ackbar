@@ -32,7 +32,7 @@ experiment:
   name: tier3_envar
   description: phase 8, ensemble covariance cycling at gom_25km without the model
 cycle:
-  start: '2015-01-05T01:00:00Z'
+  start: '2015-07-11T00:00:00Z'
   length: PT12H
   count: 3
 ensemble:
@@ -40,11 +40,11 @@ ensemble:
   control: true
   source: none
   on_missing_member: replace_from_mean
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00/ensemble6
 vars:
   obs_dir: $(static_root)/obs/gom-osse-smoke/2015
 model:
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00
 solver:
   variational:
     iterations:

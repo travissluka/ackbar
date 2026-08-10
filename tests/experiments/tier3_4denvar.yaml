@@ -21,8 +21,8 @@
 # an ensemble this small and this forced is and is not.
 #
 # PT12H cycles, PT12H window centred on the analysis time, PT3H sub-windows. The
-# background and every member carry five states, at 07, 10, 13, 16 and 19Z
-# around a 13Z analysis.
+# background and every member carry five states, at 06, 09, 12, 15 and 18Z
+# around a 12Z analysis.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
@@ -35,7 +35,7 @@ experiment:
   name: tier3_4denvar
   description: 4D-Ens-Var cycling at gom_25km
 cycle:
-  start: '2015-01-05T01:00:00Z'
+  start: '2015-07-11T00:00:00Z'
   length: PT12H
   count: 3
 solver:
@@ -55,10 +55,10 @@ ensemble:
   # tests, and what is under test here is the covariance's time dimension.
   source: none
   on_missing_member: replace_from_mean
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00/ensemble6
 vars:
   obs_dir: $(static_root)/obs/gom-osse-smoke/2015
 model:
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00
 cleanup:
   keep_cycles: 2

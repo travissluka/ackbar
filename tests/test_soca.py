@@ -1057,7 +1057,10 @@ def test_the_shipped_layers_produce_an_analysis_soca_would_accept(tmp_path):
     cost = reread["cost function"]
     assert cost["cost type"] == "3D-Var"
     assert cost["geometry"]["fields metadata"].startswith(str(repo))
-    assert cost["background"]["date"] == "2015-01-05T01:00:00Z"
+    # Cycle 1's background is the staged initial condition, so its date is the
+    # experiment's own start. Read from the fixture rather than restated: the
+    # date moves when the domain's boundary archive does.
+    assert cost["background"]["date"] == merged["cycle"]["start"]
     # The B is read from the domain's static stage, and `filepath` is a stem.
     groups = cost["background error"]["saber central block"]["read"]["groups"]
     assert groups[0]["horizontal"]["filepath"] == "/static/static/gom_25km/diffusion/corr_hz"
@@ -1084,7 +1087,7 @@ def test_the_shipped_layers_produce_a_document_soca_would_accept(tmp_path):
     # dictionary, and an unserializable value fails at the last moment.
     reread = yaml.safe_load(yaml.safe_dump(document))
     assert reread["geometry"]["fields metadata"].startswith(str(repo))
-    assert reread["state"]["date"] == "2015-01-05T01:00:00Z"
+    assert reread["state"]["date"] == merged["cycle"]["start"]
 
 
 # --- the covariance ----------------------------------------------------------
