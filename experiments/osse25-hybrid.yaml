@@ -59,9 +59,12 @@
 # first, `$(domain_static)/sst_bgerr.nc` the second, and the ratio between them
 # at the first and last cycle is the whole diagnosis.
 #
-# Localization is 1.5 Rossby radii, floored at two grid cells: `loc_hz` in
-# `config/static/diffusion.yaml`, built into `loc_hz.nc` by
-# `tools/soca-diffusion.sh`. Changing the multiplier means rebuilding that file.
+# Localization is 1.5 Rossby radii, floored at two grid cells, and not masked
+# over land: `loc_hz_open` in `config/static/diffusion.yaml`, built into
+# `loc_hz_open.nc` by `tools/soca-diffusion.sh`. Changing the multiplier means
+# rebuilding that file. The masked `loc_hz` is still calibrated and is selected
+# by `vars: {localization_hz: loc_hz}`, which is what every EnVar and hybrid run
+# before this one read.
 inherit:
   - domain/gom_25km
   - model/mom6sis2

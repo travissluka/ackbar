@@ -18,13 +18,14 @@ wrong by a factor nothing reports.
 import sys
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ackbar.diffusion import (  # noqa: E402
-    horizontal_scales, read_gridspec, read_restart, report, smoothing_scale,
-    vertical_scales, write,
+    horizontal_scales, is_masked, read_gridspec, read_restart, report,
+    smoothing_scale, vertical_scales, write,
 )
 
 
@@ -47,7 +48,15 @@ def main(argv):
     for name, spec in (config.get("horizontal") or {}).items():
         scales = horizontal_scales(grid, spec, smoothing)
         write(f"{outdir}/scales_{name}.nc", grid, hz=scales)
-        report(f"{name}", scales, grid["mask"], "m")
+        # Over the ocean for a masked entry and over the whole grid for an
+        # unmasked one, because the point of the summary is to be the one place
+        # a mistyped multiplier is legible, and an unmasked entry's land values
+        # are part of what was written. Reporting both over the ocean would make
+        # `loc_hz` and `loc_hz_open` print identical lines, which is exactly the
+        # difference this is meant to show.
+        report(name, scales,
+               grid["mask"] if is_masked(spec) else np.ones_like(grid["mask"]),
+               "m")
 
     vertical = config.get("vertical")
     if vertical:

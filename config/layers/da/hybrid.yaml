@@ -28,6 +28,22 @@
 inherit:
   - da/variational
 
+vars:
+  # Which of the calibration's two localization fields the ensemble component
+  # reads. `loc_hz_open` is unmasked and is the default; `loc_hz` is the same
+  # scales zeroed over land, and an experiment selects it by restating this var:
+  #
+  #   vars:
+  #     localization_hz: loc_hz
+  #
+  # A var rather than an edit here, because the two are not a preference about
+  # spelling: they are two files, calibrated separately, and an experiment's
+  # frozen `cfg/` has to record which one it read. `config/static/diffusion.yaml`
+  # carries the argument for the default, in one line: a localization is a taper
+  # in a Schur product and never spreads a state value anywhere, so masking it
+  # buys nothing and costs the ensemble's cross-coast structure.
+  localization_hz: loc_hz_open
+
 solver:
   covariance: hybrid
 
@@ -44,9 +60,12 @@ solver:
   ensemble error:
     # Localization, as a diffusion operator, exactly like the correlation in the
     # static B and from the same offline stage: `tools/soca-diffusion.sh` writes
-    # `loc_hz.nc` beside `corr_hz.nc`, and the scales it encodes are in
+    # `loc_hz_open.nc` beside `corr_hz.nc`, and the scales it encodes are in
     # `config/static/diffusion.yaml`. Until it has run, `ackbar validate` step 3 names
-    # the file as missing, which is the intended failure.
+    # the file as missing, which is the intended failure. A domain calibrated
+    # before that entry existed has `loc_hz.nc` and not the file named here, and
+    # `tools/soca-diffusion.sh <domain> --only loc_hz_open` is the one run that
+    # fixes it without touching anything else in the directory.
     #
     # Localization is what makes a small ensemble usable at all: without it a
     # 20 member sample covariance has spurious correlations between every pair
@@ -83,7 +102,7 @@ solver:
           groups:
           - multivariate strategy: duplicated
             horizontal:
-              filepath: $(domain_static)/diffusion/loc_hz
+              filepath: $(domain_static)/diffusion/$(localization_hz)
             vertical:
               strategy: duplicated
 

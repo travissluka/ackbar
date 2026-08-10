@@ -28,6 +28,12 @@ HYBRID = REPO / "config" / "layers" / "da" / "hybrid.yaml"
 CYCLED_VT = REPO / "config" / "soca" / "vt.yaml"
 CORR_VT_CYCLED = REPO / "config" / "layers" / "da" / "corr_vt_cycled.yaml"
 
+#: The layer vars a `filepath` in this file's fixtures may be written in terms
+#: of. Only `da/hybrid` declares any: `localization_hz` is how an experiment
+#: chooses between the masked and the unmasked localization, so the stem the
+#: shipped layer names is a symbol rather than a file name.
+LAYER_VARS = yaml.safe_load(HYBRID.read_text()).get("vars") or {}
+
 
 @pytest.fixture(scope="module")
 def calibration():
@@ -74,14 +80,35 @@ def stems(groups, kind):
     saber's `filepath` is a stem: the file it opens is this plus `.nc`. What is
     compared here is the last component, because the directory is the domain's
     and the name is the calibration's.
+
+    A stem may be a `$(var)`, which is how the localization is selected, so the
+    layer's own `vars` are applied first. Only the layer's defaults: an
+    experiment may restate the var, and what is checked here is that the
+    configuration as shipped names files the calibration writes.
     """
-    return {block["filepath"].rsplit("/", 1)[-1]
-            for block in calibrated(groups, kind)}
+    names = set()
+    for block in calibrated(groups, kind):
+        name = block["filepath"].rsplit("/", 1)[-1]
+        for var, value in LAYER_VARS.items():
+            name = name.replace(f"$({var})", str(value))
+        names.add(name)
+    return names
 
 
 def test_every_horizontal_file_the_analysis_reads_is_one_the_calibration_writes(
         calibration, groups):
-    assert stems(groups, "horizontal") == set(calibration["horizontal"])
+    """A subset, not an equality, and the asymmetry is the point.
+
+    Reading a stem the calibration does not write is a missing file discovered
+    by a queued job, so it is checked. The other direction is not an error any
+    more: `loc_hz` and `loc_hz_open` are two calibrations of the same
+    localization differing only in whether land is masked, an experiment selects
+    between them with `localization_hz`, and only the default appears in the
+    shipped layers. An entry nothing selects costs a minute of calibration and
+    a hundred kilobytes; `test_both_localizations_stay_calibrated` is what keeps
+    the unselected one from being quietly deleted instead.
+    """
+    assert stems(groups, "horizontal") <= set(calibration["horizontal"])
 
 
 def test_the_vertical_file_the_analysis_reads_is_the_one_the_calibration_writes(
@@ -206,4 +233,50 @@ def test_the_scales_are_relative_to_the_grid_and_not_to_a_domain(calibration):
     relative pair is what would break that.
     """
     for spec in calibration["horizontal"].values():
-        assert set(spec) == {"rossby mult", "min grid mult", "max"}
+        assert set(spec) - {"masked"} == {"rossby mult", "min grid mult", "max"}
+
+
+def test_only_the_localization_is_unmasked(calibration):
+    """Masking is per entry, and exactly one entry asks for no mask.
+
+    A correlation with `masked: false` would be a background error that
+    communicates through land, which is a change of physics that reads as a
+    change of spelling: the calibration still runs, the analysis still solves,
+    and increments cross a peninsula. So the *set* is pinned rather than the
+    default, and adding the key to `corr_hz`, `corr_hz_ssh` or `loc_hz` is a
+    failure here rather than a discovery in a dirac plot.
+    """
+    unmasked = {name for name, spec in calibration["horizontal"].items()
+                if spec.get("masked", True) is False}
+    assert unmasked == {"loc_hz_open"}
+
+
+def test_both_localizations_stay_calibrated(calibration):
+    """The pair exists so that masking is the only difference between them.
+
+    `loc_hz` is what every EnVar and hybrid result on disk was run against and
+    what an experiment gets back by restating `localization_hz`; `loc_hz_open`
+    is the default. If they ever differ in a multiplier, a run of each stops
+    being a measurement of the mask and becomes a measurement of two changes at
+    once, and nothing downstream would say which.
+    """
+    horizontal = calibration["horizontal"]
+    masked, unmasked = horizontal["loc_hz"], horizontal["loc_hz_open"]
+    assert masked.get("masked", True) is True
+    numbers = ("rossby mult", "min grid mult", "max")
+    assert [masked[key] for key in numbers] == [unmasked[key] for key in numbers]
+
+
+def test_the_localization_the_layers_ship_is_the_unmasked_one(calibration):
+    """The default, asserted, because it decides what every EnVar reads.
+
+    A localization is a taper in a Schur product: it never carries a state value
+    anywhere, so masking it buys no protection and costs the ensemble's genuine
+    cross-coast structure, and it truncates the kernel the normalization is
+    estimated from at every cell within a scale length of a coast. That is the
+    ruling `config/static/diffusion.yaml` records. Reverting it silently, by
+    editing one var, would leave the layers reading a file that still exists.
+    """
+    selected = LAYER_VARS["localization_hz"]
+    assert selected == "loc_hz_open"
+    assert calibration["horizontal"][selected].get("masked", True) is False

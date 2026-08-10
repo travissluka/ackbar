@@ -1354,9 +1354,13 @@ def test_the_shipped_hybrid_layers_produce_a_document_soca_would_accept():
     assert static["weight"]["value"] + ens["weight"]["value"] == 1.0
     groups = ens["covariance"]["localization"]["saber central block"]["read"]["groups"]
     # The localization scales are the domain's static stage, like the
-    # correlation, and `filepath` is a stem.
+    # correlation, and `filepath` is a stem. `loc_hz_open` and not `loc_hz`:
+    # the localization reads the unmasked field, selected by the
+    # `localization_hz` var that `da/hybrid` defaults and an experiment may
+    # restate. Spelled out here rather than read back out of the layer, so that
+    # flipping the default is a change this test reports.
     assert groups[0]["horizontal"]["filepath"] == \
-        "/static/static/gom_25km/diffusion/loc_hz"
+        "/static/static/gom_25km/diffusion/loc_hz_open"
 
     filter_document = yaml.safe_load(yaml.safe_dump(soca.letkf_config(
         merged, 1, [observer()], backgrounds=Path("/out/e/rst/0"), members=(1, 2),

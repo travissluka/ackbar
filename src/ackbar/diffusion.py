@@ -291,8 +291,29 @@ def fill_nan_rows(scale):
     return np.interp(index, index[good], scale[good])
 
 
+def is_masked(spec):
+    """Whether an entry's scales are zeroed over land. Default true.
+
+    Per entry, and defaulted, so that adding the key to one entry cannot move
+    any other entry's file: a scale field is calibrated once per domain and
+    every experiment on the domain reads the result.
+
+    True is what a correlation wants. A zero scale is how the diffusion operator
+    is told a cell is not ocean, and the background error genuinely does not
+    communicate through land. False is what the ensemble localization wants, and
+    `config/static/diffusion.yaml` carries that argument at `loc_hz_open`.
+    """
+    return bool(spec.get("masked", True))
+
+
 def horizontal_scales(grid, spec, smoothing):
-    """Rossby radius, floored by the grid, capped, and smoothed by itself."""
+    """Rossby radius, floored by the grid, capped, and smoothed by itself.
+
+    Zeroed over land unless the entry asked not to be. Note that the floor is
+    applied before the mask is consulted, so an unmasked field has a positive
+    scale at every point of the grid and there is nothing degenerate for the
+    calibration to trip over.
+    """
     scales = grid["rossby_radius"] * float(spec["rossby mult"])
     floor = float(spec["min grid mult"])
     ceiling = float(spec["max"])
@@ -305,6 +326,8 @@ def horizontal_scales(grid, spec, smoothing):
     # a two deep python loop over every cell.
     smoothed = np.stack([gaussian_filter(scales, sigma=s, mode="nearest")[j, :]
                          for j, s in enumerate(smoothing)])
+    if not is_masked(spec):
+        return smoothed
     return np.where(grid["mask"], smoothed, 0.0)
 
 

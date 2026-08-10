@@ -39,6 +39,12 @@
 # would ask the operator to correlate a cell with itself. The ceiling is what
 # keeps it usable at the equator, where the radius runs past 250 km and the
 # explicit scheme's iteration count runs with it.
+#
+# `masked` is optional and defaults to true, which zeroes the scale over land
+# and is what every correlation here wants: a zero scale is how the operator is
+# told that a cell is not part of the ocean it is correlating. Per entry rather
+# than global, because a *localization* wants the opposite (see `loc_hz_open`),
+# and because one entry changing its mind must not move any other entry's file.
 # ------------------------------------------------------------------------------
 horizontal:
 
@@ -87,6 +93,42 @@ horizontal:
     rossby mult: 1.5
     min grid mult: 2.0
     max: 350.0e3
+
+  # The same localization, not masked, and the one the ensemble covariance
+  # reads. A separate entry rather than a `masked: false` on `loc_hz`, because
+  # the two are separate files and every experiment already run against
+  # `loc_hz.nc` has to keep reading the file it was run against.
+  #
+  # **Why a localization does not want the land mask.** A masked scale field is
+  # zero over land, and a zero scale is a wall: the diffusion operator cannot
+  # carry anything across it, so two ocean points either side of a peninsula or
+  # a barrier island are localized apart no matter how close they are, and the
+  # normalization at every cell within a scale length of a coast is computed
+  # against a truncated kernel. On a coastline as involved as the Gulf's that is
+  # most of the shelf. For a *correlation* that is the right answer, since the
+  # background error genuinely does not communicate through land. For a
+  # localization it is not: the localization is a taper applied as a Schur
+  # product against a sampled covariance, so it never moves a state value
+  # anywhere at all, it only decides how far away a sampled correlation is still
+  # believed. Nothing leaks onto land, because nothing is being spread; what the
+  # mask costs is the ensemble's genuine cross-coast structure, thrown away in
+  # exactly the shallow water where the ensemble has the most to say.
+  #
+  # There is nothing degenerate to exclude. `min grid mult` floors every cell at
+  # two cells before the mask is ever consulted, so a land cell gets a positive
+  # scale like any other, and SOCA's gridspec carries a real `rossby_radius`
+  # over land rather than a fill value (on gom_25km the land mean is within ten
+  # per cent of the ocean mean), so the field is continuous across the coast
+  # instead of stepping at it.
+  #
+  # The numbers are `loc_hz`'s, deliberately and to the digit: the pair exists so
+  # that a run against one and a run against the other differ by the masking and
+  # by nothing else.
+  loc_hz_open:
+    rossby mult: 1.5
+    min grid mult: 2.0
+    max: 350.0e3
+    masked: false
 
 # ------------------------------------------------------------------------------
 # Vertical, in *model levels* rather than metres, because that is the coordinate

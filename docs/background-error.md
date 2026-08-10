@@ -24,7 +24,8 @@ tools/soca-diffusion.sh <domain>          # calibrate
 tools/soca-dirac.sh <domain>              # check it
 ```
 
-`soca-diffusion.sh` writes `corr_hz.nc`, `corr_hz_ssh.nc`, `loc_hz.nc` and `corr_vt.nc` into
+`soca-diffusion.sh` writes `corr_hz.nc`, `corr_hz_ssh.nc`, `loc_hz.nc`, `loc_hz_open.nc`
+and `corr_vt.nc` into
 `$ACKBAR_STATIC_ROOT/static/<domain>/diffusion`, which is what the `filepath`
 entries in the variational and hybrid layers name. The list is the entries in
 `config/static/diffusion.yaml` rather than a list in the script, so adding a group is
@@ -56,7 +57,7 @@ variables and picking one field out of it, so every scale file would otherwise
 have to carry every variable, and the horizontal randomization would run over
 the whole column instead of over one level.
 
-**One of the four is not a correlation.** `loc_hz.nc` is the localization an
+**One of the five is not a correlation.** `loc_hz.nc` is the localization an
 ensemble covariance applies, and it is here because it is the same operator
 built from the same grid, not because it is the same quantity: the other three
 are correlation lengths for a background error that is *modelled*, and this is
@@ -68,6 +69,53 @@ ensemble is there to provide. That failure looks like an ensemble component
 which is not contributing rather than like a mistake. Read by
 `config/layers/da/hybrid.yaml` and by nothing else; a static 3DVar never opens
 it.
+
+## Masking, and why the localization is not masked
+
+Every entry under `horizontal:` in `config/static/diffusion.yaml` takes an optional
+`masked`, defaulting to true, which zeroes the scale over land. A zero scale is how the
+diffusion operator is told that a cell is not part of the ocean, so it is a wall: nothing
+crosses it, and every cell within a scale length of a coast is normalized against a
+truncated kernel.
+
+For the three correlations that is right. The background error does not communicate
+through land, and a temperature increment must not cross a peninsula.
+
+For the localization it is wrong, which is why `loc_hz_open` exists with `masked: false`.
+The localization is a taper applied as a Schur product against a covariance *sampled* from
+the ensemble. It carries no state value anywhere, so an unmasked localization cannot leak
+an increment onto land or across it: what it changes is only how far away a sampled
+correlation is still believed. Masking it discards the ensemble's genuine cross-coast
+structure, in the shallow water where the ensemble has the most to say and the observations
+are densest. There is nothing degenerate to include either: `min grid mult` floors every
+cell before the mask is consulted, and SOCA's gridspec carries a real Rossby radius over
+land, so the unmasked field is continuous across the coast rather than a moat of floor
+values.
+
+The two are separate entries and separate files rather than one entry that changed its
+mind, because every EnVar and hybrid result already on disk was run against `loc_hz.nc` and
+has to keep naming the file it read.
+
+**How an experiment chooses.** `da/hybrid` declares a var:
+
+```yaml
+vars:
+  localization_hz: loc_hz_open      # the default
+```
+
+and the layer's `filepath` is `$(domain_static)/diffusion/$(localization_hz)`. An
+experiment that wants the masked field restates the var in its own `vars:` block. The
+choice is frozen into the experiment's `cfg/` at create time, so what a run read is
+answerable from the run.
+
+Reading the wrong one does not fail. Both files exist on a fully calibrated domain, both
+are correctly normalized for their own scales, and the analysis solves either way. A run
+that reads `loc_hz` by mistake produces localization lengths that are shorter than the file
+says wherever a coast is within a scale length, so the ensemble contributes less than it
+should on the shelf, and it does it smoothly, which reads as an ensemble component that is
+merely disappointing. The pair is only interpretable as a measurement of the mask because
+the two entries carry identical multipliers; `tests/test_diffusion.py` is what holds that
+true.
 
 ## Reading it back
 

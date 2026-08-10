@@ -59,7 +59,7 @@ def require_everything():
         pytest.skip("no sbatch on this machine")
     if not os.environ.get("ACKBAR_OUTPUT_ROOT"):
         pytest.skip("run `source site/activate.sh` first")
-    if not (STATIC / "static" / DOMAIN / "diffusion" / "loc_hz.nc").exists():
+    if not (STATIC / "static" / DOMAIN / "diffusion" / "loc_hz_open.nc").exists():
         pytest.skip(f"no localization for {DOMAIN}; "
                     f"run tools/soca-diffusion.sh {DOMAIN}")
     source = yaml.safe_load((REPO / "tests/experiments" / f"{NAME}.yaml").read_text())
