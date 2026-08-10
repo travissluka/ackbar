@@ -507,12 +507,14 @@ the two available answers, but it is climatological spread and not the flow
 structure of the ocean at that instant. `tools/ensemble-ic.sh` builds the other
 kind, perturbing one state through the static B, and is what tier 3 uses.
 
-**Every member is forced by the same atmosphere.** Each cycle they are pushed
-towards a common solution by the surface fluxes they share. An ensemble that
-means something needs perturbations in the atmosphere too, which is now a data
-problem rather than a workflow one: `ensemble.inputs` gives a member its own
-`atm.nc` the same way it gives it its own `obc.nc`, so what is missing is the
-archive rather than the mechanism. See Domains in [`design.md`](design.md).
+**An experiment that inherits no forcing layer has every member forced by the
+same atmosphere**, and each cycle they are pushed towards a common solution by
+the surface fluxes they share. `ensemble.inputs` gives a member its own `atm.nc`
+the same way it gives it its own `obc.nc`, and the archive exists for
+`gom_25km` on the GEFS reforecast era: [`forcing.md`](forcing.md) says how it is
+built and Domains in [`design.md`](design.md) ranks what it is worth. The gap
+that remains is the truth run, which is still climatology-forced, so what is
+measured today is spread rather than skill.
 
 The members no longer differ *only* in their ocean state, which is the part of
 this caveat that has moved. `ensemble.stochastic` gives each its own model

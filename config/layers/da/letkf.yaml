@@ -154,12 +154,12 @@ solver:
   # three code paths, and inheriting that gives an ensemble whose spread is set
   # by three interacting knobs none of which can be attributed afterwards.
   #
-  # `rtps: 0.95` is deliberately strong. Nothing on these domains maintains
-  # spread from outside: the atmosphere is a
-  # climatology, the open boundary is frozen, and the ensemble is time-lagged
-  # rather than continuously perturbed, so every source of spread is the filter
-  # relaxing what its own analysis removed. An LETKF here collapses without this
-  # and does not announce that it has.
+  # `rtps: 0.95` is deliberately strong, because it was set for an experiment
+  # with no spread source outside the filter: a climatological atmosphere shared
+  # by every member, one boundary shared by every member, and a time-lagged
+  # rather than continuously perturbed ensemble, so the only spread is the
+  # filter relaxing what its own analysis removed. An LETKF in that
+  # configuration collapses without this and does not announce that it has.
   #
   # **And it collapses with it, which is the thing to understand before reaching
   # for a bigger coefficient.** RTPS relaxes the posterior spread back towards
@@ -167,11 +167,18 @@ solver:
   # itself shrinking: the forecast between two analyses adds nothing, so each
   # cycle's prior is the previous cycle's posterior. The relaxation is chasing a
   # floor that moves down with it and the sequence decays geometrically for any
-  # coefficient below one. No relaxation coefficient is the fix. A spread source
-  # outside the filter is: per-member forcing, additive inflation from a
-  # climatological pool, per-member open boundaries. Until one exists, this
-  # number is holding back a collapse rather than preventing one, and tuning it
-  # is measuring the decay.
+  # coefficient below one. No relaxation coefficient is the fix, and a spread
+  # source outside the filter is.
+  #
+  # Two of them now exist, both through `ensemble.inputs`: per-member
+  # atmospheric forcing (`config/layers/forcing/gefs-ensemble.yaml`) and
+  # per-member open boundaries (`tools/obc-lagged.py`). An experiment that
+  # inherits either is no longer in the situation this coefficient was set for,
+  # and Domains in `docs/design.md` carries the measurement of the boundary
+  # arresting the collapse. Additive inflation from a climatological pool is the
+  # remaining unbuilt one. On an experiment with none of them, this number is
+  # holding back a collapse rather than preventing one, and tuning it is
+  # measuring the decay.
   local ensemble DA:
     solver: Deterministic LETKF
     inflation:

@@ -248,11 +248,14 @@ because a member lagged 21 days forward has nothing to read in the last 21 days
 of the file. So a span 21 ladder built from a boundary covering 2015-05-28 to
 2015-09-10 covers 2015-06-18 to 2015-08-20, while the `osse25-*` experiments run
 45 daily cycles from 2015-07-12, to 2015-08-26, and their extended forecasts
-reach about 2015-08-31. Eleven days short, and nothing checks it: the run fails
-in `time_interp_external` around cycle 40, and healing cannot recover, because
-fixing it means re-fetching and rebuilding the ladder, which changes the boundary
-every earlier cycle already integrated against. Fetch the source long enough for
-the experiment *plus twice the span* before building an ensemble from it.
+reach about 2015-08-31. Eleven days short. `ackbar validate` reports that at
+step 3, by reading each member's own time axis and comparing it against the span
+the graph will ask for, which is the only chance anything has to catch it: the
+run would otherwise fail in `time_interp_external` around cycle 40, and healing
+cannot recover, because fixing it means re-fetching and rebuilding the ladder,
+which changes the boundary every earlier cycle already integrated against. Fetch
+the source long enough for the experiment *plus twice the span* before building
+an ensemble from it.
 
 Each member says what it covers, so this is answerable from the file rather than
 from the ladder arithmetic:

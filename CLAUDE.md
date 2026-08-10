@@ -57,6 +57,9 @@ in its own config file as "the regional hack", is not the model to follow.
 | `~/work/ackbar/pkg/jedi` | the vendored JEDI bundle, one submodule per repo. `build-jedi.sh` builds it |
 | `~/work/ackbar/pkg/jedi/build/bin` | the `soca_*.x` ACKBAR runs. `graph/tasks.py` names this path and no other |
 | `~/work/ackbar/tools/slurm` | the local Slurm install: config is the source of truth for `/etc/slurm`; see `docs/slurm.md` |
+| `~/work/ackbar/.venv-data` | the venv the ocean-state and forcing fetchers run in, separate from the project venv and with `PYTHONPATH` cleared; see `docs/model-data.md` |
+| `~/work/ackbar/experiments` | the committed experiment definitions, with their own `README.md` |
+| `~/work/ackbar/site` | the site layer: `activate.sh` and `rancor.sh` own every machine-specific path, rank count and launcher |
 | `/data/ackbar` | our experiment and test-run output |
 | `~/work/mom6sis2` | old (2022) clone with a hand-rolled mkmf `build.sh`; reference only |
 | `/data/mom6-datasets` | the `.datasets` tree for MOM6-examples; see `docs/model-data.md` |
@@ -294,13 +297,14 @@ experiment.
 
 ## Open decisions
 
-- How much of the workflow lives in a Python package versus in the job scripts it emits.
 - Ensemble geometry on rancor: 8 cores against an 8-PE model run means parallel members need
   fewer PEs each, or oversubscription.
-- The background error numbers in `config/layers/da/variational.yaml`. The structure is
-  right and the values are the pinned bundle's defaults, because v2's tuning lived in
-  `BkgErrGODAS` and does not map onto `SOCAParametricOceanStdDev` one for one. A science
-  call, and results should not be believed until it is made.
+- The background error numbers in `config/layers/da/variational.yaml`. The structure is right
+  and the values are mostly the pinned bundle's defaults, because v2's tuning lived in
+  `BkgErrGODAS` and does not map onto `SOCAParametricOceanStdDev` one for one. Sea surface
+  temperature is the exception, derived for the domain by `tools/sst-bgerr.py`; see
+  `docs/background-error.md`. A science call, and results should not be believed until it is
+  made.
 
 Closed, and recorded here because the reasoning is easy to reopen by mistake:
 
@@ -312,18 +316,34 @@ Closed, and recorded here because the reasoning is easy to reopen by mistake:
   drop the open-boundary fields the forecast restarts from.
 - **`srun` launches MPI here.** `site/rancor.sh` sets `ACKBAR_LAUNCHER="srun --mpi=pmi2"`, so
   job steps and per-task accounting match production. `docs/slurm.md` has the how.
-- **Ensemble spread comes from stochastic physics, not from perturbed parameters.** A member
-  given its own parameter values is a different model from every other member, so the ensemble
-  covariance stops being the covariance of anything and the mean carries whatever bias the
-  offsets produce. It was measured as well as argued: seventeen parameter groups swept five
-  ways each, and all of them produce a fixed offset that does not grow, most of it sitting on
-  the model's own divergence floor. `ensemble.stochastic` (oSPPT) is the implemented
-  answer, and ensemble atmospheric forcing is the larger one still to build. The full
-  measurement is `site/monitor/spread/report.html`.
+- **Ensemble spread does not come from perturbed parameters.** A member given its own
+  parameter values is a different model from every other member, so the ensemble covariance
+  stops being the covariance of anything and the mean carries whatever bias the offsets
+  produce. It was measured as well as argued: seventeen parameter groups swept five ways each,
+  and all of them produce a fixed offset that does not grow, most of it sitting on the model's
+  own divergence floor. The full measurement is `site/monitor/spread/report.html`. Three
+  sources are implemented instead: `ensemble.stochastic` (oSPPT), per-member open boundaries
+  and per-member atmospheric forcing, the last two through `ensemble.inputs`. Forcing is the
+  largest of them by a wide margin and stochastic physics the smallest; Domains in
+  `docs/design.md` ranks them, and `docs/forcing.md` and `docs/domains.md` say how each archive
+  is built.
 - **The back-compat pins are dropped.** Every domain's `MOM_override` sets
   `ENABLE_BUGS_BY_DEFAULT = False`, so the model runs the corrected physics and no state spun
   up under the old defaults is reusable. `docs/model-build.md` and `docs/domains.md` have the
   reasoning and the flag count.
+- **Truth and the experiments share the open boundary on purpose.** Giving truth its own is
+  the obvious next proposal and it was built and declined: the difference between two products
+  on the same boundary is dominated by a basin-wide sea level offset, and `ufo::ObsADT`
+  subtracts the domain mean before forming departures, so that offset is invisible to every
+  altimeter and shows up as a permanent barotropic pressure gradient under FLATHER instead.
+  `docs/osse.md` and `docs/domains.md` carry the measurement.
+- **Removing the boundary ensemble's basin-wide `zeta` does not work.** Same reasoning, and it
+  was built, measured and reverted: interior spread did not fall, and each member's boundary
+  anomaly correlates with its basin-mean sea level at -0.23, no relationship and the wrong
+  sign. `tools/obc-lagged.py` and Domains in `docs/design.md` carry the full account.
+- **The mass-field writeback is split by solver, not generalized.** The tempting fix, adding
+  `sea_water_cell_thickness` to every solver's writeback, is wrong; `docs/osse.md` and
+  `docs/design.md` say which solver needs what and why.
 
 ## Conventions
 

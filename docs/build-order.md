@@ -764,10 +764,13 @@ because it has never been blocked on workflow.
 - **Decide the twin.** Nature and DA at the same resolution is an identical twin: easy, and
   flattering. Nature at 4 or 8 km against DA at 12 or 25 km is fraternal, is the honest
   version, and changes what the observation generator has to do.
-- **Perturbed atmospheric forcing comes with it.** It is the same data problem, and without it
-  the ensemble the covariance phases depend on cannot hold its spread. See phase 7.
-- **`tools/obs-archive-osse.py` is the small version of it**, and says so: its truth is one
-  state plus a fixed anomaly rather than a trajectory.
+- **Perturbed atmospheric forcing is built**, on `gom_25km` and on the GEFS reforecast era:
+  `tools/forcing-gefs.py` and `docs/forcing.md`. The remaining half is the ERA5-forced truth
+  run, without which there is a spread number and no skill number.
+- **`tools/obs-archive-osse.py` has both modes.** `--state` is the small version, one state
+  plus a fixed anomaly, and is what the tier 3 archive is pinned to. `--truth-run` samples a
+  promoted truth trajectory at each observation's own time, and is what the `osse25-*` family
+  reads.
 
 ## Regional, which arrived early
 

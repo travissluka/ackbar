@@ -12,7 +12,7 @@
 # forecast was looking. Real forecast uncertainty about the actual verifying
 # date, in physically calibrated units, with no amplitude to tune.
 #
-#     tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84,108 \
+#     tools/forcing-gefs.py 2015-07-10 2015-07-28 --leads 12,36,60,84,108 \
 #         --members 21 --domain gom_25km \
 #         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
 #

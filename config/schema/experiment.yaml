@@ -115,11 +115,14 @@ properties:
 
   # What survives the cycling. Two rules, and they answer different questions.
   #
-  # `keep_cycles` is the rolling window: how many completed cycles behind the
-  # current one keep their model state under `run/<date>/`. One is the default
-  # and the tightest correct answer, since cycle n's forecast reads cycle n-1's
-  # restarts and nothing reads further back. Raise it for headroom while an
-  # experiment is being healed repeatedly.
+  # `keep_cycles` is the rolling window: how many cycles behind the most recent
+  # *complete* one keep their model state under `run/<date>/`. One is the
+  # default and the tightest correct answer, since cycle n's forecast reads
+  # cycle n-1's restarts and nothing reads further back. Note the horizon is the
+  # most recent complete cycle rather than the current one, so an experiment
+  # with an extended forecast, whose leaves finish after the cycle that released
+  # `submit`, holds one cycle more than this number alone suggests. Raise it for
+  # headroom while an experiment is being healed repeatedly.
   #
   # `keep_every` is the pin, and it is what makes a long experiment branchable:
   # `model.initial_condition` can name another experiment's

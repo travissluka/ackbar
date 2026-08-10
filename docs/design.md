@@ -1309,15 +1309,23 @@ integrate" could otherwise not answer its own question once it finished. A missi
 falling back to the domain's copy, because the fallback is a member with no perturbation whose
 only symptom is an ensemble slightly less spread than it should be.
 
-That refusal is raised where the member is staged, which means inside the job, and **`ackbar
-validate` does not check `ensemble.inputs` at all.** Two failures therefore cost a submission
-and a job apiece rather than a line at validate time: an archive missing a member, and an
-archive whose time coverage does not span the experiment's cycles. The second is the worse of
-the two, because it does not fail until the cycle that runs off the end of the file, healing
-cannot recover it, and the message comes from `time_interp_external` inside MOM6 rather than
-from anything ACKBAR wrote. Both are checkable from the files: existence, and the
-`time_coverage_start`/`time_coverage_end` attributes `tools/obc-lagged.py` writes. This is the
-next thing to build here.
+That refusal is raised where the member is staged, which means inside the job, so **`ackbar
+validate` checks both of the failures that would otherwise reach it at step 3.** An archive
+missing a member is an ordinary path finding, because the rendered value is an absolute path
+per member and `_collect_paths` already walks it. An archive whose time coverage does not span
+the experiment's cycles is the worse of the two, because it does not fail until the cycle that
+runs off the end of the file, healing cannot recover it, and the message comes from
+`time_interp_external` inside MOM6 rather than from anything ACKBAR wrote; `_coverage_step`
+compares the file's own span against the window the graph will ask for.
+
+That check reads the time axis rather than the `time_coverage_start`/`time_coverage_end`
+attributes `tools/obc-lagged.py` writes. Trusting the attributes would only work for archives
+from that one tool, would pass silently on every archive built before it started writing them,
+and would be checking an annotation rather than the thing the model opens. "Time axis" means
+any variable carrying `axis = "T"`, falling back to a variable named `time`, and the narrowest
+span across them: the atmospheric archive gives every field its own unlimited axis and carries
+no variable named `time` at all, and its interval means end half an interval short of its
+instantaneous fields.
 
 **A boundary ensemble carries a basin-wide sea surface height mode that no analysis can remove,
 and the obvious fix does not work.** `ufo::ObsADT::simulateObs` computes `offset = mean(H(x) - y)`

@@ -15,11 +15,14 @@ depends on them.
 
 It is **not** a benchmark. Four reasons, all structural:
 
-- **The atmosphere is a climatology and it is shared.** NCAR/CORE, no synoptic
-  variability anywhere, and truth and experiments read the same file. So the only
-  source of divergence is the initial condition, and the ensemble has nothing
-  maintaining its spread except the filter. This is the largest of the three and
-  the one to fix first.
+- **Truth is forced by a shared climatology.** NCAR/CORE, no synoptic
+  variability anywhere. An experiment can now give each member its own GEFS
+  atmosphere ([`forcing.md`](forcing.md)), which is the larger half of this and
+  is built, but truth still reads the climatology and so does any experiment
+  that inherits no forcing layer. Until an ERA5-forced truth exists, an
+  experiment that perturbs its forcing is measuring spread against a truth whose
+  atmosphere it does not share in kind, so the numbers here are spread numbers
+  rather than skill ones.
 - **The observation errors are iid and exactly correct.** The generator adds
   Gaussian noise at the stated error and the observer assimilates that same
   number, which is the easy case and the right one to prove plumbing with. A
@@ -289,7 +292,7 @@ Two more, from the same sweep, that bear on this run specifically:
 - **Cycle length.** `PT24H`. `PT12H` doubles the cycle count and the analysis
   cost for a domain whose signal barely evolves in a day.
 - **Spinup length.** Decided by the kinetic energy plot, not in advance.
-- **What to do about the shared climatological forcing**, which is the caveat at
-  the top of this file and the reason no ensemble number here is believable.
-  Perturbed per-member forcing, and different forcing for truth than for the
-  experiments, are the two halves of it.
+- **The ERA5-forced truth run.** Perturbed per-member forcing and a truth forced
+  differently from the experiments were the two halves of the caveat at the top
+  of this file. The first is built ([`forcing.md`](forcing.md)); the second is
+  not, and until it is, no ensemble number here is a skill number.
