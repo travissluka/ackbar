@@ -158,6 +158,9 @@ def apply_analysis(config, analysis, restart, cycle=1):
                     f"for and not written. Check `analysis variables` against "
                     f"what the application's own output configuration asked for."
                 )
+            if field["name"] == THICKNESS:
+                # Last, and by its own rule. See `place_thickness`.
+                continue
             values = np.asarray(source.variables[io][0])
             mask = masks[field["grid"]]
             cropped = (alive[..., :mask.shape[0], :mask.shape[1]]
@@ -166,7 +169,109 @@ def apply_analysis(config, analysis, restart, cycle=1):
                                limit=limits.get(field["name"]),
                                relaxation=relaxation, alive=cropped,
                                taper=scales.get(field["name"])))
+
+        for field in variables:
+            if field["name"] != THICKNESS:
+                continue
+            lines.append(place_thickness(
+                target, field, masks[field["grid"]],
+                np.asarray(source.variables[field["io name"]][0]),
+                relaxation=relaxation))
     return lines
+
+
+#: The mass field, which is written by `place_thickness` and by nothing else.
+#: Named here rather than matched on `io name`, because what decides the rule is
+#: which quantity this is and not which letter the restart calls it.
+THICKNESS = "sea_water_cell_thickness"
+
+
+def place_thickness(target, field, mask, values, relaxation=1.0):
+    """Write the analysis's column mass, and only its column mass.
+
+    **The whole point of writing this field is the sea level the filter inferred
+    and nothing else reconstructs.** Under `BOUSSINESQ = True` a column's free
+    surface is `sum(h) - D`, so the mass field is what carries sea level, and an
+    ensemble filter's increment to it is coherent: localization here is
+    horizontal with no cross-variable component, so a member's sea level
+    perturbation carries its own correlation with that member's temperature and
+    salinity. The temperature and salinity increment is written and the model
+    regenerates the steric response from it; what is left over, and what is lost
+    when this field is skipped, is the barotropic residual.
+
+    **Not the per-layer increment.** Writing `h_ana` cell by cell is the obvious
+    form and it is a model crash rather than a bad answer: on `gom_25km` the
+    analysis itself puts a fraction of a percent of cells at or below zero
+    thickness, and MOM6 reports that several steps downstream as
+    `adjust_interface_motion: implied h<0`. So each column is *scaled*,
+
+        h_new = h_bkg * sum(h_ana) / sum(h_bkg)
+
+    which moves exactly the column integral and cannot produce a negative
+    thickness while the analysis's own column integral is positive. Measured on
+    this domain the factor stays inside half a percent of one.
+
+    **What that deliberately discards is the vertical redistribution.** The
+    filter also moved mass between layers, and that part is dropped here rather
+    than approximated: under Z* the model regrids on its first step anyway, so
+    the layer interfaces are the coordinate's business and the column integral
+    is the state. Keeping the redistribution is what would need the positivity
+    argument this form does not need.
+
+    **No `fill_down`, and no `increment limits` entry.** Both act per cell on a
+    field whose per-cell values are not being written. A bound on the column
+    delta is a different instrument and is not one this needs yet: the scale
+    factor is its own bound, and it is the model's response to a fast free
+    surface change, not the size of the change, that would justify one.
+    """
+    io = field["io name"]
+    if io not in target.variables:
+        raise ModelError(f"the restart has no {io} to write {field['name']} into")
+
+    data = np.asarray(target.variables[io][0])
+    if values.shape != data.shape:
+        raise ModelError(
+            f"the restart's {io} is {data.shape} against an analysis "
+            f"{values.shape}; the mass field is on the tracer grid in both"
+        )
+
+    wet = np.broadcast_to(mask, data.shape[-2:]) > 0
+    if not np.all(np.isfinite(values[..., wet])):
+        raise ModelError(
+            f"the values for {io} are not finite in the ocean, so the column "
+            f"mass the analysis implies cannot be formed"
+        )
+
+    was = data.sum(axis=0)
+    now = values.sum(axis=0)
+    # Relaxation acts on the column delta, on the same rule every other field
+    # follows: the analysis is written weaker, and it is still the analysis.
+    change = (now - was) * relaxation
+
+    # A column whose background holds no water has no scale factor and no sea
+    # level to move. `wet` already excludes land; this excludes the degenerate
+    # case rather than dividing by it.
+    usable = wet & (was > VANISHED)
+    factor = np.ones_like(was)
+    factor[usable] = (was[usable] + change[usable]) / was[usable]
+    if not np.all(factor[usable] > 0.0):
+        raise ModelError(
+            f"the analysis asks a column's total {io} to become negative, "
+            f"which is a state the model has no representation for"
+        )
+
+    data[..., usable] = data[..., usable] * factor[usable]
+    target.variables[io][0] = data
+
+    if "checksum" in target.variables[io].ncattrs():
+        target.variables[io].delncattr("checksum")
+
+    moved = change[usable]
+    relaxed = f", relaxed to {relaxation:g}" if relaxation != 1.0 else ""
+    return (f"{field['name']}: {moved.size} ocean column(s), sea level "
+            f"increment min {moved.min():+.4g} max {moved.max():+.4g} "
+            f"rms {np.sqrt(np.mean(moved ** 2)):.4g} m, scale factor "
+            f"{factor[usable].min():.6f} to {factor[usable].max():.6f}{relaxed}")
 
 
 #: How thin a layer has to be before it is not water. Under Z* every column
