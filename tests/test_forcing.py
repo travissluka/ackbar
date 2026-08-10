@@ -349,7 +349,8 @@ def test_the_file_carries_every_field_on_its_own_time_axis(tmp_path):
     stamped honestly. One shared axis would interpolate one of them."""
     path = tmp_path / "atm.nc"
     forcing.write_atm(path, np.array([260.0, 261.0]), np.array([10.0, 11.0]),
-                      ORIGIN, series_for(), "era5", "gom_25km")
+                      ORIGIN, series_for(), "era5", "gom_25km",
+                      scalar_height=forcing.REFERENCE_HEIGHT)
     with netCDF4.Dataset(path) as f:
         assert set(forcing.FIELDS) <= set(f.variables)
         for name in forcing.FIELDS:
@@ -363,7 +364,8 @@ def test_the_file_carries_every_field_on_its_own_time_axis(tmp_path):
 def test_the_units_and_long_names_are_the_ones_the_data_table_expects(tmp_path):
     path = tmp_path / "atm.nc"
     forcing.write_atm(path, np.array([260.0, 261.0]), np.array([10.0, 11.0]),
-                      ORIGIN, series_for(), "era5", "gom_25km")
+                      ORIGIN, series_for(), "era5", "gom_25km",
+                      scalar_height=forcing.REFERENCE_HEIGHT)
     with netCDF4.Dataset(path) as f:
         for name, (units, long_name) in forcing.FIELDS.items():
             assert f[name].units == units
@@ -376,7 +378,8 @@ def test_the_values_and_the_axes_survive_the_round_trip(tmp_path):
     path = tmp_path / "atm.nc"
     x, y = np.array([260.0, 261.5]), np.array([10.0, 11.25])
     series = series_for(hours=(0.0, 3.0, 6.0))
-    forcing.write_atm(path, x, y, ORIGIN, series, "era5", "gom_25km")
+    forcing.write_atm(path, x, y, ORIGIN, series, "era5", "gom_25km",
+                      scalar_height=forcing.REFERENCE_HEIGHT)
     with netCDF4.Dataset(path) as f:
         assert list(f["LON"][:]) == list(x)
         assert list(f["LAT"][:]) == list(y)
@@ -391,7 +394,8 @@ def test_the_box_attribute_describes_the_axes_and_not_the_request(tmp_path):
     path = tmp_path / "atm.nc"
     forcing.write_atm(path, np.array([257.875, 287.625]),
                       np.array([13.995, 35.995]),
-                      ORIGIN, series_for(), "era5", "gom_25km")
+                      ORIGIN, series_for(), "era5", "gom_25km",
+                      scalar_height=forcing.REFERENCE_HEIGHT)
     with netCDF4.Dataset(path) as f:
         assert f.box == "257.875 to 287.625 east, 13.995 to 35.995 north"
         assert f.source == "era5" and f.domain == "gom_25km"
@@ -406,7 +410,8 @@ def test_a_missing_field_is_refused_before_anything_is_written(tmp_path):
     with pytest.raises(SystemExit) as error:
         forcing.write_atm(path, np.array([260.0, 261.0]),
                           np.array([10.0, 11.0]), ORIGIN, series,
-                          "era5", "gom_25km")
+                          "era5", "gom_25km",
+                          scalar_height=forcing.REFERENCE_HEIGHT)
     assert "DLWRF" in str(error.value)
     assert not path.exists()
 
@@ -419,7 +424,8 @@ def test_a_field_with_the_wrong_number_of_records_is_refused(tmp_path):
     with pytest.raises(SystemExit) as error:
         forcing.write_atm(path, np.array([260.0, 261.0]),
                           np.array([10.0, 11.0]), ORIGIN, series,
-                          "era5", "gom_25km")
+                          "era5", "gom_25km",
+                          scalar_height=forcing.REFERENCE_HEIGHT)
     assert "1 records against 2 times" in str(error.value)
 
 
@@ -431,7 +437,8 @@ def test_times_that_do_not_increase_are_refused(tmp_path):
     with pytest.raises(SystemExit) as error:
         forcing.write_atm(path, np.array([260.0, 261.0]),
                           np.array([10.0, 11.0]), ORIGIN, series,
-                          "era5", "gom_25km")
+                          "era5", "gom_25km",
+                          scalar_height=forcing.REFERENCE_HEIGHT)
     assert "not increasing" in str(error.value)
 
 
@@ -447,5 +454,6 @@ def test_a_non_finite_value_is_refused_where_the_source_is_still_known(tmp_path)
     with pytest.raises(SystemExit) as error:
         forcing.write_atm(path, np.array([260.0, 261.0]),
                           np.array([10.0, 11.0]), ORIGIN, series,
-                          "era5", "gom_25km")
+                          "era5", "gom_25km",
+                          scalar_height=forcing.REFERENCE_HEIGHT)
     assert "PRATE" in str(error.value) and "non-finite" in str(error.value)

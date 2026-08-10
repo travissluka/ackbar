@@ -31,6 +31,7 @@ from .config.resolve import unresolved as unresolved_experiment
 from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
 from .duration import DurationError, parse_duration, parse_instant
+from .forcing import TABLE_FILE as FORCING_TABLE_FILE
 from .graph import GraphError, build_graph, job_time_context, member_set
 from .graph.build import extended_cycles
 from .observations import REQUIRED as OBS_REQUIRED
@@ -269,9 +270,10 @@ def _forcing_pair(rendered):
 
 
 #: What a data table row names as its file, `"INPUT/atm.nc"` in the fourth
-#: column. Quoted, and the table is whitespace-and-comma separated with no
-#: escaping, so a regex over the whole line is enough and a parser is not.
-TABLE_FILE = re.compile(r'"INPUT/([^"/]+)"')
+#: column. Defined in `forcing.py`, which asks the other question of the same
+#: column: this checks that something supplies each name, that one checks that
+#: the file supplied says what height its scalars are at.
+TABLE_FILE = FORCING_TABLE_FILE
 
 
 def _forcing_table_files(rendered):

@@ -88,12 +88,18 @@ Three details that are not free choices:
   atmospheric pressure load: the data table sets `p_surf` and `p_bot` to a
   constant 1e5 and both prior workflows did the same. It is read only where a
   humidity conversion needs it.
-- **`T2` and `Q2` are 2 m fields, and the data table declares the whole state at
-  10 m.** The winds are the only part of it that is true. It is inherited from
-  soca-science, it is forced by what GEFS and ERA5 publish rather than by a fetch
-  choice, and it biases the turbulent fluxes by about 10 per cent in one
-  direction. `docs/forcing-reference-height.md` carries the measurement and the
-  fix, which belongs in this archive rather than in the model.
+- **`T2` and `Q2` are shifted from the 2 m the products publish to the 10 m the
+  data table declares**, so `z_bot = 10` is true of all four fields rather than
+  only the winds. The products publish scalars at 2 m and winds at 10 m and
+  nothing at the other height, so the mismatch was forced by them rather than by
+  a fetch choice, and leaving it biased the turbulent fluxes by about 10 per cent
+  in one direction. Each file records the height as a
+  `scalar_reference_height` attribute and `mom6sis2.stage` refuses one that will
+  not say, which is what stops an archive built before the shift from being
+  reused silently. `--no-height-shift` builds the old behaviour on purpose.
+  `docs/forcing-reference-height.md` carries the measurement, the argument, and
+  the one limitation, which is land skin temperature reaching coastal points on
+  the 2020-on GEFS eras only.
 
 ## Sub-daily shortwave, and the flag that must move with it
 

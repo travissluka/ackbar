@@ -62,8 +62,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from ackbar.forcing import (  # noqa: E402
-    FIELDS, assert_no_leap_day, box_slices, domain_box, specific_humidity,
-    write_atm)
+    FIELDS, PRODUCT_HEIGHT, REFERENCE_HEIGHT, assert_no_leap_day, box_slices,
+    domain_box, shift_to_10m, specific_humidity, write_atm)
 
 BUCKET = "s3://nsf-ncar-era5"
 
@@ -77,6 +77,14 @@ INSTANT = {
     "_2d": "128_168_2d",
     "_sp": "128_134_sp",
 }
+
+#: Skin temperature, read only for the height shift and dropped like `_sp`.
+#:
+#: Skin rather than an ocean analysis, and ERA5's own rather than GLORYS, for
+#: the reason `shift_to_10m` gives: the 2 m fields were produced by ERA5's
+#: surface layer over this surface, so inverting that profile is self-consistent
+#: only against it. `sst` is not in this family in any case; `skt` is.
+SURFACE = "128_235_skt"
 
 #: The same for the hourly mean flux family.
 MEANFLUX = {
@@ -261,6 +269,12 @@ def main():
     ap.add_argument("--cache", type=Path,
                     help="where downloads land before being read and deleted. "
                          "Default: <out>/.cache")
+    ap.add_argument("--no-height-shift", action="store_true",
+                    help="archive T2 and Q2 at the 2 m ERA5 publishes them at, "
+                         "instead of shifting them to the 10 m the data table "
+                         "declares. The archive records which it is. Carries a "
+                         "turbulent flux bias of about ten per cent in one "
+                         "direction: see docs/forcing-reference-height.md")
     args = ap.parse_args()
 
     start = datetime.datetime.strptime(args.start, "%Y-%m-%d")
@@ -281,7 +295,11 @@ def main():
     origin = start
     series, grid = {}, None
     raw = {}
-    for name, code in INSTANT.items():
+    shift = not args.no_height_shift
+    reading = dict(INSTANT)
+    if shift:
+        reading["_TS"] = SURFACE
+    for name, code in reading.items():
         print(f"forcing-era5: {name} from {code}", flush=True)
         hours, cube, grid = gather("e5.oper.an.sfc", code, start, end, cache,
                                    origin, box)
@@ -289,9 +307,30 @@ def main():
 
     if not np.array_equal(raw["_2d"][0], raw["_sp"][0]):
         raise SystemExit("forcing-era5: dewpoint and pressure disagree on time")
-    series["Q2"] = (raw["_2d"][0],
-                    specific_humidity(raw["_2d"][1], raw["_sp"][1]))
-    for name in ("T2", "U10", "V10"):
+    q2 = specific_humidity(raw["_2d"][1], raw["_sp"][1])
+    t2 = raw["T2"][1]
+    if shift:
+        # Every field here is hourly instantaneous analysis out of one family,
+        # so they share a time axis. Checked rather than assumed, because the
+        # shift combines four of them pointwise and a silent offset between two
+        # would be a plausible looking field rather than an error.
+        for name in ("U10", "V10", "_TS", "_2d"):
+            if not np.array_equal(raw[name][0], raw["T2"][0]):
+                raise SystemExit(
+                    f"forcing-era5: {name} and T2 disagree on time, so the "
+                    f"height shift would combine two different hours")
+        t2, q2, undetermined = shift_to_10m(
+            t2, q2, np.hypot(raw["U10"][1], raw["V10"][1]), raw["_TS"][1])
+        if undetermined:
+            # Reported rather than logged quietly: a column left at 2 m carries
+            # the bias the shift exists to remove. Stable air over a colder
+            # surface with almost no wind is where the inversion has no
+            # solution, so how many there are is a property of the weather.
+            print(f"forcing-era5: {undetermined} of {t2.size} columns left at "
+                  f"{PRODUCT_HEIGHT:.0f} m, unsolved by the shift", flush=True)
+    series["T2"] = (raw["T2"][0], t2)
+    series["Q2"] = (raw["_2d"][0], q2)
+    for name in ("U10", "V10"):
         series[name] = raw[name]
 
     for name, code in MEANFLUX.items():
@@ -306,7 +345,8 @@ def main():
     # directory is the stager's business, not the archive's.
     target = args.out / f"{args.member}.nc"
     write_atm(target, x, y, origin, series,
-              source="ERA5, NCAR mirror ds633.0", domain=args.domain)
+              source="ERA5, NCAR mirror ds633.0", domain=args.domain,
+              scalar_height=REFERENCE_HEIGHT if shift else PRODUCT_HEIGHT)
     if not any(cache.iterdir()):
         cache.rmdir()
 
