@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import netCDF4
+import numpy as np
 import yaml
 
 from .config.jobtime import SYMBOL_NAMES, JobTimeError, render, symbols
@@ -32,7 +34,7 @@ from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
 from .duration import DurationError, parse_duration, parse_instant
 from .forcing import TABLE_FILE as FORCING_TABLE_FILE
-from .gridspec import assert_shifted
+from .gridspec import assert_shifted, extent, within
 from .soca import GRIDSPEC
 from .graph import GraphError, build_graph, job_time_context, member_set
 from .graph.build import extended_cycles
@@ -100,6 +102,7 @@ def validate_experiment(config, schema, site, root, offline=False):
         findings += _gridspec_step(config)
         findings += _coverage_step(timed, config, graph, shared)
         findings += _observation_step(observations)
+        findings += _observation_domain_step(config, observations)
         findings += _executable_step(graph, root)
         findings += _limit_step(graph, site)
 
@@ -619,6 +622,110 @@ def _observation_step(observations):
                 f"them is a wrong path."
             )))
     return findings
+
+
+#: The ioda groups and variables an observation file keeps its positions in.
+#: Only these two are read here, and only from one file per observer.
+OBS_METADATA = "MetaData"
+OBS_LONGITUDE = "longitude"
+OBS_LATITUDE = "latitude"
+
+
+def _observation_domain_step(config, observations):
+    """An archive with nothing inside the domain is not an experiment.
+
+    Step 3 and a sibling of `_gridspec_step`: an input that exists and holds
+    nothing this domain can use is an input problem, and it reads beside "input
+    path does not exist" rather than needing a step of its own.
+
+    **This is the one failure a regional analysis has no other way to notice.**
+    A global observation file handed to a regional domain does not break: SOCA
+    runs, every observation fails its `Domain Check`, and the cycle completes
+    with an increment of zero. Fifty cycles of that look exactly like fifty
+    healthy cycles until someone plots an increment. The archive is meant to be
+    culled to the domain first, by `tools/obs-cull-domain.py`, and nothing about
+    an unculled archive is visible from its path.
+
+    **The rule is that every observer is empty, not that any one is.** One
+    platform with nothing inside the domain is normal and becomes more normal
+    once archives are culled: a satellite that did not pass over the Gulf this
+    fortnight contributes files with no rows in them, by design. All of them
+    empty is a different statement, and the only ones it can make are a wrong
+    archive or a wrong domain. There is deliberately no threshold in between:
+    "most of them outside" means the counts are inflated, which is what the
+    culling stage is for, and any cutoff above zero is a knob with no defensible
+    value.
+
+    One file per observer, the first that exists, because this is asking what
+    the archive *is* rather than auditing it. An archive whose first window is
+    in the domain and whose fiftieth is not is not a thing that happens.
+    """
+    static = (config.get("domain") or {}).get("static")
+    if not static:
+        return []
+    path = os.path.join(static, GRIDSPEC)
+    if not os.path.exists(path):
+        # No gridspec, no extent to test against. Its absence is `_path_step`'s
+        # finding, and saying it twice would not make it truer.
+        return []
+
+    try:
+        box = extent(path)
+    except (OSError, KeyError, IndexError):
+        # A gridspec that cannot be read is `_gridspec_step`'s to report. This
+        # one declines to turn the same broken file into a second finding about
+        # observations, which would send a reader looking in the wrong place.
+        return []
+
+    counted = {}
+    for name in sorted(observations):
+        for candidate in sorted(observations[name]["paths"]):
+            if not os.path.exists(candidate) or not os.access(candidate, os.R_OK):
+                continue
+            try:
+                found, total = _in_domain(candidate, box)
+            except (OSError, KeyError, IndexError):
+                # Unreadable or not shaped like an observation file. `stage.obs`
+                # will keep the observer and the application will fail on it,
+                # which is `_observation_step`'s territory rather than this
+                # one's.
+                break
+            counted[name] = (found, total, candidate)
+            break
+
+    if not counted or any(found for found, _, _ in counted.values()):
+        return []
+
+    example = min(counted)
+    total = sum(count for _, count, _ in counted.values())
+    return [Finding(3, "observations", (
+        f"none of the {total} observations in the {len(counted)} observer file(s) "
+        f"checked fall inside {(config.get('domain') or {}).get('name', 'this domain')}, "
+        f"whose grid spans {box[0]:.3f} to {box[1]:.3f} east and {box[2]:.3f} to "
+        f"{box[3]:.3f} north. For example {counted[example][2]} has "
+        f"{counted[example][1]} observations and none of them are in it. Every "
+        f"cycle would run to completion, reject every observation at `Domain "
+        f"Check`, and write an increment of zero. Cull the archive to this "
+        f"domain first with tools/obs-cull-domain.py, or point obs_dir at an "
+        f"archive that was built for it."
+    ))]
+
+
+def _in_domain(path, box):
+    """How many of an observation file's positions are inside *box*, and of how many.
+
+    netCDF4 rather than h5py because every other reader here is netCDF4, and an
+    ioda file opens either way for reading. (`ensemble_hofx` needs h5py only
+    because netCDF4 will not reopen an ioda file for *append*.)
+    """
+    with netCDF4.Dataset(path) as data:
+        data.set_auto_mask(False)
+        meta = data.groups[OBS_METADATA]
+        lon = np.asarray(meta.variables[OBS_LONGITUDE][:]).ravel()
+        lat = np.asarray(meta.variables[OBS_LATITUDE][:]).ravel()
+    if lon.size != lat.size:
+        raise IndexError(f"{path} has {lon.size} longitudes and {lat.size} latitudes")
+    return int(within(lon, lat, box).sum()), int(lon.size)
 
 
 def _under(path, roots):

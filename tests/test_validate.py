@@ -10,6 +10,8 @@ is not there.
 import stat
 from pathlib import Path
 
+import netCDF4
+import numpy as np
 import pytest
 import yaml
 
@@ -19,7 +21,7 @@ from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph import build_graph, job_time_context
-from ackbar.validate import validate_experiment
+from ackbar.validate import _observation_domain_step, validate_experiment
 
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
@@ -367,6 +369,164 @@ class TestStep3InputPaths:
             if f.where.startswith(("/out", "/scratch"))
         ]
         assert outputs == []
+
+
+class TestStep3ObservationsAreInTheDomain:
+    """An archive with nothing inside the domain, which nothing else notices.
+
+    A global observation file handed to a regional domain does not fail. SOCA
+    runs, every observation is rejected by `Domain Check`, and the cycle
+    completes with an increment of zero, so fifty cycles of it look like fifty
+    healthy cycles. `tools/obs-cull-domain.py` is the fix and this is what makes
+    its absence loud, in the one place that can still refuse before eight hours
+    of jobs are submitted.
+
+    Mostly `_observation_domain_step` directly, because the rule is about
+    proportion across observers and building a distinct experiment per case
+    would say less about it. The last test runs the whole command, so that the
+    step being wired in is pinned by something.
+    """
+
+    def domain(self, tmp_path, west=-95.0, east=-90.0, south=20.0, north=25.0):
+        """A config carrying a static stage, and a gridspec spanning a box."""
+        static = tmp_path / "static"
+        static.mkdir(parents=True, exist_ok=True)
+        lon, lat = np.meshgrid(np.linspace(west, east, 6),
+                               np.linspace(south, north, 5))
+        with netCDF4.Dataset(static / "soca_gridspec.nc", "w") as data:
+            data.createDimension("time", 1)
+            data.createDimension("y", lon.shape[0])
+            data.createDimension("x", lon.shape[1])
+            for name, values in (("lon", lon), ("lat", lat)):
+                data.createVariable(name, "f8", ("time", "y", "x"))[:] = values[None]
+        return {"domain": {"name": "gom_test", "static": str(static)}}
+
+    def observer(self, tmp_path, name, lon, lat):
+        """One observer, as `_take_observation_inputs` collects them."""
+        path = tmp_path / f"{name}.nc4"
+        lon = np.asarray(lon, dtype="f4")
+        with netCDF4.Dataset(path, "w") as data:
+            data.createDimension("Location", lon.size)
+            meta = data.createGroup("MetaData")
+            meta.createVariable("longitude", "f4", ("Location",))[:] = lon
+            meta.createVariable("latitude", "f4", ("Location",))[:] = \
+                np.asarray(lat, dtype="f4")
+        return {name: {"required": False, "paths": {str(path)}}}
+
+    def test_every_observer_outside_the_domain_is_refused(self, tmp_path):
+        config = self.domain(tmp_path)
+        observations = {}
+        observations.update(self.observer(tmp_path, "adt_j2", [10.0, 11.0], [0.0, 1.0]))
+        observations.update(self.observer(tmp_path, "sst_npp", [30.0], [40.0]))
+
+        found = _observation_domain_step(config, observations)
+        assert [f.step for f in found] == [3]
+        assert "none of the 3 observations" in found[0].message
+        assert "obs-cull-domain" in found[0].message
+
+    def test_one_observer_inside_is_enough(self, tmp_path):
+        """A platform that saw nothing is normal; all of them is a wrong archive.
+
+        This is the whole rule, and it is the reason there is no threshold in
+        between. A domain-scoped archive produces empty and out-of-domain
+        platforms routinely, and an experiment that assimilates something is not
+        the failure this exists to catch.
+        """
+        config = self.domain(tmp_path)
+        observations = {}
+        observations.update(self.observer(tmp_path, "adt_j2", [10.0], [0.0]))
+        observations.update(self.observer(tmp_path, "sst_npp", [-92.0], [22.0]))
+
+        assert _observation_domain_step(config, observations) == []
+
+    def test_longitude_conventions_are_reconciled_before_judging(self, tmp_path):
+        """A gridspec in 0 to 360 against observations written -180 to 180.
+
+        The two conventions describe the same Gulf of Mexico, and compared as
+        written they do not overlap at all: this check would refuse a perfectly
+        good experiment and name the archive as the reason. A MOM6 case stores
+        whatever its own grid file used and an ioda converter writes signed
+        longitudes, so nothing makes them agree except doing it here.
+        """
+        config = self.domain(tmp_path, west=265.0, east=270.0,
+                             south=20.0, north=25.0)
+        observations = self.observer(tmp_path, "adt_j2", [-92.0], [22.0])
+
+        assert _observation_domain_step(config, observations) == []
+
+    def test_wrapping_does_not_make_everything_inside(self, tmp_path):
+        """The other half, so the wrap cannot be "return everything".
+
+        A point genuinely outside the domain is still outside it after both
+        sides are wrapped, which is what stops the reconciliation above from
+        being a way to pass this check by accident.
+        """
+        config = self.domain(tmp_path, west=265.0, east=270.0,
+                             south=20.0, north=25.0)
+        observations = self.observer(tmp_path, "adt_j2", [30.0], [-40.0])
+
+        assert len(_observation_domain_step(config, observations)) == 1
+
+    def test_a_domain_with_no_gridspec_yet_is_not_this_steps_finding(self, tmp_path):
+        """Its absence is `_path_step`'s to report, and saying it twice helps nobody."""
+        config = {"domain": {"name": "gom_test", "static": str(tmp_path / "nothing")}}
+        observations = self.observer(tmp_path, "adt_j2", [10.0], [0.0])
+
+        assert _observation_domain_step(config, observations) == []
+
+    def test_an_unreadable_observation_file_is_left_to_the_step_that_owns_it(
+            self, tmp_path):
+        """A file that is not an observation file is not an empty domain.
+
+        `_observation_step` reports what it can about the file, and the
+        application fails on it. Reporting it here as well would send a reader
+        looking at the domain, which is the wrong place.
+        """
+        config = self.domain(tmp_path)
+        target = tmp_path / "adt_j2.nc4"
+        target.write_text("not netcdf\n")
+
+        found = _observation_domain_step(
+            config, {"adt_j2": {"required": False, "paths": {str(target)}}})
+        assert found == []
+
+    def test_the_step_is_wired_into_the_command(self, tmp_path, keys, schema):
+        """Through `validate_experiment`, so that the call site is pinned too.
+
+        The unit tests above would all pass with the step never called.
+        """
+        source = yaml.safe_load((EXPERIMENTS / "var_om1deg.yaml").read_text())
+        source["vars"]["obs_dir"] = str(tmp_path / "obs")
+        path = tmp_path / "staged.yaml"
+        path.write_text(yaml.safe_dump(source))
+        site = dict(SITE, static_root=str(tmp_path / "static"))
+        config = load(None, keys, path, site=site)
+
+        # The domain's own gridspec, over a box the archive is nowhere near.
+        static = Path(config["domain"]["static"])
+        static.mkdir(parents=True, exist_ok=True)
+        lon, lat = np.meshgrid(np.linspace(-95.0, -90.0, 6),
+                               np.linspace(20.0, 25.0, 5))
+        with netCDF4.Dataset(static / "soca_gridspec.nc", "w") as data:
+            data.createDimension("time", 1)
+            data.createDimension("y", lon.shape[0])
+            data.createDimension("x", lon.shape[1])
+            for name, values in (("lon", lon), ("lat", lat)):
+                data.createVariable(name, "f8", ("time", "y", "x"))[:] = values[None]
+
+        for target in observation_files(config):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with netCDF4.Dataset(target, "w") as data:
+                data.createDimension("Location", 1)
+                meta = data.createGroup("MetaData")
+                meta.createVariable("longitude", "f4", ("Location",))[:] = [10.0]
+                meta.createVariable("latitude", "f4", ("Location",))[:] = [0.0]
+
+        # Only this finding, because a checkout with no built bundle reports
+        # every executable at step 4 and that is not what this is about.
+        mine = [f for f in full(config, schema, site=site) if f.where == "observations"]
+        assert len(mine) == 1
+        assert "obs-cull-domain" in mine[0].message
 
 
 class TestStep2Templates:

@@ -181,6 +181,38 @@ def test_an_observer_with_no_output_is_the_finding_and_not_a_failure(tmp_path):
                                "count": 0, "assimilated": 0}
 
 
+def test_an_empty_observation_space_is_recorded_as_one(tmp_path):
+    """"Considered and saw nothing" is a different fact from a blank record.
+
+    A domain-scoped archive produces empty observation spaces routinely, and the
+    application writes back a file holding only a zero length `Location`,
+    because `put_db` does nothing when there are no rows. Without the marker
+    that record is indistinguishable from one for a file that arrived damaged,
+    and the two want opposite reactions.
+    """
+    path = tmp_path / "sst.nc4"
+    with netCDF4.Dataset(path, "w") as data:
+        data.createDimension("Location", 0)
+
+    stats = post.obs_stats([{"name": "sst", "output": str(path)}],
+                           tmp_path / "obs.json")
+    record = stats["observers"][0]
+    assert record["empty"] is True
+    assert "had nothing inside the domain" in record["note"]
+    # It is not an error, and it contributes nothing to the counts, which is
+    # what keeps `post.obs`'s "read some and assimilated none" refusal from
+    # firing on a cycle that simply had no observations.
+    assert "error" not in record
+    assert stats["totals"]["count"] == 0
+
+
+def test_a_populated_observer_is_not_marked_empty(tmp_path):
+    path = ioda(tmp_path / "sst.nc4", groups={"ObsValue": [1.0], "hofx0": [1.0]})
+    stats = post.obs_stats([{"name": "sst", "output": str(path)}],
+                           tmp_path / "obs.json")
+    assert "empty" not in stats["observers"][0]
+
+
 def test_the_summary_is_written_where_it_was_asked_for(tmp_path):
     target = tmp_path / "post" / "3" / "obs.json"
     path = ioda(tmp_path / "sst.nc4", groups={"ObsValue": [1.0], "hofx0": [1.0]})

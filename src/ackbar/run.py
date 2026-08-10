@@ -1439,7 +1439,9 @@ def _post(config, paths, cycle, task, member):
     whole purpose at that moment is to record what did and did not appear, so a
     refusal here would delete the diagnostic instead of writing it. What they
     do raise on is a state that exists and is not the shape it claims to be,
-    which is a different thing entirely.
+    which is a different thing entirely. `post.obs` raises on one thing more,
+    below, and it raises *after* writing its document rather than instead of
+    writing it.
     """
     if task == "post.obs":
         # Every configured observer, not only the staged ones: an observer that
@@ -1453,6 +1455,35 @@ def _post(config, paths, cycle, task, member):
               f"{totals['count']} observations assimilated across "
               f"{totals['observers']} observer(s), {totals['failed']} with no "
               f"output -> {paths.obs_summary(cycle)}")
+
+        # **Observations read and every one of them rejected is a failure, and
+        # this is the only place a run can notice it.** An analysis that
+        # assimilates nothing does not fail: SOCA runs, every observation
+        # outside the grid fails its `Domain Check`, the increment is zero, and
+        # the cycle is green from end to end. The line above has been printing
+        # `0 of 41231` into a log for as long as that has been possible. So the
+        # graph stops here instead, and `ackbar heal` resubmits once the cause
+        # is fixed.
+        #
+        # Both halves of the condition are deliberate. A cycle whose observers
+        # were all empty has a count of zero and is *not* this: an empty
+        # observation space is a normal outcome of a domain-scoped archive, and
+        # `post.obs_stats` marks those records rather than leaving them blank.
+        # What this catches is observations that were present and all thrown
+        # away, which is what an archive that was never culled to this domain
+        # produces on every cycle of the experiment.
+        if totals["count"] and not totals["assimilated"]:
+            raise TaskError(
+                f"{cycle}.post.obs: {totals['count']} observations were read "
+                f"and not one survived quality control, so this cycle's "
+                f"analysis assimilated nothing and its increment is zero. The "
+                f"usual cause is an observation archive that was never culled "
+                f"to this domain, whose observations are all rejected by "
+                f"`Domain Check`: see tools/obs-cull-domain.py. A sparse real "
+                f"platform whose few observations were all legitimately "
+                f"rejected looks identical from here, and the two are told "
+                f"apart by the per-observer rejection codes in "
+                f"{paths.obs_summary(cycle)}, which this wrote before raising.")
         return
 
     if task == "post.fcst":

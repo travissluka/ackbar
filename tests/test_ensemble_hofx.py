@@ -174,3 +174,63 @@ def test_an_empty_ensemble_is_refused_rather_than_merged(tmp_path):
     reference = write(tmp_path / "mean.nc", hofx=[1.0, 2.0])
     with pytest.raises(MergeError, match="no member hofx"):
         merge(reference, [], tmp_path / "merged.nc")
+
+
+# --- the empty observation space ----------------------------------------------
+#
+# An observer with nothing in this window, which a domain-scoped archive
+# produces routinely and which every check in `merge` would otherwise refuse.
+# `present` is a question about the filesystem and an empty file exists, so
+# nothing upstream filters one out and it arrives here like any other.
+
+
+def write_empty(path):
+    """The file ioda writes for an observation space holding no observations.
+
+    One object, `Location`, with no rows. No `MetaData` and no `hofx`, because
+    `put_db` is a no-op on an empty space, and their absence is legal rather
+    than evidence that the observer failed. Shaped after the bundle's own
+    `empty_obs_file.nc4`, whose only object this is.
+    """
+    with h5py.File(path, "w") as ds:
+        ds.create_dataset("Location", data=np.zeros(0, dtype="i4"))
+    return path
+
+
+def test_an_empty_observer_merges_to_the_reference_unchanged(tmp_path):
+    """The merged file is the reference, and that is the correct merge.
+
+    `ObsSpace::empty()` reports every variable as present, so the solver reads
+    `hofx0_n`, `hofx_y_mean_xb0` and `ObsError` out of it and gets zero-length
+    vectors, which is what building them row by row out of no rows would give.
+    """
+    reference = write_empty(tmp_path / "mean.nc")
+    members = [write_empty(tmp_path / f"mem{n}.nc") for n in (1, 2, 3)]
+    out = tmp_path / "merged.nc"
+
+    assert merge(reference, members, out) == out
+    with h5py.File(out) as ds:
+        assert list(ds) == ["Location"]
+        assert ds["Location"].shape == (0,)
+
+
+def test_a_mixture_of_empty_and_populated_files_is_refused(tmp_path):
+    """Empty together or not at all.
+
+    Every member evaluates the same input file through the same distribution on
+    the same rank count, so a mixture is not a state the system produces. Taking
+    either branch silently would turn a real corruption signal into an analysis
+    nobody could question, which is the one outcome worse than a failed cycle.
+    """
+    reference = write(tmp_path / "mean.nc", hofx=[1.0, 2.0])
+    populated = write(tmp_path / "mem1.nc", hofx=[3.0, 4.0])
+    blank = write_empty(tmp_path / "mem2.nc")
+
+    with pytest.raises(MergeError, match="empty observation space"):
+        merge(reference, [populated, blank], tmp_path / "merged.nc")
+    assert not (tmp_path / "merged.nc").exists()
+
+    # And the other way round, which is the case a guard written only for
+    # "some member is empty" would miss.
+    with pytest.raises(MergeError, match="empty observation space"):
+        merge(blank, [populated], tmp_path / "merged.nc")

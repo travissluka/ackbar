@@ -65,6 +65,11 @@ FORWARD = "hofx"
 BACKGROUND = "ombg"
 ANALYSIS = "oman"
 
+#: ioda's location dimension. Read only to tell an empty observation space from
+#: a damaged file: an empty space writes back a file holding nothing but this,
+#: at length zero, because `put_db` does nothing when there are no rows.
+OBS_LOCATION = "Location"
+
 #: What the filter chain concluded, zero meaning kept. The *lowest* index is the
 #: one that decides what the solve saw, so it is the one that decides what
 #: `assimilated` means; a later iteration can reject more, and reporting that as
@@ -188,9 +193,34 @@ def _one_observer(path):
         groups = set(data.groups)
         variables = sorted(data.groups[OBS_VALUE].variables) if OBS_VALUE in groups else []
         record = {"groups": sorted(groups), "variables": {}}
+
+        # **An empty observation space is a fact, not a blank.** A
+        # domain-scoped archive produces one whenever a platform did not see
+        # this domain in this window, and the application writes back a file
+        # holding only a zero length `Location`: `put_db` is a no-op on an empty
+        # space, so there is no `ObsValue` group to find and nothing above puts
+        # a variable in the record. Said outright, because a record of no
+        # groups and no variables is otherwise indistinguishable from a file
+        # that arrived damaged, and the two want opposite reactions.
+        if _is_empty(data):
+            record["empty"] = True
+            record["note"] = ("the observation space held no observations, so "
+                              "this platform was considered for this window "
+                              "and had nothing inside the domain")
+
         for name in variables:
             record["variables"][name] = _one_variable(data, groups, name)
     return record
+
+
+def _is_empty(data):
+    """Whether an open ioda file holds an empty observation space.
+
+    `Location` with no rows, which is ioda's own test: the reader opens that
+    dimension unconditionally and decides emptiness from it.
+    """
+    location = data.dimensions.get(OBS_LOCATION)
+    return location is not None and len(location) == 0
 
 
 def _one_variable(data, groups, name):

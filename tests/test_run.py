@@ -8,6 +8,8 @@ What Slurm makes of the results is tier 2's problem.
 import json
 from pathlib import Path
 
+import netCDF4
+import numpy as np
 import pytest
 
 from ackbar import ledger, run, soca, submit
@@ -20,6 +22,11 @@ from ackbar.paths import Paths
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
 EXPERIMENTS = Path(__file__).resolve().parent / "experiments"
+
+#: The simulated variable in the observation files the `post.obs` tests write.
+#: The fixture experiment flies altimeters, and `post` reads whatever variable
+#: it finds rather than a name it was told, so only the two have to agree.
+VARIABLE = "absoluteDynamicTopography"
 
 
 @pytest.fixture(scope="module")
@@ -949,3 +956,80 @@ def test_a_cycle_that_assimilated_nothing_recentres_nothing(hyb):
     config, paths = hyb
     stage(paths, 2, present=False)
     assert run.task_io(config, paths, "recenter", 2, None) == ([], [])
+
+
+# --- post.obs, and the cycle that assimilated nothing -------------------------
+#
+# `_post` directly rather than through `run_task`, because what is under test is
+# the reduction's own refusal rather than the sentinel and skip machinery it
+# runs inside.
+
+
+def observation_output(path, *, observed, qc):
+    """An analysis's observation output, carrying the QC the solve ended on."""
+    with netCDF4.Dataset(path, "w") as data:
+        data.createDimension("Location", len(observed))
+        data.createGroup("ObsValue").createVariable(
+            VARIABLE, "f4", ("Location",))[:] = np.asarray(observed)
+        data.createGroup("EffectiveQC").createVariable(
+            VARIABLE, "i4", ("Location",))[:] = np.asarray(qc)
+    return path
+
+
+def departures_at(config, path):
+    """Point every observer's output at one file, so a test can write it."""
+    for entry in config["observations"]:
+        entry["obs space"]["obsdataout"]["engine"]["obsfile"] = str(path)
+    return config
+
+
+def test_reading_observations_and_assimilating_none_fails_the_cycle(env, tmp_path):
+    """The one failure a regional analysis has no other way to notice.
+
+    Every observation rejected is what a global archive on a regional domain
+    produces: SOCA runs, `Domain Check` throws all of them out, the increment is
+    zero, and nothing else in the cycle is unhappy about any of it. It was a
+    printed line for as long as that was possible.
+    """
+    config, _, paths = env
+    departures_at(config, observation_output(
+        tmp_path / "adt.nc4", observed=[1.0, 2.0], qc=[1, 1]))
+
+    with pytest.raises(run.TaskError, match="not one survived"):
+        run._post(config, paths, 1, "post.obs", 0)
+
+    # Written before the raise, because it carries which filter did the
+    # rejecting and that is wanted at exactly this moment.
+    assert paths.obs_summary(1).exists()
+    assert json.loads(paths.obs_summary(1).read_text())["totals"]["assimilated"] == 0
+
+
+def test_a_cycle_that_assimilated_some_of_them_is_fine(env, tmp_path):
+    config, _, paths = env
+    departures_at(config, observation_output(
+        tmp_path / "adt.nc4", observed=[1.0, 2.0], qc=[0, 1]))
+
+    run._post(config, paths, 1, "post.obs", 0)
+
+    assert json.loads(paths.obs_summary(1).read_text())["totals"]["assimilated"] == 2
+
+
+def test_a_cycle_with_no_observations_at_all_is_not_a_failure(env, tmp_path):
+    """A count of zero is not "all rejected", and both are normal outcomes.
+
+    This is what the `count > 0` half of the condition is for. A domain-scoped
+    archive produces empty observation spaces routinely, for a platform that did
+    not pass over the domain, and a cycle of them must not fail.
+    """
+    config, _, paths = env
+    empty = tmp_path / "adt.nc4"
+    with netCDF4.Dataset(empty, "w") as data:
+        data.createDimension("Location", 0)
+    departures_at(config, empty)
+
+    run._post(config, paths, 1, "post.obs", 0)
+
+    summary = json.loads(paths.obs_summary(1).read_text())
+    assert summary["totals"] == {"observers": 2, "failed": 0,
+                                 "count": 0, "assimilated": 0}
+    assert all(record["empty"] for record in summary["observers"])

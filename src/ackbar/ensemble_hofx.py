@@ -54,9 +54,30 @@ OBS_ERROR = "ObsError"
 #: `_check_aligned`.
 IDENTITY = ("dateTime", "latitude", "longitude")
 
+#: ioda's location dimension, and the only thing an empty observation file is
+#: guaranteed to hold. See `_is_empty`.
+LOCATION = "Location"
+
 
 class MergeError(Exception):
     pass
+
+
+def _is_empty(path):
+    """Whether an ioda file holds an empty observation space.
+
+    `Location` with no rows, which is ioda's own definition: the reader opens
+    that dataset unconditionally and sets its `emptyFile_` flag from the
+    dimension being zero. Everything else in the file is optional at that point,
+    and a file ioda wrote for an empty space holds nothing else at all.
+    """
+    with h5py.File(path) as data:
+        if LOCATION not in data:
+            # No `Location` at all is not an empty space, it is a file that is
+            # not an observation file. The checks below say so far better than a
+            # KeyError from the middle of the merge would.
+            return False
+        return data[LOCATION].shape[0] == 0
 
 
 def _check_aligned(reference, members):
@@ -113,6 +134,51 @@ def merge(reference, members, out):
                          "assimilate")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    # **An observer with no observations in this window is routine, and every
+    # check below would refuse it.** A domain-scoped archive produces empty
+    # files by design: a satellite that did not pass over the domain this cycle
+    # contributes a file with no rows, and `tools/obs-cull-domain.py` writes one
+    # rather than omitting it so that "considered, saw nothing" is
+    # distinguishable from "the fetch failed".
+    #
+    # Nothing upstream filters those out, and it is worth saying why, because
+    # the filters look like they would. `observations.selected` keeps an
+    # observer when its input file is `present`, which is a question about the
+    # filesystem, and an empty file exists. So the observer is staged, hofx runs
+    # it, `soca.ensemble_departures` reaches this, and every one of the three
+    # checks below fires on a file that is exactly as it should be:
+    # `_check_aligned` on the absent `MetaData`, then `FORWARD`, then
+    # `EFFECTIVE_ERROR`, all absent because `put_db` is a no-op on an empty
+    # space. The `MergeError` becomes a `ModelError` becomes a `TaskError`, the
+    # loop over observers does not continue, and one empty platform takes the
+    # whole cycle's departures with it.
+    #
+    # So it returns the reference unchanged. That is not a shortcut around the
+    # merge, it is the merge: `ObsSpace::empty()` reports every variable as
+    # present, so the solver reads `hofx0_n`, `hofx_y_mean_xb0` and `ObsError`
+    # out of an empty space and gets zero-length vectors for all of them,
+    # exactly as it would from a merged file that had been built row by row out
+    # of nothing.
+    empty = [_is_empty(path) for path in (reference, *members)]
+    if all(empty):
+        shutil.copy(reference, out)
+        return out
+    if any(empty):
+        # Not a case to pick a branch for. Every member runs the same input file
+        # through the same distribution on the same rank count, so their spaces
+        # are empty together or not at all. One of each means the member files
+        # are not what they are believed to be, and a merge that silently took
+        # either branch would turn that into an analysis nobody could question.
+        names = [str(path) for path, blank
+                 in zip((reference, *members), empty) if blank]
+        raise MergeError(
+            f"{len(names)} of {len(empty)} files hold an empty observation "
+            f"space and the rest do not: {', '.join(names)}. Every member "
+            f"evaluates the same observations, so they are empty together or "
+            f"not at all, and a mixture means these files do not describe one "
+            f"observer's window.")
+
     _check_aligned(reference, members)
 
     shutil.copy(reference, out)

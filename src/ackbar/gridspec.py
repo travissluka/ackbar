@@ -199,3 +199,56 @@ def staggered_faces(path):
         if STAGGER_ATTR in data.ncattrs():
             return data.getncattr(STAGGER_ATTR)
     return None
+
+
+# --- what is inside the domain -----------------------------------------------
+#
+# Two callers, and they have to agree: `tools/obs-cull-domain.py` decides which
+# observations to keep in a domain-scoped archive, and `validate` decides whether
+# an experiment's archive has anything in the domain at all. Two copies of this
+# that drifted would produce exactly the failure the culling stage exists to
+# close, an archive `validate` calls populated and the analysis finds empty. So
+# it lives here, beside the file it reads, rather than in either caller.
+
+
+def wrap(lon):
+    """Longitude into [-180, 180).
+
+    Every longitude on both sides of a comparison goes through this. A gridspec
+    stores whatever convention its MOM6 case used, which for the global tripolar
+    grid is -300 to 60, while an ioda file is written -180 to 180. Comparing the
+    two unwrapped puts an entire archive outside its own domain.
+    """
+    return (np.asarray(lon, dtype="f8") + 180.0) % 360.0 - 180.0
+
+
+def extent(path):
+    """A domain's bounding box, as (west, east, south, north).
+
+    From the gridspec's tracer cell centres, longitude wrapped. **The mask is
+    not read, on purpose.** Culling on extent alone means a domain's archive
+    survives a change to its topography or its land mask, where culling on the
+    mask would bake one version of it into the archive and leave the two to
+    disagree silently. A land observation is rejected at run time by SOCA's own
+    `Domain Check`, which reports it honestly as present-but-rejected. See
+    `tools/obs-cull-domain.py`.
+
+    A bounding box rather than the grid's true footprint: it is a necessary
+    condition for being in the domain rather than a sufficient one, which is the
+    right side to err on for both callers. The cull keeps a few observations the
+    analysis will reject, and `validate` refuses only an archive with nothing
+    even in the box.
+    """
+    with netCDF4.Dataset(path) as data:
+        data.set_auto_mask(False)
+        lon = wrap(data.variables["lon"][0])
+        lat = np.asarray(data.variables["lat"][0], dtype="f8")
+    return float(lon.min()), float(lon.max()), float(lat.min()), float(lat.max())
+
+
+def within(lon, lat, box):
+    """A boolean mask of the positions inside *box*, which is an `extent`."""
+    west, east, south, north = box
+    lon = wrap(lon)
+    lat = np.asarray(lat, dtype="f8")
+    return (lon >= west) & (lon <= east) & (lat >= south) & (lat <= north)
