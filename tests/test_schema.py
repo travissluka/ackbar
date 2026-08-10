@@ -137,6 +137,35 @@ class TestRealSchema:
         config["experiment"]["name"] = "my experiment"
         assert any(path == "experiment.name" for path, _ in validate(config, schema))
 
+    def test_a_stochastic_timescale_that_is_not_a_duration_is_rejected(self, schema):
+        # It was `{type: string}`, so `banana` passed all six validate steps and
+        # `parse_duration` raised inside the forecast job instead, hours after
+        # submission and once per member.
+        config = _stochastic("banana")
+        assert any(path == "ensemble.stochastic.sppt.timescale"
+                   for path, _ in validate(config, schema))
+
+    def test_a_real_duration_still_passes(self, schema):
+        # The guard is a pattern, not a parser, so this is what says it did not
+        # simply reject everything.
+        assert validate(_stochastic("PT6H"), schema) == []
+
+
+def _stochastic(timescale):
+    config = _minimal()
+    config["ensemble"] = {
+        "size": 2,
+        "stochastic": {
+            "seed": 20150712,
+            "sppt": {
+                "amplitude": 0.35,
+                "length_scale": 500000.0,
+                "timescale": timescale,
+            },
+        },
+    }
+    return config
+
 
 def _minimal():
     return {

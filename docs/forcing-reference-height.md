@@ -1,16 +1,21 @@
 # Atmospheric reference height
 
-`config/model/mom6sis2/domain/gom/common/data_table` and `data_table.atm` declare
+`config/model/mom6sis2/domain/gom/common/data_table.atm` declares
 
 ```
 "ATM" , "z_bot" , "" , "" , "bilinear" , 10.0
 ```
 
 `z_bot` is the single height at which the FMS coupler believes the whole supplied
-atmospheric state sits, and it is the reference level for the bulk flux calculation. The
-same table feeds it two different levels: `u_bot`/`v_bot` come from GEFS `U10`/`V10`, which
-are correct at 10 m, while `t_bot`/`sphum_bot` come from GEFS `T2`/`Q2`, which are 2 m
-fields being declared as if they sat at 10 m.
+atmospheric state sits, and it is the reference level for the bulk flux calculation. That
+table feeds it two different levels: `u_bot`/`v_bot` come from GEFS `U10`/`V10`, which are
+correct at 10 m, while `t_bot`/`sphum_bot` come from GEFS `T2`/`Q2`, which are 2 m fields
+being declared as if they sat at 10 m.
+
+**Only the `.atm` table has this problem.** The domain's other table, `data_table`, reads
+the CORE climatology, whose `T_10_MOD` and `Q_10_MOD` really are 10 m fields, so its
+identical `z_bot = 10.0` is true. The two are easy to conflate because the declaration is
+the same line in both.
 
 FMS takes one `z_bot` for the whole atmospheric state, so the table cannot say 10 m for the
 winds and 2 m for the scalars. This page records what the number does, what upstream does
@@ -198,6 +203,7 @@ systematic half-degree Gulf warm bias exceeds the SST observation error, so the 
 spends its increments fighting a forcing error, which is how an analysis comes to verify well
 and forecast badly.
 
-Until the shift exists, the `10.0` in the data tables should carry a comment saying what it
+Until the shift exists, the `10.0` in `data_table.atm` carries a comment saying what it
 asserts and that `t_bot` and `sphum_bot` do not yet satisfy it. A bare `10.0` reads as
-agreement with GFDL when it is the opposite.
+agreement with GFDL when it is the opposite, and the climatology table beside it, where the
+same number is true, is what makes that reading easy.

@@ -568,8 +568,16 @@ properties:
           # pattern generator declares. A cycle date, `20150712`, is the
           # obvious thing to put here and fits.
           seed: { type: integer, minimum: 1, maximum: 99999999 }
-          # Perturbs the whole diabatic tendency, so it reaches the column and
-          # moves sea level through the thickness.
+          # Perturbs the whole diabatic tendency, thickness, temperature and
+          # salinity alike, so it reaches the column.
+          #
+          # It does not reach sea level or salinity in practice, whatever the
+          # thickness term suggests: over a day the diabatic change in column
+          # mass and in salt is too small for a multiplier to move, and
+          # `osse25-letkf-stoch5` measured both at 1.00 and 0.99, which is to
+          # say at nothing. `src/ackbar/stochastic.py` and
+          # `docs/ensemble-spread.md` carry the measurement. An experiment whose
+          # under-dispersion is altimetric is not fixed by this knob.
           sppt:
             type: object
             additionalProperties: false
@@ -592,7 +600,11 @@ properties:
               length_scale: { type: number, exclusiveMinimum: 0 }
               # The pattern's AR(1) decorrelation time. Well inside a cycle, or
               # a member's perturbation is one draw held nearly constant.
-              timescale: { type: string }
+              #
+              # `^P` for the same reason `cycle.length` carries it: without it
+              # anything at all validated here and `parse_duration` raised
+              # inside the forecast job instead, hours after submission.
+              timescale: { type: string, pattern: '^P' }
 
   observations:
     # The list the keyed-merge machinery exists for. The example it used to give
