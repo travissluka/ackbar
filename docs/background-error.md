@@ -212,6 +212,22 @@ tools/dirac-page.py $STATIC/soca_gridspec.nc $ACKBAR_DIRAC_RESTART \
     "hybrid=/data/ackbar/test/dirac/hybrid/<increment>.nc" --ensemble $E
 ```
 
+The velocity page is four of those runs, one per coast, and the tool reads the `--keep`
+directories rather than a list of files, because it needs each run's `points.json` and its
+localization increment as well as its increment:
+
+```bash
+for side in "north 28.37,-89.25" "east 27.62,-83.50" \
+            "south 22.12,-89.25" "west 20.12,-95.75"; do
+    set -- $side
+    tools/soca-dirac.sh gom_25km "$2" --ensemble $E --keep /data/ackbar/test/dirac-uv/$1
+done
+tools/dirac-uv-page.py --gridspec $STATIC/soca_gridspec.nc \
+    --restart $ACKBAR_DIRAC_RESTART --members $E \
+    --out site/monitor/dirac-velocity \
+    --run north=/data/ackbar/test/dirac-uv/north ...
+```
+
 An ensemble run writes two increments and a hybrid run writes four, because the
 toolbox applies each component of a hybrid separately and applies a
 localization by itself as well. So one hybrid run reports the hybrid, the static
