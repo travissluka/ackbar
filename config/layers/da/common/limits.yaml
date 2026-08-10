@@ -1,0 +1,69 @@
+# The soft bound on what an analysis may write into a restart. One statement,
+# read by every solver whose covariance carries a sample.
+#
+# `da/letkf` and `da/hybrid` inherit this, so the LETKF, the EAKF, the EnVar and
+# the hybrid all write through the same numbers, and an experiment that compares
+# two of them is not also comparing two limiters. It is a file of its own for
+# exactly that reason: the numbers used to live in `da/letkf` alone, and when
+# `da/hybrid` began analysing velocity it shipped with no velocity bound at all,
+# because a copy per layer is a thing that can be forgotten and a shared layer
+# is not. `tests/test_writeback.py` is what now fails if a solver layer analyses
+# a variable this file has no entry for.
+#
+# **Not inherited by `da/variational`, and that is the one deliberate gap.** The
+# argument is in `ackbar.writeback.increment_limits`: a covariance model cannot
+# produce an increment far outside its own standard deviations, so the static
+# solver has nothing to bound, while a twenty-member sample covariance can and
+# does. The bound is also not free where it does not bind: `L*tanh(x/L)` is
+# already three per cent low at a third of the bound, so switching it on for the
+# variational solvers would move every 3DVar and FGAT analysis on disk by a few
+# per cent at its peaks without correcting anything.
+#
+# A solver that genuinely needs a different number states it in the experiment,
+# not in a second layer:
+#
+#   solver:
+#     increment limits:
+#       eastward_sea_water_velocity: 0.25
+#
+# which merges over this and is recorded in that experiment's frozen `cfg/`.
+# A second default would be a second place for the two to drift apart, which is
+# the whole failure this file exists to prevent.
+
+solver:
+  # The largest increment writeback will put into the restart, per variable, as
+  # a soft bound: `ackbar.writeback` applies `L*tanh(x/L)`, so small increments
+  # pass through, the tail asymptotes to the bound, and nothing is flattened
+  # into a plateau. See that module for why soft rather than a clip.
+  #
+  # Left unlimited, the LETKF put 16 degC into a 1.3 mm layer and killed thirteen
+  # of eighteen members on the first cycle, reported by MOM6 several steps
+  # downstream as `adjust_interface_motion: implied h<0`.
+  #
+  # **What stabilised that was not the bound.** A first pass with the bound alone
+  # took the failures from thirteen of eighteen members to two, and tightening it
+  # did not remove the last two, it only changed which members died. A bound acts
+  # per point and non-linearly, so it flattens peaks and changes the *shape* of
+  # the increment field, and shape is what the model responds to. What fixed it
+  # was the ensemble: the members had been recentred while still carrying the
+  # cold start's interpolation shock, and building them in the other order, one
+  # free day and then the recentring, is what made the increment survivable.
+  # `experiments/osse25-ensemble-settle.yaml` carries the reasoning.
+  #
+  # So these are a guard against a single wild point, not a control on the
+  # analysis. Measured over a cycle they touch 0.09% of live velocity points,
+  # with the 99.9th percentile of the increment at 0.487 m/s against the 0.5
+  # bound, so they clip the tail rather than the shoulder. That is what a limit
+  # here should cost, and it is the measurement to repeat before changing one.
+  #
+  # **IAU is better than any of this**, and is not wired yet. It spreads the
+  # increment across the forecast instead of applying all of it between two
+  # timesteps, so it removes the violence rather than the correction. MOM6
+  # already implements it in `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and
+  # `ODA_INCUPD_UV`. These bounds can loosen when it lands.
+  increment limits:
+    sea_water_potential_temperature: 10.0
+    sea_water_salinity: 5.0
+    sea_surface_height_above_geoid: 1.0
+    eastward_sea_water_velocity: 0.5
+    northward_sea_water_velocity: 0.5

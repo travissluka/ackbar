@@ -34,8 +34,38 @@ import netCDF4
 import numpy as np
 from scipy.ndimage import distance_transform_edt, gaussian_filter
 
-HZ_VARIABLE = "ave_ssh"
+#: The restart variable a horizontal scale field is written as, and the one
+#: `tools/soca-diffusion.sh` tells saber to read it back out of.
+#:
+#: **`fric_vel` rather than `ave_ssh`, and the reason is the whole of the
+#: unmasked localization.** SOCA reads a scale file with its ordinary state
+#: reader, and `soca_fields_read` replaces every land cell of a *masked* field
+#: with that field's fill value before saber ever sees the array. Sea surface
+#: height is masked in `config/model/mom6sis2/fields_metadata.yaml`, so a scale
+#: field written under it arrived at the calibration with zeros over land no
+#: matter what this package wrote there, and `masked: false` in
+#: `config/static/diffusion.yaml` was a statement with no effect: `loc_hz_open`
+#: came out of the toolbox bit identical to `loc_hz`.
+#:
+#: `friction_velocity_over_water` is one of the handful of entries the metadata
+#: marks `masked: false`, so its land values survive the read. Every such entry
+#: lives in the `sfc` restart, which is why the calibration document names the
+#: scale file under `sfc_filename` rather than `ocn_filename`. The name means
+#: nothing here: the file holds a length in metres, and this is only how saber
+#: is told where to find it. A masked entry is unaffected, because
+#: `horizontal_scales` has already zeroed its land cells on the way out.
+HZ_VARIABLE = "fric_vel"
+#: The JEDI name of the same field, which is what a SOCA state's `state
+#: variables` and saber's `model variable` are written in. Beside the io name so
+#: that the pair cannot drift: the reader matches the io name in the file, the
+#: configuration matches the JEDI name, and both have to be the one entry.
+HZ_JEDI_VARIABLE = "friction_velocity_over_water"
+#: The `sfc` half of that. The vertical scale field stays an `ocn` variable.
+HZ_IO_FILE = "sfc"
 VT_VARIABLE = "Temp"
+#: The JEDI name of the vertical scale field's variable, for the same reason.
+VT_JEDI_VARIABLE = "sea_water_potential_temperature"
+VT_IO_FILE = "ocn"
 #: Below this a layer is vanished, not thin, and is no level the analysis can
 #: put anything into.
 #:

@@ -192,10 +192,12 @@ python3 "$SCALES" "$GRIDSPEC" "$RESTART" "$CONFIG" .
 # horizontal randomization over every level instead of over one. v2 split them
 # for the same reason.
 python3 - "$CONFIG" "$METADATA" "$RESTART" "$ITERATIONS" \
-         calibrate_hz.yaml calibrate_vt.yaml "$ONLY" <<'PY'
+         calibrate_hz.yaml calibrate_vt.yaml "$ONLY" "$ACKBAR_ROOT" <<'PY'
 import os, sys, yaml
 
-config_path, metadata, restart, iterations, hz_out, vt_out, only = sys.argv[1:8]
+(config_path, metadata, restart, iterations, hz_out, vt_out, only,
+ ackbar_root) = sys.argv[1:9]
+sys.path.insert(0, os.path.join(ackbar_root, "src"))
 config = yaml.safe_load(open(config_path))
 if iterations:
     config["normalization iterations"] = int(iterations)
@@ -220,20 +222,44 @@ if only:
 # other". Using the restart's real date would imply a check that does not happen.
 DATE = "2000-01-01T00:00:00Z"
 
-# The active variable of each run. Horizontal calibration runs on a surface
-# field because its scales are two dimensional, which is what keeps the
-# randomization to one level rather than to the whole column. Neither name has
-# anything to do with what the field means: the file holds a length in metres or
-# in levels, and this is only how saber is told to go and find it.
-HZ_VARIABLE = "sea_surface_height_above_geoid"
-VT_VARIABLE = "sea_water_potential_temperature"
+# The active variable of each run, and which restart file the scale field is
+# handed over as. Horizontal calibration runs on a single level field because
+# its scales are two dimensional, which is what keeps the randomization to one
+# level rather than to the whole column. Neither name has anything to do with
+# what the field means: the file holds a length in metres or in levels, and this
+# is only how saber is told to go and find it.
+#
+# **The horizontal one has to be a variable the fields metadata marks
+# `masked: false`, and that is not a detail.** SOCA reads the scale file with
+# its ordinary state reader, which replaces every land cell of a masked field
+# with the fill value before saber sees it, so an unmasked scale field handed
+# over under a masked name arrives masked and `masked: false` in
+# `config/static/diffusion.yaml` does nothing at all. Every unmasked entry in
+# the metadata lives in the `sfc` restart, which is why the horizontal scale
+# file is named under `sfc_filename` here. `ackbar.diffusion` owns the pair of
+# names, because it is what writes the file the names have to match.
+from ackbar.diffusion import (                                   # noqa: E402
+    HZ_IO_FILE, HZ_JEDI_VARIABLE, VT_IO_FILE, VT_JEDI_VARIABLE,
+)
+
+HZ_VARIABLE = HZ_JEDI_VARIABLE
+VT_VARIABLE = VT_JEDI_VARIABLE
 
 
-def model_file(name):
-    return {"date": DATE, "basename": "./", "ocn_filename": f"scales_{name}.nc"}
+def model_file(name, io_file):
+    return {"date": DATE, "basename": "./",
+            f"{io_file}_filename": f"scales_{name}.nc"}
 
 
 def document(variable, groups):
+    # The background states which variables the operator is built over, and
+    # nothing else: no group below names `variables`, so the group covers the
+    # background's list, and the normalization is estimated by randomizing that
+    # field rather than by reading it. The horizontal document therefore names a
+    # `sfc` variable against an `ocn` restart, which reads nothing and is
+    # correct: the values are overwritten by the randomization before they are
+    # used, and what the calibration actually consumes is the scale file in
+    # `model file`.
     return {
         "geometry": {
             "geom_grid_file": "soca_gridspec.nc",
@@ -267,7 +293,7 @@ def document(variable, groups):
 # for no reason.
 horizontal = [
     {"horizontal": {"as gaussian": True,
-                    "model file": model_file(name),
+                    "model file": model_file(name, HZ_IO_FILE),
                     "model variable": HZ_VARIABLE},
      "write": {"filepath": f"out/{name}"}}
     for name in (config.get("horizontal") or {})
@@ -278,7 +304,7 @@ vertical = [] if not vertical else [
     {"vertical": {"as gaussian": True,
                   "method": vertical["method"],
                   "iterations": vertical["iterations"],
-                  "model file": model_file("corr_vt"),
+                  "model file": model_file("corr_vt", VT_IO_FILE),
                   "model variable": VT_VARIABLE},
      "write": {"filepath": "out/corr_vt"}}
 ]

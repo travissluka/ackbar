@@ -27,6 +27,14 @@
 
 inherit:
   - da/variational
+  # The writeback bounds, which `da/variational` deliberately does not carry and
+  # this layer needs: the ensemble half produces a sampled increment, in
+  # velocity as well as in the tracers, and a sample covariance is not bounded
+  # by construction the way a covariance model is. Inherited from the same file
+  # `da/letkf` inherits, so the two solvers cannot be compared across two
+  # different limiters. This layer shipped with none at all, which is why it is
+  # a shared file rather than a second copy of the numbers.
+  - da/common/limits
 
 vars:
   # Which of the calibration's two localization fields the ensemble component

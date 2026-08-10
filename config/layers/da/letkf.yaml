@@ -15,6 +15,13 @@
 # solvers. It is one value in the observer bodies now. The localization went the
 # same way: it is a property of what a platform measured, so it lives with the
 # platform, in `obs/common/*.yaml`.
+#
+# The writeback bounds are inherited rather than stated, so that this solver and
+# the hybrid cannot end up with different ones. See `da/common/limits`.
+
+inherit:
+  - da/common/limits
+
 solver:
   name: letkf
   covariance: ensemble
@@ -77,29 +84,11 @@ solver:
   - eastward_sea_water_velocity
   - northward_sea_water_velocity
 
-  # The largest increment writeback will put into the restart, per variable, as
-  # a soft bound: `ackbar.writeback` applies `L*tanh(x/L)`, so small increments
-  # pass through, the tail asymptotes to the bound, and nothing is flattened
-  # into a plateau. See that module for why soft rather than a clip.
-  #
-  # **This is here and not in `da/variational` because a sample covariance is
-  # not bounded and a covariance model is.** The variational analysis cannot
-  # produce an increment far outside its own standard deviations; a
-  # twenty-member filter can and does. Left unlimited, this one put 16 degC into
-  # a 1.3 mm layer and killed thirteen of eighteen members on the first cycle,
-  # reported by MOM6 several steps downstream as
-  # `adjust_interface_motion: implied h<0`.
-  #
-  # **What stabilised this was not the bound.** A first pass with the bound
-  # alone took the failures from thirteen of eighteen members to two, and
-  # tightening it did not remove the last two, it only changed which members
-  # died. A bound acts per point and non-linearly, so it flattens peaks and
-  # changes the *shape* of the increment field, and shape is what the model
-  # responds to. What fixed it was the ensemble: the members had been recentred
-  # while still carrying the cold start's interpolation shock, and building them
-  # in the other order, one free day and then the recentring, is what made the
-  # increment survivable. `experiments/osse25-ensemble-settle.yaml` carries the
-  # reasoning.
+  # The increment bounds are not here. They are `da/common/limits`, inherited
+  # above, because `da/hybrid` needs the same numbers and a copy in each layer
+  # is how the hybrid came to analyse velocity with no velocity bound at all.
+  # That file carries the argument for the values and for why the variational
+  # solver does not read them.
   #
   # **There is no relaxation here, and no divergence bound either. The sea floor
   # is what makes that safe.** A ramp from 0.25 to 1.0 over five cycles used to
@@ -132,17 +121,6 @@ solver:
   # timesteps, so it removes the violence rather than the correction. MOM6 already
   # implements it in `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and
   # `ODA_INCUPD_UV`. These bounds can loosen further when it lands.
-
-  # A guard against a single wild point, not a control on the analysis. Measured
-  # over a cycle these touch 0.09% of live velocity points, with the 99.9th
-  # percentile of the increment at 0.487 m/s against the 0.5 bound, so they clip
-  # the tail rather than the shoulder. That is what a limit here should cost.
-  increment limits:
-    sea_water_potential_temperature: 10.0
-    sea_water_salinity: 5.0
-    sea_surface_height_above_geoid: 1.0
-    eastward_sea_water_velocity: 0.5
-    northward_sea_water_velocity: 0.5
 
   # Deterministic LETKF, the square-root filter. The stochastic alternative
   # would need an observation perturbation seed and is a different experiment.

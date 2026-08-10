@@ -417,6 +417,72 @@ def test_the_ensemble_solvers_analyse_the_same_variables():
             solver["background variables"]), name
 
 
+def solver_of(tmp_path, layer):
+    """One solver layer's `solver` block, resolved through its own inheritance.
+
+    Not `yaml.safe_load` of the file: what a solver runs with is the merge of
+    every layer it inherits, and the thing being checked below lives in
+    `da/common/limits` rather than in any of the files named here.
+    """
+    from ackbar.config.layers import merge_layers, resolve_layers
+
+    repo = Path(__file__).resolve().parents[1]
+    path = tmp_path / f"{layer.replace('/', '_')}.yaml"
+    path.write_text(f"inherit: [da/{layer}]\n")
+    return merge_layers(
+        resolve_layers(path, repo / "config/layers"))["solver"]
+
+
+#: Every solver layer an experiment can name, with the covariance each ends up
+#: with. Stated rather than globbed, because a layer that stopped appearing here
+#: would silently stop being checked, and the point of the check below is that
+#: nothing was checking.
+SOLVER_LAYERS = ("variational", "letkf", "eakf", "hybrid", "envar")
+
+
+def test_every_sampled_covariance_bounds_every_variable_it_analyses(tmp_path):
+    """A solver that samples its covariance has a limit for each field it writes.
+
+    **This is the assertion the hybrid shipped without.** `da/letkf` carried the
+    only `increment limits` block in the tree, so when `da/hybrid` began
+    analysing velocity its ensemble half wrote an unbounded velocity increment
+    into the restart, and nothing said so: the numbers are optional by schema,
+    an absent one means unlimited, and the run looks healthy until a member dies
+    inside MOM6 several steps downstream of the cause.
+
+    The rule is the one `ackbar.writeback.increment_limits` argues for. A
+    covariance *model* tapers, so its increments are bounded by construction and
+    `da/variational` deliberately has none; a *sample* covariance is not
+    bounded, so every solver whose covariance is `ensemble` or `hybrid` needs a
+    bound for every variable it writes back.
+    """
+    sampled = {}
+    for layer in SOLVER_LAYERS:
+        solver = solver_of(tmp_path, layer)
+        limits = solver.get("increment limits") or {}
+        if solver["covariance"] not in ("ensemble", "hybrid"):
+            assert not limits, (
+                f"da/{layer} has a covariance model and increment limits. "
+                f"Either is defensible, both together is not: see "
+                f"config/layers/da/common/limits.yaml")
+            continue
+        sampled[layer] = limits
+        for name in solver["analysis variables"]:
+            assert name in limits, (
+                f"da/{layer} analyses {name} and has no increment limit for "
+                f"it. Add it to config/layers/da/common/limits.yaml")
+
+    # And one statement, not one per layer. Two solvers with different limiters
+    # are two solvers whose scores are not comparable, which is the reason the
+    # numbers were moved out of `da/letkf` in the first place.
+    assert len(sampled) == 4
+    assert len(set(map(str, map(sorted_items, sampled.values())))) == 1
+
+
+def sorted_items(mapping):
+    return sorted(mapping.items())
+
+
 def velocities(analysis, u, v):
     """Give the analysis a velocity pair, on the tracer grid SOCA writes."""
     with netCDF4.Dataset(analysis, "r+") as data:

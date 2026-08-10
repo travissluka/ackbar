@@ -124,3 +124,56 @@ def test_the_land_scale_is_the_ocean_scale_and_not_the_floor(grid):
     offshore = field[:, 10:][grid["mask"][:, 10:]]
     assert land.min() > 2.0 * DX * LOCALIZATION["min grid mult"]
     assert land.mean() == pytest.approx(offshore.mean(), rel=0.1)
+
+
+# --- the join to SOCA's reader ------------------------------------------------
+
+#: The model layer's own file, because the property being checked is a property
+#: of that file rather than of a fixture of it.
+METADATA = Path(__file__).resolve().parents[1] / "config/model/mom6sis2/fields_metadata.yaml"
+
+
+def entry(name):
+    import yaml
+    for item in yaml.safe_load(METADATA.read_text()):
+        if item["name"] == name:
+            return item
+    raise AssertionError(f"{name} is not in {METADATA}")
+
+
+def test_the_horizontal_scale_field_travels_under_an_unmasked_variable():
+    """Everything above is undone by SOCA's reader if this is not true.
+
+    `soca_fields_read` replaces every land cell of a *masked* field with the
+    field's fill value before saber sees the array, so a scale field handed over
+    under a masked variable arrives masked no matter what
+    `horizontal_scales` wrote. That is exactly what happened: the calibration
+    named `sea_surface_height_above_geoid`, `loc_hz_open.nc` came out bit
+    identical to `loc_hz.nc`, and every test above passed the whole time,
+    because every one of them stops at the file.
+
+    Two halves, and both matter. The variable has to be `masked: false`, and the
+    document has to name the file under that variable's own `io file`, because
+    the reader only opens a restart slot the configuration named.
+    """
+    field = entry(diffusion.HZ_JEDI_VARIABLE)
+    assert field.get("masked") is False, (
+        f"{diffusion.HZ_JEDI_VARIABLE} is masked in the fields metadata, so "
+        f"SOCA will fill its land cells before saber reads them and "
+        f"`masked: false` in config/static/diffusion.yaml will do nothing")
+    assert field["io name"] == diffusion.HZ_VARIABLE
+    assert field["io file"] == diffusion.HZ_IO_FILE
+
+
+def test_the_vertical_scale_field_is_still_an_ocean_variable():
+    """The other half of the same pair, which did not move and must not.
+
+    The vertical scales are three dimensional and masked like the tracers they
+    correlate, and `ackbar.run`'s per-cycle `b.corr_vt` writes the same file
+    through `config/soca/vt.yaml`. A change to the horizontal names that quietly
+    moved this one would put the cycled calibration and the offline one on two
+    different variables.
+    """
+    field = entry(diffusion.VT_JEDI_VARIABLE)
+    assert field["io name"] == diffusion.VT_VARIABLE
+    assert field["io file"] == diffusion.VT_IO_FILE

@@ -96,22 +96,38 @@ The two are separate entries and separate files rather than one entry that chang
 mind, because every EnVar and hybrid result already on disk was run against `loc_hz.nc` and
 has to keep naming the file it read.
 
-**The unmasked field is not unmasked once it has been through the calibration, and that is
-where this stands today.** `tools/diffusion-scales.py` writes the land values, and
-`tests/test_diffusion_mask.py` holds it to that. What loses them is the read: the calibration
-hands the scale field to SOCA as an ordinary state named
+**Which variable the scale field travels under is load-bearing, and it is the one thing
+here that has already gone wrong once.** `tools/diffusion-scales.py` writes the land values,
+and `tests/test_diffusion_mask.py` holds it to that. What used to lose them was the read:
+the calibration handed the scale field to SOCA as an ordinary state named
 `sea_surface_height_above_geoid`, whose entry in `config/model/mom6sis2/fields_metadata.yaml`
 is masked, and `soca_fields_read` replaces every masked cell with the field's fill value
-before saber sees it. So `loc_hz_open.nc` and `loc_hz.nc` come out of the toolbox carrying
-bit identical `hzScales`, and on a pair calibrated by one run they carry bit identical
-`hzNorm` as well. A dirac through each returns the same increment to the last bit.
+before saber sees it. So `loc_hz_open.nc` and `loc_hz.nc` came out of the toolbox carrying
+bit identical `hzScales` and bit identical `hzNorm`, a dirac through each returned the same
+increment to the last bit, and `masked: false` was a statement with no effect: every
+localization in use was the masked one.
 
-Carrying an unmasked scale through means naming a variable the metadata marks
-`masked: false`, and every entry that does today lives in the surface restart rather than the
-ocean one, so the fix is in how `tools/soca-diffusion.sh` writes and names its scale file
-rather than in a multiplier. Until it lands, `loc_hz_open` is `loc_hz` under another name, the
-default in `da/hybrid` costs nothing and buys nothing, and no measurement anywhere is a
-measurement of the mask. `site/monitor/dirac-velocity/` carries the numbers.
+The scale field now travels as `friction_velocity_over_water`, which the metadata marks
+`masked: false`, out of the `sfc` restart slot, because every unmasked entry lives there.
+`src/ackbar/diffusion.py` owns the pair of names and `tools/soca-diffusion.sh` writes the
+document from them, so the io name in the file and the JEDI name in the configuration cannot
+drift apart. The name means nothing about the field: it holds a length in metres.
+`tests/test_diffusion_mask.py` now fails if that variable is a masked entry, which is the
+assertion that was missing.
+
+What the fix is worth, on `gom_25km` at two coastal diracs: the two calibrations' scales are
+bit identical over water and differ over land only, 60 to 118 km against zero; a dirac
+through each differs by 2 to 19 per cent of its peak where it used to differ by exactly
+nothing; and the difference sits where the argument says it should, +51 to +69 per cent of
+the increment for the cells whose path to the dirac crosses land against +0.1 to +2.4 per
+cent for cells in clear water. `site/monitor/dirac-locmask/` carries the tables and the
+figures, and `site/monitor/dirac-velocity/` is the run that found the bug.
+
+Both entries were recalibrated together. `loc_hz` came back bit identical to the file it
+replaced, which says the change reaches only the field that asked not to be masked and that
+the randomization is repeatable at a fixed rank count. Every EnVar and hybrid result
+produced before that recalibration was localized by the masked field whatever its `cfg/`
+says it read.
 
 **How an experiment chooses.** `da/hybrid` declares a var:
 
