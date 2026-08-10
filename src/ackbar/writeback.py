@@ -189,15 +189,28 @@ THICKNESS = "sea_water_cell_thickness"
 def place_thickness(target, field, mask, values, relaxation=1.0):
     """Write the analysis's column mass, and only its column mass.
 
-    **The whole point of writing this field is the sea level the filter inferred
-    and nothing else reconstructs.** Under `BOUSSINESQ = True` a column's free
-    surface is `sum(h) - D`, so the mass field is what carries sea level, and an
-    ensemble filter's increment to it is coherent: localization here is
-    horizontal with no cross-variable component, so a member's sea level
-    perturbation carries its own correlation with that member's temperature and
-    salinity. The temperature and salinity increment is written and the model
-    regenerates the steric response from it; what is left over, and what is lost
-    when this field is skipped, is the barotropic residual.
+    **Off everywhere, and this docstring no longer argues for switching it on.**
+    The gate below is that an experiment names `sea_water_cell_thickness` among
+    its `analysis variables`; no layer does, so nothing runs this today. It is
+    kept because the recipe and its positivity argument are the hard part, and
+    the resolution reasoning in `docs/osse.md` says a coarse global domain may
+    need exactly them.
+
+    **The premise this was written for has been withdrawn.** It said the mass
+    field carries a barotropic residual that nothing else reconstructs, on the
+    strength of a `docs/osse.md` claim of 2.1 cm of implied sea level against a
+    0.95 cm `ave_ssh` increment. That does not reproduce: read from
+    `ocn.incr.incr.*.nc`, `sum(dh)` and `d(ave_ssh)` agree at ratio 1.00 to 1.05,
+    correlation 0.99, slope 1.00. One signal, not two. Sea level is already
+    written twice, as the steric height the temperature and salinity increment
+    implies and as `ave_ssh` itself, and neither route is `h`.
+
+    **`osse25-4dletkf-h` measured what writing it anyway is worth: nothing.** Ten
+    cycles against the identical baseline gave SSH spread -0.21% and an e-folding
+    of 8.6+-0.6 against 8.7+-0.6, with no field favoured. What survives a forecast
+    correlates with the increment at +0.03, so it is unrelated adjustment rather
+    than a damped copy of it. `docs/osse.md` has the delivery-route argument and
+    the resolution caveat.
 
     **Not the per-layer increment.** Writing `h_ana` cell by cell is the obvious
     form and it is a model crash rather than a bad answer: on `gom_25km` the

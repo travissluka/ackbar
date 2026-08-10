@@ -1,24 +1,36 @@
 # `osse25-4dletkf` with the mass field written back, and nothing else changed.
 #
-# **The question.** With `rtps` holding the posterior spread up, whatever spread
-# is still lost is lost in the forecast or in the writeback rather than in the
-# filter. The writeback is the cheaper of the two to rule out, because there is
-# a known omission sitting in it: `sea_water_cell_thickness` is a background
-# variable in `da/letkf` and not an analysis variable, so the filter's increment
-# to it is computed, written to the analysis file, and then discarded. Under
-# `BOUSSINESQ = True` a column's free surface is `sum(h) - D`, so that field is
-# the one carrying sea level, and sea level is where the collapse is worst.
+# **Ran, answered, stopped at ten of twenty two cycles. Do not re-run it.** The
+# answer is a null and the premise behind the question was withdrawn while it was
+# running. `docs/osse.md` carries the whole account; this header records what the
+# experiment was and what it produced, and nothing else should be inferred from
+# the arguments it used to make.
 #
-# Measured on this experiment's own cycle 2015-08-02, member 005: the analysis's
-# column integral differs from the background's by **5.6 cm rms and 1.53 m at
-# most**. That is the increment being thrown away every cycle.
+# **The result.** SSH spread -0.21% against the baseline, e-folding 8.6+-0.6
+# against 8.7+-0.6, and no field favoured: the deltas grew from the fourth
+# decimal at five cycles to a scattered +-0.5% at nine, which is two chaotic
+# trajectories separating rather than a mechanism acting.
 #
-# **What is being tested is a mechanism, not a tuning.** If the sea level decay
-# rate moves, a substantial part of the spread collapse is a plumbing defect and
-# the amplitude tuning in the spread report was being done around it. If it does
-# not move, the collapse is a property of a 24 hour forecast on this domain and
-# the writeback is exonerated. Both answers are worth the machine; the second is
-# the one that closes a question rather than opening one.
+# **The premise, and why it fell.** The question was what the discarded
+# barotropic residual costs, on `docs/osse.md`'s claim that the mass field
+# carried 2.1 cm of implied sea level against a 0.95 cm `ave_ssh` increment. That
+# does not reproduce. Read from `ocn.incr.incr.*.nc` on this run's own cycles,
+# `sum(dh)` and `d(ave_ssh)` agree at ratio 1.00 to 1.05, correlation 0.99, slope
+# 1.00. There is no separable residual: sea level is already written twice, and
+# neither route is `h`.
+#
+# **Why writing it changes nothing even so.** What survives a forecast correlates
+# with the increment at +0.03, so it is unrelated adjustment and not a damped
+# copy. The anomaly that is left has neither a steric nor a geostrophic
+# signature, which makes it sub-deformation-scale mass, and Rossby adjustment
+# radiates that out through the FLATHER boundary inside the cycle.
+#
+# **So the spread collapse is a physics limit on this domain**, and the amplitude
+# tuning in the spread report was not being done around a defect. That is the
+# useful result, and it is a stronger statement than the experiment was built to
+# produce. `docs/osse.md` flags the one place it could reverse: a coarse global
+# domain, where localization is floored at two grid cells and the mass field may
+# become the retained quantity.
 #
 # **Why the plain baseline and not one of the three mechanism runs.** `-obc` is
 # the only experiment where sea level decay is already slowed, so a change there
@@ -32,16 +44,17 @@
 # the analysis itself puts 0.30% of this domain's cells at or below zero
 # thickness, which is `adjust_interface_motion: implied h<0` a few steps into
 # the forecast. So the filter's *vertical* redistribution of mass is dropped and
-# only the barotropic residual is kept. Under Z* the model regrids on its first
-# step anyway, so the interfaces are the coordinate's business and the column
-# integral is the state. `ackbar.writeback.place_thickness` carries the full
-# argument.
+# only the column integral is kept. Under Z* the model regrids on its first step
+# anyway, so the interfaces are the coordinate's business and the column integral
+# is the state. `ackbar.writeback.place_thickness` carries the recipe.
 #
 # The form was tried against a real restart before this experiment was written:
-# one day of `gom_25km` from the scaled set ran with zero truncations, a maximum
-# CFL of 0.088 against the unscaled set's 0.094, and a domain mean sea level 1.1
-# mm from it. The increment is very nearly mean-free, which is what a barotropic
-# residual should be and is also why `ufo::ObsADT` would never have seen it.
+# one day of `gom_25km` from the scaled set ran with zero truncations and a
+# domain mean sea level 1.1 mm from the unscaled set's, so the increment is very
+# nearly mean-free, which is also why `ufo::ObsADT` would never have seen it (it
+# removes the domain mean before forming departures). The CFL and runtime numbers
+# that were once quoted here are withdrawn: those forecasts were launched by hand
+# while a cycling experiment held the box, so they measure contention.
 #
 # Everything else, including the ensemble and its provenance, is
 # `osse25-4dletkf.yaml`. Read that file first; nothing about it is restated here.
