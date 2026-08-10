@@ -20,7 +20,8 @@ import pytest
 netCDF4 = pytest.importorskip("netCDF4")
 
 from ackbar.gridspec import (  # noqa: E402
-    STAGGER_ATTR, GridspecError, shift_staggered, staggered_faces)
+    STAGGER_ATTR, GridspecError, assert_shifted, shift_staggered,
+    staggered_faces)
 
 NX, NY = 8, 6
 
@@ -181,6 +182,24 @@ def test_shifting_twice_is_refused(grid):
 def test_an_unshifted_gridspec_says_so(grid):
     path, _ = grid
     assert staggered_faces(path) is None
+
+
+def test_a_freshly_generated_gridspec_is_refused(grid):
+    """The failure mode this whole approach introduces, held shut.
+
+    `soca_gridgen.x` rerun without the post-step puts the defect back with no
+    symptom: every application starts, every cycle completes, and the only
+    evidence is a velocity a cell out, in a system whose docs say it is fixed.
+    """
+    path, _ = grid
+    with pytest.raises(ValueError, match=STAGGER_ATTR):
+        assert_shifted(path)
+
+
+def test_a_shifted_gridspec_passes_and_says_which_faces(grid):
+    path, _ = grid
+    shift_staggered(path)
+    assert assert_shifted(path) == "west/south"
 
 
 def test_dropping_an_ocean_column_is_refused(grid, tmp_path):

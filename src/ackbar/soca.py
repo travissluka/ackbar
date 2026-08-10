@@ -758,6 +758,12 @@ def stage(config, run, cycle):
             f"domain, built once by tools/soca-gridspec.sh and shared by every "
             f"experiment on it, and no cycling job generates one."
         )
+    # Whether it says which faces its staggered fields are on is `validate`'s
+    # question, not this one's: `ackbar.gridspec.assert_shifted` runs at step 3,
+    # before anything is submitted. It is deliberately not repeated here, where
+    # it would make every test that stages a run carry a real NetCDF gridspec to
+    # exercise code that has nothing to do with geometry. The gap that leaves is
+    # a gridspec replaced *after* an experiment was created; see docs/analysis.md.
     _link(run / GRIDSPEC, grid)
 
     _write(run / "diag_table", DIAG_TABLE.format(cycle_time(config, cycle)))

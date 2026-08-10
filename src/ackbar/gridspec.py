@@ -159,6 +159,36 @@ def _shift(values, axis, edge):
     return out
 
 
+def assert_shifted(path):
+    """Refuse a gridspec whose staggered fields have not been moved.
+
+    The case this exists for is the one that makes this whole approach risky:
+    `soca_gridgen.x` is rerun, its output lands without the post-step, and the
+    defect returns with no symptom at all. Every application still starts, every
+    cycle still completes, and the only evidence is a velocity increment one cell
+    from where it belongs, in a system whose documentation now says that is
+    fixed. A silent revert after a written fix is worse than the original bug,
+    so a gridspec that will not say which faces it is on does not run.
+
+    Presence is the check, not a particular value, the same shape as
+    `forcing.assert_reference_height`. A file that records a face set records a
+    decision; a file that records nothing predates the decision.
+    """
+    faces = staggered_faces(path)
+    if faces is None:
+        raise ValueError(
+            f"{path} has no {STAGGER_ATTR} attribute, so which faces its "
+            f"`mask2du` and `lonu` describe is unknown. A gridspec written by "
+            f"`soca_gridgen.x` looks exactly like this: its staggered fields "
+            f"are on the east and north faces while SOCA's reader loads the "
+            f"west and south ones, which puts every velocity increment a cell "
+            f"from the mask applied to it. Rebuild it with "
+            f"tools/soca-gridspec.sh, which applies the shift, or apply it to "
+            f"the file with ackbar.gridspec.shift_staggered. See "
+            f"docs/analysis.md.")
+    return faces
+
+
 def staggered_faces(path):
     """Which face set a gridspec's staggered fields are on, or None if unshifted.
 

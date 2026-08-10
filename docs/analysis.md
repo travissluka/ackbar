@@ -423,6 +423,36 @@ soca-science's `soca_dynsym2dyn.sh` did, is equally correct and costs a copy of
 every restart the solver reads: about 3.9 GB per cycle at gom_25km with twenty
 members and five slots, against a 16 GB experiment.
 
+**A gridspec that will not say which faces it is on does not run.** That is the
+failure this approach introduces and it is the one worth being loud about: rerun
+`soca_gridgen.x` without the post-step and the defect returns with no symptom at
+all, after the documentation says it is fixed. So `validate` step 3 calls
+`ackbar.gridspec.assert_shifted` on the domain's gridspec and refuses one
+lacking the attribute, the same shape as `forcing.assert_reference_height` for
+an archive that will not say what height its scalars are at. Presence is the
+check, not a particular value: a file that records a face set records a
+decision, and a file that records nothing predates the decision.
+
+Two consequences of putting it there. **A domain's gridspec has to be shifted
+before any experiment on it can be created**, so deploying this and merging it
+are one action rather than two. And the check runs at `create`, so a gridspec
+replaced *after* an experiment was created is not caught; the cycle that reads
+it will run and be wrong. Rebuild a domain's static products between
+experiments, not underneath one.
+
+Nothing else consumes the staggered masks, which is why moving them is
+self-contained. On ACKBAR's side the only readers of `mask2du` and `mask2dv` are
+`writeback.MASKS` and `post.GRIDS`; `tools/sst-bgerr.py`, `tools/dirac.py`,
+`tools/obs-archive-osse.py` and `ackbar.diffusion` read the tracer `mask2d`
+only. Inside SOCA they reach the `field%mask` pointer for a `u` or `v` field,
+which decides the fill value on read, and the atlas `mask_u`/`mask_v` fields,
+which the geometry's own comment marks as carried for `gpnorm` alone. The SABER
+diffusion calibration does not touch them: its background variable is
+`sea_surface_height_above_geoid`, its products are on `nb_nodes`, which is the
+tracer node set, and its configuration names no mask. So the correlation and
+localization files do not need rebuilding when a gridspec is shifted, and a
+`u` or `v` `gpnorm` in a log is the only number that moves.
+
 The evidence, so nobody has to re-derive it, measured on gom_25km:
 `max|lonu - lonq[1:88]|` is 0.0 exactly against 0.25 for `lonq[0:87]`;
 `mask2du == mask2d[i] * mask2d[i+1]` with 0 mismatches of 4816; and pairing SOCA
