@@ -32,6 +32,8 @@ from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
 from .duration import DurationError, parse_duration, parse_instant
 from .forcing import TABLE_FILE as FORCING_TABLE_FILE
+from .gridspec import assert_shifted
+from .soca import GRIDSPEC
 from .graph import GraphError, build_graph, job_time_context, member_set
 from .graph.build import extended_cycles
 from .observations import REQUIRED as OBS_REQUIRED
@@ -95,6 +97,7 @@ def validate_experiment(config, schema, site, root, offline=False):
     if not offline:
         ran |= {3, 4, 5}
         findings += _path_step(paths, site)
+        findings += _gridspec_step(config)
         findings += _coverage_step(timed, config, graph, shared)
         findings += _observation_step(observations)
         findings += _executable_step(graph, root)
@@ -373,6 +376,29 @@ def _looks_like_path(text):
     # Absolute and with no whitespace. JEDI's own namespaced names ("MetaData/
     # latitude", "GeoVaLs/sea_area_fraction") are relative and do not match.
     return text.startswith("/") and len(text) > 1 and not any(c.isspace() for c in text)
+
+
+def _gridspec_step(config):
+    """A domain's gridspec must say which faces its staggered fields are on.
+
+    Step 3 rather than a step of its own: an input that is present but will not
+    say what it is is an input problem, and it reads beside "input path does not
+    exist" without a reader having to learn a new number.
+
+    A domain with no `static` has no geometry, which is the stub, and absence of
+    the file is step 3's own finding and is said better there.
+    """
+    static = (config.get("domain") or {}).get("static")
+    if not static:
+        return []
+    path = os.path.join(static, GRIDSPEC)
+    if not os.path.exists(path):
+        return []
+    try:
+        assert_shifted(path)
+    except (ValueError, OSError) as error:
+        return [Finding(3, path, str(error))]
+    return []
 
 
 def _path_step(paths, site):
