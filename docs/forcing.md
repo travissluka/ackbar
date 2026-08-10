@@ -249,7 +249,8 @@ The file comes through `ensemble.inputs`, which maps a name inside `INPUT/` to a
 path template that may carry `{{member_dir}}`. `forcing/gefs-ensemble` sets
 `atm.nc` to `$(forcing_archive)/gefs/{{member_dir}}.nc` and that is the whole of
 the per-member half. The mechanism is not this stage's: it is the same one a
-per-member open boundary uses, and `mom6sis2.member_inputs` documents it. A
+per-member open boundary uses, and `mom6sis2.member_inputs` and
+[`ensemble-spread.md`](ensemble-spread.md) document it. A
 template with no `{{member_dir}}` in it is how an ensemble would read one shared
 atmosphere.
 

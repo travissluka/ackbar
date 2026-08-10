@@ -1283,7 +1283,9 @@ the arrest the filter feels. `tools/obc-spread.py` computes it and `site/monitor
 carries the figures and the same caveats.
 
 Three of the four are implemented: `ensemble.stochastic` is the model-internal one, and the
-other two arrive as files through `ensemble.inputs` (below). Stochastic physics is *stochastic*
+other two arrive as files through `ensemble.inputs` (below).
+[`ensemble-spread.md`](ensemble-spread.md) is the reference for configuring all three and for
+the offline archive each needs. Stochastic physics is *stochastic*
 rather than a perturbed-parameter ensemble on purpose: a member with its own parameter values is
 a different model every cycle, so the ensemble covariance stops being the covariance of anything
 and the mean is biased by whatever the parameter offsets do. A stochastic scheme draws afresh

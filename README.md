@@ -316,6 +316,8 @@ which is not in the repository (see the note at the end of this file).
 execution model, configuration layering, the task graph, healing, and the offline stages.
 [`docs/domains.md`](docs/domains.md) says what each domain is and what a day of it costs.
 [`docs/testing.md`](docs/testing.md) explains the test tiers.
+[`docs/ensemble-spread.md`](docs/ensemble-spread.md) covers the three ways an ensemble gets its
+spread, the YAML for each, and the offline archive each needs.
 [`docs/osse.md`](docs/osse.md) is a worked end-to-end study, and
 [`docs/model-build.md`](docs/model-build.md) is where to go when a build fails.
 `ackbar --help` and `ackbar <command> --help` are current by construction.
