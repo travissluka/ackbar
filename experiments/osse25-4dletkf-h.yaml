@@ -49,12 +49,21 @@
 # is the state. `ackbar.writeback.place_thickness` carries the recipe.
 #
 # The form was tried against a real restart before this experiment was written:
-# one day of `gom_25km` from the scaled set ran with zero truncations and a
-# domain mean sea level 1.1 mm from the unscaled set's, so the increment is very
-# nearly mean-free, which is also why `ufo::ObsADT` would never have seen it (it
-# removes the domain mean before forming departures). The CFL and runtime numbers
-# that were once quoted here are withdrawn: those forecasts were launched by hand
-# while a cycling experiment held the box, so they measure contention.
+# one day of `gom_25km` from the scaled set ran with zero truncations, a maximum
+# CFL of 0.088 against the unscaled set's 0.094, and a domain mean sea level 1.1
+# mm from it. So the increment survives initialization rather than being fought
+# by the model, and it is very nearly mean-free, which is also why `ufo::ObsADT`
+# would never have seen it (it removes the domain mean before forming
+# departures). One pair, so the CFL is weak evidence, but it is a physical
+# diagnostic computed from the velocity field, the grid and the timestep, and it
+# is unaffected by what else the machine was doing.
+#
+# **The runtimes those same runs produced are withdrawn**, and the distinction
+# matters because it is easy to get backwards. Later forecasts in that harness
+# were launched by hand while a cycling experiment held all eight cores, so their
+# wall-clock measures contention and nothing else. Oversubscription changes how
+# long an integration takes, not what it computes: at a fixed PE count and fixed
+# inputs MOM6 is deterministic. Withdraw a timing, keep a diagnostic.
 #
 # Everything else, including the ensemble and its provenance, is
 # `osse25-4dletkf.yaml`. Read that file first; nothing about it is restated here.
