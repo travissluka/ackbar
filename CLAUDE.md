@@ -187,10 +187,14 @@ v2 analysis yaml fails on a config key, and the rule when porting is: science va
 soca-science, schema from `pkg/jedi/soca/test/testinput/`, which is CI-verified against this
 exact bundle.
 
-One trap in that CI config: `testinput/3dvar.yml` writes no departures. Copy it as a template
-and the analysis produces no `ombg`/`oman`, post-processing has nothing to read, and the run
-looks healthy the whole way through. ACKBAR builds those keys itself rather than configuring
-them.
+One trap in the departures, which is where the analysis is read from afterwards.
+`oops::CostJo` saves `ombg` on the first outer loop and `oman` on the last, into whatever
+`obsdataout` the obs space names, so an observer without that key writes nothing at all and
+an analysis without a top-level `output:` writes `ombg` and no `oman`: `oops::Variational`
+only runs the final cost evaluation when something asks for one. Either way post-processing
+has nothing to read and the run looks healthy the whole way through. ACKBAR builds both keys
+itself rather than leaving them to a copied config; `config/soca/var.yaml` carries the
+comment.
 
 Static B is now built with `soca_error_covariance_toolbox.x` running SABER diffusion
 calibration (`configs/soca/saber_init/soca_diffusion_calibrate_{hz,vt}.yaml` in the old
@@ -269,6 +273,16 @@ each source and each GEFS era can supply, why the archive is keyed by domain, th
 de-averaging that is the one place a fetch can be quietly wrong, and how a source reaches
 the model.
 
+The rest of `docs/` is narrower and worth knowing exists rather than reading up front:
+`analysis.md` (the analysis tasks and what each produces), `background-error.md` (the four
+parts of B and which one is calibrated offline), `domains.md` (what each domain is and costs),
+`ensemble-spread.md` (the three spread mechanisms and the offline archive each needs),
+`forcing-reference-height.md` (the deferred `z_bot` question), `model-build.md` and
+`model-data.md` (the model and its input data), `observing-system.md` (what the OSSE archive
+imitates and why), `osse.md` (the worked end-to-end study), `slurm.md`, and `testing.md` (the
+tiers, and what each can and cannot catch). `README.md` is the outside view of the same
+material.
+
 The decisions those docs rest on, in one place, because they are the ones an agent is most
 likely to relitigate by accident: Slurm is assumed rather than abstracted over, and rancor's
 single-node install (`docs/slurm.md`) is the development target; observations are never
@@ -324,9 +338,9 @@ Closed, and recorded here because the reasoning is easy to reopen by mistake:
   own divergence floor. The full measurement is `site/monitor/spread/report.html`. Three
   sources are implemented instead: `ensemble.stochastic` (oSPPT), per-member open boundaries
   and per-member atmospheric forcing, the last two through `ensemble.inputs`. Forcing is the
-  largest of them by a wide margin and stochastic physics the smallest; Domains in
-  `docs/design.md` ranks them, and `docs/forcing.md` and `docs/domains.md` say how each archive
-  is built.
+  largest of them by a wide margin and stochastic physics the smallest;
+  `docs/ensemble-spread.md` is the reference for all three, and `docs/forcing.md` and
+  `docs/domains.md` say how each archive is built.
 - **The back-compat pins are dropped.** Every domain's `MOM_override` sets
   `ENABLE_BUGS_BY_DEFAULT = False`, so the model runs the corrected physics and no state spun
   up under the old defaults is reusable. `docs/model-build.md` and `docs/domains.md` have the

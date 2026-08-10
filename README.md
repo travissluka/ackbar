@@ -220,6 +220,12 @@ sampled from a nature run, so it comes after a spinup, a truth run and a promoti
 its stages in order. Read it before copying an experiment file, because every shipped
 experiment names an archive that recipe produces.
 
+An archive of real observations, or one borrowed from a wider domain, is culled to the domain
+once with `tools/obs-cull-domain.py` before an experiment reads it. That is offline too, so
+nothing stops an experiment naming an unculled archive, and two checks make that loud rather
+than silent: `validate` refuses an experiment with no observations inside the domain at all,
+and `post.obs` fails a cycle that read observations and assimilated none of them.
+
 ## Running an experiment
 
 An experiment is created once and then addressed by name. Creation validates it, freezes the
@@ -320,6 +326,10 @@ execution model, configuration layering, the task graph, healing, and the offlin
 spread, the YAML for each, and the offline archive each needs.
 [`docs/osse.md`](docs/osse.md) is a worked end-to-end study, and
 [`docs/model-build.md`](docs/model-build.md) is where to go when a build fails.
+[`docs/background-error.md`](docs/background-error.md) describes the static B and which part of
+it is calibrated offline, [`docs/analysis.md`](docs/analysis.md) the analysis tasks and what
+each writes, [`docs/forcing.md`](docs/forcing.md) the atmospheric forcing archives, and
+[`docs/observing-system.md`](docs/observing-system.md) what the OSSE observing system imitates.
 `ackbar --help` and `ackbar <command> --help` are current by construction.
 
 `tools/local/` is not in the repository. It holds personal plotting and monitoring, and the
