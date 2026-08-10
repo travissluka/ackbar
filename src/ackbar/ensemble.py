@@ -15,19 +15,31 @@ values are three different experiments rather than three degrees of tolerance:
     replace_from_mean   rebuild the missing member from the others, and keep
                         the ensemble at the size it was configured with.
 
-`run_degraded` is the one that needs care. A filter given eighteen members where
-it expected twenty produces an analysis of lower rank, more sampling noise and
-less spread, and the effect persists after the missing member comes back. That
-is a fact about the cycle, so it is written into the cycle's own record rather
-than left in a log: two experiments that differ in which members ran are not
-comparable, and nothing else would say so.
+**`fail_cycle` is the default and is what every experiment in the tree sets.**
+The other two are kept because a domain where members die routinely is a real
+situation, but neither is safe to run a result from, and both fail in the same
+direction: they shrink the ensemble's spread without telling the filter.
+
+`run_degraded` is the honest one of the pair. A filter given eighteen members
+where it expected twenty produces an analysis of lower rank, more sampling
+noise and less spread, and the effect persists after the missing member comes
+back. That is a fact about the cycle, so it is written into the cycle's own
+record rather than left in a log: two experiments that differ in which members
+ran are not comparable, and nothing else would say so.
 
 `replace_from_mean` keeps the rank the same in name only, since the replacement
-carries no independent information: the ensemble spread is what it was, spread
-over one more member. What it buys is that the member exists, so its forecast
-runs, and the ensemble is back to full strength one cycle later rather than
-carrying a hole forever. A mean state is a state a model integrates: it is the
-same object the LETKF hands the control member every cycle.
+carries no independent information. It is the more dangerous of the two for
+exactly that reason: the count still reads twenty, so the loss is invisible
+everywhere except the ledger, and the spread is the spread that arrived divided
+across one more member. Under RTPS that deflation feeds back, because the
+relaxation target is the prior's spread and the prior is now the diluted one.
+What it buys is that the member exists, so its forecast runs and the ensemble
+is whole one cycle later rather than carrying a hole forever.
+
+Whichever policy is set, `LEDGER` is the record of what happened, and nothing
+reports it. `ackbar status` and `ackbar harvest` do not read it, so a cycle
+that lost members looks exactly like one that did not until someone opens
+`ana/<date>/members.json`.
 """
 
 import json

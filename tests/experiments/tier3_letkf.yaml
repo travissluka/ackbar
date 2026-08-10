@@ -46,10 +46,7 @@ ensemble:
   # assimilated member and it carries no perturbation.
   control: true
   source: offline
-  # A member whose forecast is missing is rebuilt from the mean of the ones that
-  # arrived, so the ensemble stays the size it was configured with. See
-  # `ackbar/ensemble.py` for what that does and does not buy.
-  on_missing_member: replace_from_mean
+  on_missing_member: fail_cycle
   # One restart set per member, from `tools/ensemble-ic.sh gom_25km 6`. Without
   # it every member starts from the same state and the filter has no spread to
   # work with at all.

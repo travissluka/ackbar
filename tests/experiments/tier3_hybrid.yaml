@@ -52,7 +52,7 @@ ensemble:
   # component flow dependent and observation informed rather than a decaying
   # sample of the perturbations it started with.
   source: letkf
-  on_missing_member: replace_from_mean
+  on_missing_member: fail_cycle
   initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00/ensemble6
 vars:
   obs_dir: $(static_root)/obs/gom-osse-smoke/2015

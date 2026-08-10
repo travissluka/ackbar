@@ -112,7 +112,7 @@ ensemble:
   size: 20
   control: true
   source: offline
-  on_missing_member: replace_from_mean
+  on_missing_member: fail_cycle
 
   # The boundary half. Each member reads its own lagged GLORYS boundary as
   # INPUT/obc.nc, and mem000 gets the unperturbed one, so the control is scored

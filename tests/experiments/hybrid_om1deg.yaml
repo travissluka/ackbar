@@ -16,7 +16,7 @@ cycle:
 ensemble:
   size: 4
   source: letkf
-  on_missing_member: run_degraded
+  on_missing_member: fail_cycle
 forecast:
   extended:
     length: P7D

@@ -117,7 +117,7 @@ ensemble:
   # sample of the perturbations it started with. The members are then recentred
   # on the variational analysis, so the ensemble follows the run being reported.
   source: letkf
-  on_missing_member: replace_from_mean
+  on_missing_member: fail_cycle
   initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
 
 cleanup:

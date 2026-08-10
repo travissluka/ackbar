@@ -23,6 +23,6 @@ cycle:
 ensemble:
   size: 4
   source: none
-  on_missing_member: run_degraded
+  on_missing_member: fail_cycle
 vars:
   obs_dir: /archive/obs/osse_2018

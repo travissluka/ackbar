@@ -536,7 +536,11 @@ properties:
           not: { pattern: '^\.\.?$' }
         additionalProperties: { type: string }
       # A missing member is routine once members are array elements, so the
-      # policy is per experiment and is stated rather than defaulted silently.
+      # policy is per experiment. Unset means `fail_cycle`, and experiments
+      # state it anyway so the frozen `cfg/` records which policy produced a
+      # result rather than leaving it to whatever the code defaulted to that
+      # day. The other two policies deflate the ensemble silently; see
+      # `ackbar/ensemble.py` before setting one.
       on_missing_member:
         enum: [fail_cycle, run_degraded, replace_from_mean]
       # Stochastic physics in the forecast model, which is what makes one

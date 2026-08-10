@@ -90,7 +90,7 @@ ensemble:
   size: 20
   control: true
   source: offline
-  on_missing_member: replace_from_mean
+  on_missing_member: fail_cycle
   initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
   stochastic:
     # The experiment's own draws. The cycle date, so that it is a fact about
