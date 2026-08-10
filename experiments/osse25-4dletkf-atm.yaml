@@ -1,0 +1,96 @@
+# The 4D LETKF with a GEFS member per ensemble member.
+#
+# `osse25-4dletkf` with one layer added and nothing else touched: same domain,
+# same dates, same solver, same window, same thirteen observers, same
+# observation archive, same control and ensemble initial conditions. What
+# differs is that each member's `INPUT/atm.nc` is a different GEFS forecast
+# instead of the domain's shared climatology, so the difference between the two
+# runs is the effect of ensemble atmospheric forcing and nothing else.
+#
+# **The truth is still forced by that climatology, and that is deliberate here.**
+# This measures how the spread behaves, which is a property of the ensemble
+# rather than of the truth. It is not a skill comparison: against a truth with no
+# synoptic weather in it, an experiment that has some carries a forcing error
+# this experiment did not set out to measure. Read the spread, and read the skill
+# numbers as the reason to build a matching ERA5 truth rather than as a result.
+#
+# **Where the spread should appear.** `ensemble.stochastic` is oSPPT, which
+# perturbs a temperature tendency; `src/ackbar/stochastic.py` records that it
+# does nothing at all for salinity or sea surface height, which reach it only
+# through what the ocean does with a temperature perturbation. Ensemble forcing
+# is the only mechanism in ACKBAR that puts spread into salinity and momentum
+# directly, so the first place to look is the surface salinity and the surface
+# height, not the thermocline.
+#
+# **The members are five GEFS forecasts on a five rung lead ladder**, 12, 36,
+# 60, 84 and 108 hours, because the reforecast has five members before 2020-09.
+# `ensemble.size: 20` plus a control is twenty-one runs, `mem000` through
+# `mem020`, so twenty-one atmospheres are needed and four rungs would be one
+# short.
+# Every member is valid at the same times as every other: what differs is which
+# perturbed forecast it came from and how far ahead it was looking. They are not
+# exchangeable and the filter assumes they are, so the spread is larger than any
+# single lead's and a rank histogram will not be flat even with a perfect filter.
+# `tools/forcing-gefs.py` carries the argument.
+#
+#     tools/forcing-gefs.py 2015-07-10 2015-07-28 --leads 12,36,60,84,108 \
+#         --members 21 --domain gom_25km \
+#         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+#
+# Ten cycles, against the first ten of `osse25-4dletkf`.
+
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - forcing/gefs-ensemble
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf-atm
+  description: OSSE, gom_25km 4D LETKF with a GEFS member per ensemble member
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 10
+
+solver:
+  window:
+    type: '4d'
+
+forecast:
+  slots: PT6H
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

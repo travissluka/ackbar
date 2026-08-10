@@ -1154,3 +1154,62 @@ def test_every_domain_asks_mom6_for_a_time_stamped_restart():
 def test_the_shared_base_ships_no_override_to_be_overridden_twice():
     assert not (DOMAINS / "gom" / "common" / "MOM_override").exists()
 
+
+# --- the forcing source ------------------------------------------------------
+
+@pytest.fixture
+def forcing_files(tmp_path):
+    table = tmp_path / "data_table.atm"
+    table.write_text('"ATM", "t_bot", "T2", "INPUT/atm.nc", "bilinear", 1.0\n')
+    sis = tmp_path / "SIS_forcing"
+    sis.write_text("#override ADD_DIURNAL_SW = False\n")
+    return table, sis
+
+
+def with_forcing(config, forcing_files):
+    table, sis = forcing_files
+    config["model"]["data_table"] = str(table)
+    config["model"]["override"][mom6sis2.FORCING] = str(sis)
+
+
+def test_the_source_replaces_the_cases_data_table(env, forcing_files, base):
+    # Linked through, the case's own table is the one the model reads and the
+    # source's is the one nobody opens.
+    config, _, _ = env
+    (base / "data_table").write_text('"ATM", "t_bot", "T_10_MOD", "clim.nc"\n')
+    with_forcing(config, forcing_files)
+    assert "INPUT/atm.nc" in (staged(env) / "data_table").read_text()
+
+
+def test_the_case_keeps_its_table_when_no_source_is_configured(env, base):
+    (base / "data_table").write_text('"ATM", "t_bot", "T_10_MOD", "clim.nc"\n')
+    assert "T_10_MOD" in (staged(env) / "data_table").read_text()
+
+
+def test_the_diurnal_flag_is_read_because_it_is_in_the_parameter_list(
+        env, forcing_files):
+    # A parameter file SIS2 does not list is a parameter file SIS2 never opens,
+    # and the symptom is a diurnal cycle applied twice rather than an error.
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    run_dir = staged(env)
+    text = (run_dir / "input.nml").read_text()
+    assert "parameter_filename = 'SIS_input', 'SIS_override', 'SIS_forcing'" in text
+    assert (run_dir / mom6sis2.FORCING).read_text().strip().endswith("False")
+
+
+def test_a_data_table_without_its_diurnal_flag_is_refused(env, forcing_files):
+    # The one misconfiguration here that runs to completion and reports success.
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    del config["model"]["override"][mom6sis2.FORCING]
+    with pytest.raises(mom6sis2.ModelError, match="ADD_DIURNAL_SW"):
+        staged(env)
+
+
+def test_the_diurnal_flag_without_a_data_table_is_refused(env, forcing_files):
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    del config["model"]["data_table"]
+    with pytest.raises(mom6sis2.ModelError, match="ADD_DIURNAL_SW"):
+        staged(env)

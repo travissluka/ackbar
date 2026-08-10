@@ -84,6 +84,24 @@ OVERRIDE = ("MOM_override", "SIS_override")
 #: deleted, not maintained. See `soca.stage`.
 SOCA_OVERRIDE = "MOM_override.soca"
 
+#: A third SIS2 parameter file, read last, holding what the *forcing* implies
+#: about the model rather than what the domain does. Today that is one line,
+#: `ADD_DIURNAL_SW = False`, and it has to travel with the forcing: the flag
+#: synthesizes a diurnal cycle on the assumption that the shortwave handed to
+#: SIS2 is a daily mean, so with a sub-daily source it is applied twice and the
+#: sea surface gets a diurnal amplitude no atmosphere asked for.
+#:
+#: Not folded into the domain's `SIS_override`, which is where `NIGLOBAL` and
+#: `NJGLOBAL` live: that file is the domain's and a forcing source is not, so
+#: sharing one file would mean a copy of it per (domain, source) pair.
+FORCING = "SIS_forcing"
+
+#: The data table names the files and variables FMS's `data_override` reads for
+#: every surface flux, so it is the forcing source's, not the domain's. A source
+#: sets `model.data_table` and the case's own copy is not linked; leave it unset
+#: and the case's copy is what the model reads.
+DATA_TABLE = "data_table"
+
 #: Files the base case ships that the model *writes* rather than reads. MOM6 and
 #: SIS2 dump the parameter set they actually ran with into the working directory,
 #: and MOM6-examples commits those dumps back into the case as documentation. So
@@ -209,9 +227,32 @@ def stage(config, run, cycle, task, *, source, member=None):
             f"one cycle after whatever produced this set reported success."
         )
 
+    # Both halves of a forcing source or neither. A data table naming a
+    # sub-daily `atm.nc` while `ADD_DIURNAL_SW` keeps the case's default is
+    # the one misconfiguration here that runs to completion and reports
+    # success, and what it produces is a sea surface with the diurnal cycle
+    # applied twice.
+    data_table = model.get(DATA_TABLE)
+    forcing = (model.get("override") or {}).get(FORCING)
+    if bool(data_table) != bool(forcing):
+        raise ModelError(
+            f"model.{DATA_TABLE} and model.override.{FORCING} are set "
+            f"{'without' if data_table else 'by'} each other. A forcing "
+            f"source is both: the table says which file the fluxes come "
+            f"from, and {FORCING} says what that file's cadence implies "
+            f"about the model. A sub-daily shortwave read with "
+            f"ADD_DIURNAL_SW left on runs to completion and applies the "
+            f"diurnal cycle twice."
+        )
+
     run.mkdir(parents=True, exist_ok=True)
     for entry in sorted(os.scandir(base), key=lambda e: e.name):
         if entry.name in OWNED or entry.name in OVERRIDE:
+            continue
+        if entry.name == DATA_TABLE and data_table:
+            # The case ships one for its own forcing. Linked through, it
+            # would be the table the model read and the source's would be
+            # the one nobody opened.
             continue
         if entry.name == STOCHASTIC:
             # Never linked even when this run writes none of its own. A base
@@ -225,6 +266,13 @@ def stage(config, run, cycle, task, *, source, member=None):
         _link(run / entry.name, entry.path)
     _link(run / "coupler_main", _path(model, "executable"))
     link_override(config, run)
+    if data_table:
+        table = Path(data_table)
+        if not table.exists():
+            raise ModelError(
+                f"{table} does not exist, named by model.{DATA_TABLE}")
+        _link(run / DATA_TABLE, table)
+        link_override(config, run, names=(FORCING,))
 
     # Emptied rather than reused. Scratch is kept on failure, so a healed
     # attempt starts with whatever the killed one had written here, and
@@ -241,6 +289,9 @@ def stage(config, run, cycle, task, *, source, member=None):
     # switches the pattern on inside the generator, and the generator fails the
     # run when only one of them is set.
     files, extra = _PARAMETER_FILES, ""
+    if forcing:
+        files = dict(files)
+        files["SIS_input_nml"] = files["SIS_input_nml"] + (FORCING,)
     perturb = stochastic.settings(config)
     if perturb and stochastic.perturbs(member):
         _write(run / STOCHASTIC, stochastic.parameters(perturb))

@@ -1,0 +1,38 @@
+# GEFS, a member per member: the ensemble reads a different atmosphere.
+#
+# This is the only mechanism in ACKBAR that puts spread into salinity and
+# momentum. `ensemble.stochastic` is oSPPT, which perturbs a temperature
+# tendency and reaches sea surface height and salt only through what the ocean
+# does with it, so an ensemble driven by one atmosphere is under-spread in
+# exactly the variables the surface observations constrain. `src/ackbar/
+# stochastic.py` says so at the top and this layer is the answer.
+#
+# Every member is valid at the same times as every other and as the truth: what
+# differs is which perturbed forecast it came from and how far ahead that
+# forecast was looking. Real forecast uncertainty about the actual verifying
+# date, in physically calibrated units, with no amplitude to tune.
+#
+#     tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84 \
+#         --members 20 --domain gom_25km \
+#         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+#
+# **On this period the twenty members are five forecasts on a four rung
+# ladder**, because the GEFS reforecast has five members before 2020-09. They
+# are not exchangeable: a member at 84 hours is drawn from a wider error
+# distribution than one at 12, so the ensemble is a mixture of four
+# distributions rather than a sample of one, the spread is larger than any
+# single lead's, and a rank histogram will not be flat even with a perfect
+# filter. The alternative is a five member ensemble. `tools/forcing-gefs.py`
+# carries the full argument, and a period after 2020-09 retires the ladder with
+# 31 native members.
+#
+# `mem000` is the control at the shortest lead, which is the same file
+# `forcing/gefs` names, so the deterministic experiment and this one's control
+# member read the same atmosphere.
+
+inherit:
+  - forcing/common
+
+ensemble:
+  inputs:
+    atm.nc: $(forcing_archive)/gefs/{{member_dir}}.nc

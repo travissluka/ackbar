@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build the GEFS half of the forcing archive: one `atm.nc` per member.
 
-    tools/forcing-gefs.py 2021-06-30 2021-09-01 --lead 12 --members 20 \\
+    tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84 \\
+        --members 20 \\
         --domain gom_25km \\
         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
 
@@ -62,7 +63,7 @@ construction at all.
 
 ## Lead
 
-`--lead` is the one knob and it sets two things at once: how much spread the
+`--leads` is the one knob and it sets two things at once: how much spread the
 ensemble has, and how wrong the experiments' atmosphere is against the truth's.
 Both in physically calibrated units, and with the honest tradeoff a real forecast
 system has, since a longer lead buys spread and costs accuracy. Choose it by
@@ -75,9 +76,33 @@ initialization, so every record is the same age and its error statistics are
 stationary. soca-science did the same with a fixed six hour lead. The joins are
 small jumps and they are the price of a series longer than a forecast.
 
-`--lead` must be a multiple of the era's reset period, because NCEP resets its
+Each lead must be a multiple of the era's reset period, because NCEP resets its
 averaging and accumulation windows on that period and this reads the reset
 boundary as a segment boundary.
+
+## More members than the era has forecasts
+
+`--leads` takes a ladder, and the ensemble is its outer product with the era's
+members: five reforecast members at 12, 36, 60 and 84 hours are twenty members,
+every one of them a real forecast of these hours by a real model, and every one
+of them valid at the same times as the truth. That is the only way a 2015
+experiment gets twenty members, since the reforecast has five.
+
+**They are not exchangeable, and the filter assumes they are.** A member at 84
+hours is drawn from a wider error distribution than one at 12, so the ensemble is
+a mixture of four distributions rather than a sample of one. Two consequences
+worth stating rather than discovering: the spread is larger than any single
+lead's and the mean is worse than the shortest lead's, and a rank histogram will
+not be flat even with a perfect filter. The alternative is five members, which is
+worse in a way that is harder to reason about. When the OSSE moves to a period
+after 2020-09, 31 native members at one lead retire the ladder entirely.
+
+The ladder is 24 hours apart, not 6, so that consecutive rungs come from
+different initializations rather than from the same one six hours apart. Rungs
+from one initialization share most of their error.
+
+Member index runs the era's members fastest, so `mem000` is the control at the
+shortest lead and the first block is a plain single-lead ensemble.
 
 ## De-averaging, which is the only place this can be quietly wrong
 
@@ -508,9 +533,15 @@ def segment(era, init, member, lead, cache, box):
     return series, x, y, worst
 
 
-def build(era, index, start, end, lead, cache, out, box, domain):
-    """One member's whole `atm.nc`."""
-    member = member_name(era, index)
+def build(era, index, start, end, leads, cache, out, box, domain):
+    """One member's whole `atm.nc`.
+
+    *index* is the ensemble member, which the ladder resolves into a GEFS
+    member and a lead. The era's members run fastest, so `mem000` is the
+    control at the shortest lead.
+    """
+    lead = leads[index // era.members]
+    member = member_name(era, index % era.members)
     origin = start
     gathered = {name: ([], []) for name in FIELDS}
     grid = None
@@ -581,10 +612,15 @@ def main():
     ap.add_argument("end", help="last day to cover, YYYY-MM-DD, inclusive")
     ap.add_argument("--out", type=Path, required=True,
                     help="archive directory for this source")
-    ap.add_argument("--lead", type=int, default=12,
-                    help="forecast lead in hours, a multiple of the era's reset "
-                         "period. Every record is between this and this plus "
-                         "the initialization interval old")
+    ap.add_argument("--leads", default="12",
+                    help="comma separated forecast leads in hours, each a "
+                         "multiple of the era's reset period. Every record is "
+                         "between its lead and its lead plus the "
+                         "initialization interval old. More than one lead is "
+                         "how an era with few members reaches a larger "
+                         "ensemble: members are the outer product of the "
+                         "ladder with the era's members, all at one valid "
+                         "time")
     ap.add_argument("--members", type=int, default=20,
                     help="how many members, counting the control as the first. "
                          "Bounded by what the era has")
@@ -607,22 +643,42 @@ def main():
     assert_no_leap_day(start, end)
 
     era = choose_era(start, end, args.era)
-    if args.lead < era.step:
+    try:
+        leads = [int(part) for part in args.leads.split(",")]
+    except ValueError:
+        raise SystemExit(f"forcing-gefs: --leads {args.leads} is not a comma "
+                         f"separated list of hours")
+    if len(set(leads)) != len(leads):
         raise SystemExit(
-            f"forcing-gefs: the {era.name} era's first output is at "
-            f"{era.step} h, so a lead of {args.lead} has nothing to read")
-    if args.lead % era.reset:
-        raise SystemExit(
-            f"forcing-gefs: --lead {args.lead} is not a multiple of the "
-            f"{era.name} era's {era.reset} h reset period; see the de-averaging "
-            f"note in this tool's docstring")
-    if not 1 <= args.members <= era.members:
+            f"forcing-gefs: --leads {args.leads} repeats a lead, which would "
+            f"make two members the same forecast and give the ensemble a "
+            f"duplicate it cannot see")
+    leads.sort()
+    for lead in leads:
+        if lead < era.step:
+            raise SystemExit(
+                f"forcing-gefs: the {era.name} era's first output is at "
+                f"{era.step} h, so a lead of {lead} has nothing to read")
+        if lead % era.reset:
+            raise SystemExit(
+                f"forcing-gefs: lead {lead} is not a multiple of the "
+                f"{era.name} era's {era.reset} h reset period; see the "
+                f"de-averaging note in this tool's docstring")
+    capacity = era.members * len(leads)
+    if not 1 <= args.members <= capacity:
+        rungs = ", ".join(str(lead) for lead in leads)
         raise SystemExit(
             f"forcing-gefs: the {era.name} era has {era.members} members and "
-            f"{args.members} were asked for."
+            f"the ladder [{rungs}] has {len(leads)} rungs, which is "
+            f"{capacity} members; {args.members} were asked for."
             + (f" {era.note}." if era.note else "")
-            + " Above what an era holds, members come from the "
-              "lagged-difference scheme rather than from more forecasts.")
+            + " Add a rung to the ladder, or above what a ladder can hold "
+              "take members from the lagged-difference scheme.")
+    if args.members > era.members and len(leads) > 1:
+        print(f"forcing-gefs: {args.members} members from {era.members} "
+              f"forecasts on a {len(leads)} rung ladder, so the ensemble is a "
+              f"mixture of {len(leads)} lead distributions and is not "
+              f"exchangeable. See this tool's docstring.")
 
     box = domain_box(args.domain)
     args.out.mkdir(parents=True, exist_ok=True)
@@ -635,7 +691,7 @@ def main():
           f"{box['east']:.3f} east, {box['south']:.3f} to "
           f"{box['north']:.3f} north")
     for index in range(args.members):
-        target, packed, worst = build(era, index, start, end, args.lead, cache,
+        target, packed, worst = build(era, index, start, end, leads, cache,
                                       args.out, box, args.domain)
         hours, cube = packed["DSWRF"]
         residue = " ".join(f"{name} {low:.3g}" for name, low in worst.items()

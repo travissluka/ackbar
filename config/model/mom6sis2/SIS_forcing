@@ -1,0 +1,14 @@
+! Read by SIS2 after SIS_input and the domain's SIS_override, and it holds what
+! the *forcing source* implies about the model rather than what the domain does.
+!
+! Shared by every real source because every real source is sub-daily. It is a
+! separate file, and not a line in the domain's SIS_override, because that file
+! carries NIGLOBAL and NJGLOBAL: folding this into it would mean one copy per
+! (domain, source) pair to say the same sentence.
+
+! ADD_DIURNAL_SW synthesizes a diurnal cycle from the shortwave it is handed, on
+! the assumption that the value is a daily mean. Every source ACKBAR archives
+! reports shortwave at least three hourly, so with it left on the cycle is
+! applied twice: the model runs to completion, reports success, and puts a
+! diurnal amplitude on the sea surface that no atmosphere asked for.
+#override ADD_DIURNAL_SW = False

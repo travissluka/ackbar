@@ -1,0 +1,30 @@
+# What every real atmospheric forcing source shares, which is everything except
+# which file the model reads.
+#
+# Not a source: this sets no input, so an experiment that inherited it alone
+# would run with `INPUT/atm.nc` missing and fail inside `data_override` rather
+# than at validate time. Inherit `forcing/era5`, `forcing/gefs` or
+# `forcing/gefs-ensemble`.
+#
+# The archive every one of them reads is built by `tools/forcing-era5.py` and
+# `tools/forcing-gefs.py` into
+# `$(static_root)/forcing/<domain>/<source>/mem###.nc`, all sources normalized
+# into one file shape. That normalization is what lets a single data table serve
+# every source: swapping ERA5 for GEFS is swapping which file a symlink points
+# at, not editing a table. `docs/forcing.md` has the shape and the reasoning.
+
+vars:
+  # Where a source's files live, so the three source layers differ by one word.
+  forcing_archive: $(static_root)/forcing/$(domain_slug)
+
+model:
+  # Seven variables out of one `INPUT/atm.nc`. Domain-scoped only because that
+  # is where the Gulf case's text lives; nothing in it is about the Gulf.
+  data_table: $(mom6_base_dir)/data_table.atm
+
+  override:
+    # ADD_DIURNAL_SW = False, and it must travel with the data table above. The
+    # model checks that these two are set together, because a sub-daily
+    # shortwave read with the flag left on is the one misconfiguration here that
+    # runs to completion and reports success.
+    SIS_forcing: $(ackbar_root)/config/model/mom6sis2/SIS_forcing
