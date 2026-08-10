@@ -460,3 +460,141 @@ def test_the_divergence_limit_leaves_a_uniform_increment_alone(scene):
     # stops at a coast is divergent there, and the limiter is right to cut it.
     rows = [j for j in range(NY) if j != 1]
     assert np.all(u[:, rows, :NX] == 9.0)
+
+
+# --- the per-variable increment limit ----------------------------------------
+#
+# `place`'s soft bound runs inside every analysis of every member of every
+# cycle, and `config/layers/da/letkf.yaml` sets it with values tuned against
+# measurements quoted in that file. Until these tests it had never executed
+# here: `apply_analysis` passes `limit=limits.get(...)`, no test config set
+# `increment limits`, so every call in this file ran with `limit=None`.
+#
+# It fails quietly by construction. Nothing crashes, the restart integrates, and
+# the only evidence is one log line that reads plausibly whatever the arithmetic
+# did. So these assert the arithmetic by hand rather than through a scenario.
+
+
+class FakeVariable:
+    """The little of a NetCDF variable `place` uses, over a plain array.
+
+    A real file would do, and these assertions are about arithmetic rather than
+    about NetCDF, so the shape of the input is worth having in the test body
+    instead of in a fixture three screens away.
+    """
+
+    def __init__(self, values):
+        self.values = np.array(values, dtype="f8")[None, ...]
+
+    def __getitem__(self, index):
+        return self.values[index]
+
+    def __setitem__(self, index, value):
+        self.values[index] = value
+
+    def ncattrs(self):
+        return []
+
+
+class FakeRestart:
+    def __init__(self, values):
+        self.variables = {"Temp": FakeVariable(values)}
+
+
+TEMP = {"name": "sea_water_potential_temperature", "io name": "Temp",
+        "grid": "h"}
+
+
+def bounded(background, analysis, limit, relaxation=1.0):
+    """`place` over a row of all-ocean cells. Returns (written, report)."""
+    background = np.atleast_2d(background)
+    target = FakeRestart(background)
+    report = writeback.place(
+        target, TEMP, np.ones(background.shape, dtype=bool),
+        np.atleast_2d(analysis).astype("f8"),
+        limit=limit, relaxation=relaxation)
+    return target.variables["Temp"].values[0], report
+
+
+def test_the_bound_is_on_the_increment_and_not_on_the_state():
+    """A temperature is not wrong for being 30 degrees. It is wrong for having
+    moved 30 degrees in one analysis.
+
+    The likeliest way this breaks: a refactor reaching for the state instead of
+    the increment passes every other assertion in this block.
+    """
+    written, _ = bounded(30.0, 31.0, limit=0.5)
+    assert written[0, 0] == pytest.approx(30.0 + 0.5 * np.tanh(2.0))
+    assert written[0, 0] == pytest.approx(30.4820, abs=1e-4)
+
+
+def test_the_count_is_taken_before_the_damping():
+    """After `tanh` nothing exceeds the bound, so a count taken one line later
+    is permanently zero.
+
+    That count is the number `place`'s own comment says to watch: a handful of
+    points is a filter meeting the bound at the edges, a large fraction is an
+    analysis not to be trusted. Its failure mode is a plausible zero.
+    """
+    # Three of the four move past the bound; the fourth stays well inside it.
+    _, report = bounded([0.0, 0.0, 0.0, 0.0], [2.0, 3.0, 4.0, 0.01], limit=0.5)
+    assert "4 ocean point(s)" in report
+    assert "3 point(s) over the 0.5 limit" in report
+
+
+def test_the_bound_is_soft_so_two_points_past_it_stay_ordered():
+    """What a hard clip would destroy, and why the comment argues for tanh.
+
+    `np.clip` returns the bound for both, flattening real structure into a
+    plateau and manufacturing a gradient at its edge. Spurious gradients driving
+    spurious dynamics is the failure the limiter exists to prevent, so an
+    instrument that makes more of them is the wrong one.
+    """
+    written, _ = bounded([0.0, 0.0], [4 * 0.5, 8 * 0.5], limit=0.5)
+    near, far = written[0]
+    assert near < 0.5 and far < 0.5
+    assert near < far, "a hard clip would return the bound for both"
+
+
+def test_relaxation_runs_before_the_bound():
+    """The two orders differ, and the call site is explicit about which.
+
+    Relaxation is the shape-preserving part and acts on what the filter
+    produced; the bound is the tail guard and acts on what is about to be
+    written.
+    """
+    written, _ = bounded(0.0, 2 * 0.5, limit=0.5, relaxation=0.5)
+    assert written[0, 0] == pytest.approx(0.5 * np.tanh(1.0))
+    assert written[0, 0] != pytest.approx(0.5 * 0.5 * np.tanh(2.0)), \
+        "the bound ran before the relaxation"
+
+
+def test_no_limit_leaves_the_increment_exactly_alone():
+    """The path stays opt-in: an experiment that sets nothing gets the analysis
+    it was given, to the bit."""
+    written, report = bounded(30.0, 31.0, limit=None)
+    assert written[0, 0] == 31.0
+    assert "limit" not in report
+
+
+def test_the_limit_reaches_the_staggered_outer_face(scene):
+    """The outer face takes its neighbour's increment *after* the bound.
+
+    Every other staggered test here runs with no limit, so nothing pinned that
+    the value written to that column is the damped one rather than the raw one.
+    On a regional domain that face is the open boundary.
+    """
+    config, paths, background, analysis, target = scene
+    config["solver"]["analysis variables"] = ["eastward_sea_water_velocity"]
+    config["solver"]["increment limits"] = {
+        "eastward_sea_water_velocity": 0.5}
+    velocities(analysis, np.full((NZ, NY, NX), 9.0), np.zeros((NZ, NY, NX)))
+
+    run(scene)
+    u = field(target / "MOM.res.nc", "u")
+    wet = mask()[:, -1]
+    outer = u[:, wet, NX]
+    assert np.all(np.abs(outer - 1.0) <= 0.5 + 1e-12), \
+        "the outer face took the raw increment rather than the bounded one"
+    assert np.any(np.abs(outer - 1.0) > 0.4), \
+        "the outer face took no increment at all, so this proves nothing"
