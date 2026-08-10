@@ -903,7 +903,15 @@ def main():
     members = range(1, args.members + 1)
     report = {"truth": str(truth), "members": args.members,
               "domain": args.domain, "depths": list(DEPTHS),
-              "requested": {"first": args.first, "last": args.last},
+              "requested": {"first": args.first, "last": args.last,
+                            "experiments": list(args.experiments)},
+              # What was asked for and not delivered. An experiment that is
+              # skipped otherwise leaves no trace in any artifact: the CSV is
+              # simply missing a block of rows and the figure simply has one
+              # fewer line, both of which read as a complete run. Recording it
+              # here lets a reader tell "not requested" from "requested and
+              # unavailable" without having kept the stderr.
+              "skipped": {},
               "experiments": {}}
     loaded, wet = {}, None
 
@@ -915,9 +923,10 @@ def main():
         chosen = [(s, w) for s, w in chosen
                   if complete(root, name, s, members)]
         if not chosen:
-            print(f"{name}: no complete ensemble in cycles "
-                  f"{args.first}..{last or '-'} of {len(times)} recorded; "
-                  f"skipped", file=sys.stderr)
+            why = (f"no complete ensemble in cycles "
+                   f"{args.first}..{last or '-'} of {len(times)} recorded")
+            report["skipped"][name] = why
+            print(f"{name}: {why}; skipped", file=sys.stderr)
             continue
         first_index = [s for s, _ in times].index(chosen[0][0]) + 1
         last_index = [s for s, _ in times].index(chosen[-1][0]) + 1
@@ -932,8 +941,9 @@ def main():
                 continue
             cycles.append(got)
         if not cycles:
-            print(f"{name}: no cycle the truth archive covers; skipped",
-                  file=sys.stderr)
+            why = "no cycle the truth archive covers"
+            report["skipped"][name] = why
+            print(f"{name}: {why}; skipped", file=sys.stderr)
             continue
         loaded[name] = {"cycles": cycles, "times": [s for s, _ in chosen],
                         "first": first_index, "last": last_index}
