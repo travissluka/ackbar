@@ -672,7 +672,10 @@ def distance_figure(report, out):
             axis.plot(x, [r["spread"] for r in rows], marker="o", ms=3,
                       lw=1.4, color=colour, label=exp)
         axis.set_title(short)
-        axis.set_xlabel("distance from open boundary [km]")
+        # The suptitle already says what the distance is from, and the full
+        # phrase under three narrow panels is wider than the last one, so it
+        # clipped at the figure edge.
+        axis.set_xlabel("distance [km]")
         axis.set_ylabel(f"spread [{units}]")
         axis.set_ylim(bottom=0.0)
     figure.suptitle("Prior spread against distance from the open boundary",
