@@ -1,0 +1,140 @@
+# The 4D LETKF with all three spread sources on at once.
+#
+# `osse25-4dletkf` plus oSPPT, per-member atmospheric forcing and per-member
+# open boundaries, each at a setting that has already been measured on its own.
+# Everything else is the baseline's: same domain, same dates, same solver, same
+# window, same thirteen observers, same observation archive, same control and
+# ensemble initial conditions.
+#
+# **What it is for.** The three sources were each measured against the baseline
+# one at a time, and nothing has ever run with more than one of them on. A
+# newcomer's first instinct is to enable everything, so the combination needs an
+# answer rather than an assumption. The question is not whether the spread goes
+# up, which it must, but whether the three are close to additive in *variance*
+# and whether the field-by-field imbalance each one leaves behind cancels or
+# compounds. They perturb different things, so there is a case for either.
+#
+# **Ten cycles, against the first ten of `osse25-4dletkf`**, which is the window
+# `osse25-4dletkf-atm` and `osse25-4dletkf-obc` also ran, so all four sit on the
+# same comparison.
+#
+# **On the oSPPT amplitude, which is the one number here that is not simply
+# copied.** `osse25-4dletkf-stoch` ran at 0.8 and its own measurements argue
+# that 0.8 is too large: surface temperature spread over error went to 1.70, a
+# 70% overshoot, while sea surface height stayed at 0.35, and the temperature
+# departures degraded 12 to 20% on every temperature platform. The header of
+# `osse25-4dletkf-stoch-a035.yaml` derives 0.35 as the amplitude that puts
+# surface temperature spread on its error, and that is what this experiment
+# uses.
+#
+# The alternative, copying 0.8 for the sake of a clean paired difference against
+# `osse25-4dletkf-stoch`, was rejected: ensemble forcing adds surface
+# temperature spread of its own, so 0.8 here would stack a second source on top
+# of an amplitude already known to overshoot, in the field the observing system
+# is densest in. That is the documented way to pull observation noise into the
+# analysis, and it would make a combined run that fails for a reason nobody
+# needed a combined run to discover. This experiment is meant to answer whether
+# the three compose, not to re-demonstrate a known overshoot.
+#
+# The cost of that choice is honest and worth stating: this is not a paired
+# difference against any single existing run. It differs from
+# `osse25-4dletkf-stoch` by three things, and its oSPPT contribution should be
+# read against `osse25-4dletkf-stoch-a035` rather than against
+# `osse25-4dletkf-stoch`.
+#
+# **The relaxation is `rtps: 1.0`**, as in `osse25-4dletkf-stoch`, against
+# `da/letkf`'s 0.95. The reasoning is that file's: at 0.95 the filter subtracts
+# spread, and measuring a spread source through a filter that is removing spread
+# measures the difference of two things. `osse25-letkf-stoch5` is what separates
+# the relaxation's contribution from oSPPT's.
+#
+# **The archives this needs, both built offline and both already present**, are
+# the ones `osse25-4dletkf-atm` and `osse25-4dletkf-obc` use, unchanged. Twenty
+# one GEFS atmospheres on a five rung lead ladder, and twenty one lagged GLORYS
+# boundaries. Neither is rebuilt here and neither should be: sharing them is
+# what makes this comparable to the two single source runs.
+#
+# **The truth is still forced by the domain climatology**, as in
+# `osse25-4dletkf-atm`, and the same caution applies with more force here. Read
+# the spread, which is a property of the ensemble. The skill numbers carry a
+# forcing error against a truth with no synoptic weather in it, and are the
+# argument for an ERA5 truth rather than a result.
+
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - forcing/gefs-ensemble
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf-all
+  description: OSSE, gom_25km 4D LETKF with oSPPT, ensemble forcing and ensemble boundaries
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 10
+
+solver:
+  window:
+    type: '4d'
+
+  local ensemble DA:
+    inflation:
+      rtps: 1.0
+
+forecast:
+  slots: PT6H
+
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+
+  # The boundary half. Each member reads its own lagged GLORYS boundary as
+  # INPUT/obc.nc, and mem000 gets the unperturbed one, so the control is scored
+  # against exactly the boundary the baseline used. Identical to
+  # `osse25-4dletkf-obc`.
+  inputs:
+    obc.nc: $(static_root)/obc/gom_25km/glorys-lag21-m20/{{member_dir}}.nc
+
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+  stochastic:
+    # The same seed every stochastic experiment here uses, so the patterns are
+    # the same draws and a difference between runs is never the noise.
+    seed: 20150712
+    sppt:
+      # 0.35 rather than 0.8. The header carries the argument.
+      amplitude: 0.35
+      length_scale: 500000.0
+      timescale: PT6H
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00
