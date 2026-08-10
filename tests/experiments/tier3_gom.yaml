@@ -22,31 +22,24 @@
 # simulated day costs 6 seconds here against 178 at om_1deg, and there is no
 # global-only behaviour left in the forecast path to lose by moving.
 #
-# Twelve hour cycles from 2015-01-05 01:00, which is where the cold start in
-# ic/gom_25km/hycom-smoke leaves off.
+# Twelve hour cycles from 2015-07-11 00:00, which is where the cold start in
+# ic/gom_25km/glorys-smoke leaves off.
 #
-# THIS DATE NO LONGER MATCHES THE DOMAIN'S BOUNDARY, AND THAT IS WHY THIS
-# FIXTURE FAILS. It used to be true that the case carried a single SODA 3.3.1
-# five-day mean valid 2015-01-04 13:00, frozen for the length of the run. The
-# domain was rebuilt on a 106 record GLORYS series covering 2015-05-28 to
-# 2015-09-10 and this date was not moved with it, so MOM6 stops at the first
-# timestep with `time_interp_external ... is before range of list`.
+# **The date is set by the domain's open boundary, and every gom_25km tier 3
+# fixture carries the same one.** gom_25km's `obc.nc` is a daily GLORYS series,
+# and a run whose window reaches outside it stops in `time_interp_external` at
+# the first timestep. So the date is chosen inside that series with room for
+# the longest forecast any of these fixtures runs, which is `tier3_fcst`'s two
+# day extended forecast off the last cycle. `ackbar validate` step 3 reads the
+# boundary's own time axis and refuses a span that does not fit, so moving this
+# date outside the series is a message before submission rather than a dead
+# job. Ask the file what it covers rather than trusting this comment:
 #
-# It is not only the modules that inherit *this* file. Every gom_25km tier 3
-# fixture carries the same date, so 77 of the suite's 117 tier 3 tests are
-# blocked across nine modules: test_tier3.py, test_tier3_gom.py,
-# test_tier3_gom_obc.py, test_tier3_letkf.py, test_tier3_fgat.py,
-# test_tier3_fcst.py, test_tier3_hofx.py, test_tier3_4denvar.py, and the
-# `cycled` half of test_tier3_var.py. test_tier3_diffusion.py is *not* blocked,
-# despite an earlier version of this note: it never runs a forecast and only
-# reads the fixture for an initial condition path.
+#     ncdump -h $ACKBAR_STATIC_ROOT/domain/gom_25km/INPUT/obc.nc | grep -E 'time = |units|:source'
 #
-# `ackbar validate` reports this at step 3 now rather than leaving it to MOM6,
-# so the failure arrives before submission. That does not unblock anything.
-# Fixing it means restamping the smoke initial condition and moving these dates
-# into the GLORYS window, or fetching GLORYS backwards to cover January.
-# docs/domains.md carries the reasoning; do not "fix" it by pointing this at a
-# frozen boundary again.
+# 00Z and 12Z, which is synoptic, because the initial condition is valid on the
+# hour a cold start was made to land on. See tools/coldstart-ic.sh, which says
+# why the hour chosen there is the hour every experiment built on it cycles on.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
@@ -58,11 +51,11 @@ cycle:
   # The instant the initial condition is valid at. `rst/0` is materialized from
   # it at create time, so cycle 1 reads its background exactly the way cycle 3
   # does and there is no first-cycle case anywhere.
-  start: '2015-01-05T01:00:00Z'
+  start: '2015-07-11T00:00:00Z'
   length: PT12H
   count: 3
 forecast:
-  # Four states per twelve hour cycle, at 04, 07, 10 and 13 hundred. One
+  # Four states per twelve hour cycle, at 03, 06, 09 and 12 hundred. One
   # `coupler_main` run writes all of them: FMS checks its clock against the next
   # interval on each coupled step and dumps in place, so this costs four extra
   # restart writes and nothing else. The alternative, a chain of three hour
@@ -75,4 +68,4 @@ model:
   # Named in full rather than composed from the domain and `cycle.start`: the
   # question is which state, not which state happens to sit at this date. See the
   # README beside it for what this particular one is and is not.
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00

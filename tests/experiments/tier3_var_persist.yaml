@@ -27,7 +27,7 @@ experiment:
   name: tier3_var_persist
   description: phase 6, 3DVar cycling at gom_25km with no model in the loop
 cycle:
-  start: '2015-01-05T01:00:00Z'
+  start: '2015-07-11T00:00:00Z'
   length: PT12H
   count: 3
 vars:
@@ -38,7 +38,7 @@ vars:
   # the README beside the archive for what its values are and are not.
   obs_dir: $(static_root)/obs/gom-osse-smoke/2015
 model:
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00
 solver:
   variational:
     iterations:

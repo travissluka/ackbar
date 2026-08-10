@@ -36,7 +36,7 @@ experiment:
   name: tier3_letkf
   description: phase 7, LETKF cycling at gom_25km
 cycle:
-  start: '2015-01-05T01:00:00Z'
+  start: '2015-07-11T00:00:00Z'
   length: PT12H
   count: 3
 ensemble:
@@ -53,11 +53,11 @@ ensemble:
   # One restart set per member, from `tools/ensemble-ic.sh gom_25km 6`. Without
   # it every member starts from the same state and the filter has no spread to
   # work with at all.
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01/ensemble6
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00/ensemble6
 vars:
   obs_dir: $(static_root)/obs/gom-osse-smoke/2015
 model:
-  initial_condition: $(static_root)/ic/gom_25km/hycom-smoke/20150105T01
+  initial_condition: $(static_root)/ic/gom_25km/glorys-smoke/20150711T00
 cleanup:
   # Two, so that two cycles' analysis directories survive the run. `ana` under
   # `run/` is released by its own cycle's forecast, so the default of one leaves

@@ -3,7 +3,7 @@
 #
 #   tools/ensemble-ic.sh <domain> <members> [<initial condition>]
 #   tools/ensemble-ic.sh gom_25km 10
-#   tools/ensemble-ic.sh gom_25km 20 $ACKBAR_STATIC_ROOT/ic/gom_25km/hycom-smoke/20150105T01
+#   tools/ensemble-ic.sh gom_25km 20 $ACKBAR_STATIC_ROOT/ic/gom_25km/glorys-smoke/20150711T00
 #
 # Writes `<initial condition>/ensemble<members>/mem001..N/`, beside the state it
 # perturbed, because that is what it is: the same initial condition, spread. An

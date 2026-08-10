@@ -2,8 +2,8 @@
 """Build a synthetic observation archive that covers one domain.
 
     .venv/bin/python tools/obs-archive-osse.py --domain gom_25km \\
-        --state $ACKBAR_STATIC_ROOT/ic/gom_25km/hycom-smoke/20150105T01 \\
-        --start 2015-01-05T01:00:00Z --length PT12H --count 3 \\
+        --state $ACKBAR_STATIC_ROOT/ic/gom_25km/glorys-smoke/20150711T00 \\
+        --start 2015-07-11T00:00:00Z --length PT12H --count 4 \\
         --platforms adt_3a sst_noaa19 \\
         --out $ACKBAR_STATIC_ROOT/obs/gom-osse-smoke/2015
 

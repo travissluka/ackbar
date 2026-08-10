@@ -248,10 +248,10 @@ def test_a_file_with_neither_an_axis_nor_a_time_variable_is_still_skipped(
 # healing cannot recover. The same failure arrives through the domain's own
 # `INPUT/obc.nc`, and arrives more often: every regional experiment has a
 # boundary and only some have an ensemble of them.
-# `tests/experiments/tier3_gom.yaml` is the standing example, a fixture starting
-# 2015-01-05 against a GLORYS boundary that begins 2015-05-28, which stops MOM6
-# at its first timestep and blocks four tier 3 modules. Validate reported that
-# experiment clean on all six steps.
+# The case this was built from was a whole tier of fixtures whose dates predated
+# the GLORYS boundary the domain was rebuilt on: MOM6 stopped at its first
+# timestep, and validate had reported every one of those experiments clean on
+# all six steps.
 
 
 def test_the_domains_own_boundary_is_collected(tmp_path):

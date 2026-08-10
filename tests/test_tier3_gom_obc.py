@@ -68,17 +68,17 @@ def covered_or_skip():
     """Skip, loudly, if `tier3_gom`'s dates are outside the domain's boundary.
 
     This is not a check about the boundary ensemble; it is a check about the
-    fixture this module inherits. `tier3_gom` starts at 2015-01-05 because that
-    is where `ic/gom_25km/hycom-smoke` leaves off, and the domain's `obc.nc` is
-    GLORYS covering 2015-05-28 to 2015-09-10. MOM6 stops on that, and it stops
-    with `time_interp_external ... is before range of list`, four minutes into a
-    job, from whichever PE owns a segment.
+    fixture this module inherits. `tier3_gom`'s dates are chosen to sit inside
+    what the domain's `obc.nc` covers, and a boundary refetched over a different
+    span moves that window without touching the fixture. MOM6 stops on the
+    mismatch with `time_interp_external ... is before range of list`, four
+    minutes into a job, from whichever PE owns a segment.
 
     Skipping rather than failing because a red test here would be reporting
     someone else's bug in this module's name: `test_tier3.py`,
     `test_tier3_gom.py` and `test_tier3_diffusion.py` inherit the same fixture
-    and are blocked on the same thing. The message names the real blocker so it
-    cannot be read as a boundary-ensemble problem.
+    and would be blocked on the same thing. The message names the real blocker
+    so it cannot be read as a boundary-ensemble problem.
     """
     config = yaml.safe_load(SOURCE.read_text())
     boundary = Path(os.environ["ACKBAR_STATIC_ROOT"]) / "domain" / "gom_25km" \

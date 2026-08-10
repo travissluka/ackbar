@@ -223,24 +223,23 @@ than left for the analysis. And HYCOM's `water_temp` is in-situ where MOM6 wants
 potential, so the fetcher converts it; a source that is not converted arrives
 warm at depth and looks like a model bias.
 
-The GLORYS span is the constraint to know about, because a run outside it fails
-in `time_interp_external` at the first timestep. **Every tier 3 fixture starts
-2015-01-05, which is outside it, and this is not a latent problem: it is what
-the gom tier 3 tests fail on.** `test_tier3.py`, `test_tier3_gom.py`,
-`test_tier3_diffusion.py` and `test_tier3_gom_obc.py` all inherit `tier3_gom`,
-and the model stops with
+The boundary's span is the constraint to know about, because a run outside it
+fails in `time_interp_external` at the first timestep:
 
 ```
 FATAL from PE 7: time_interp_external 2: time 735114 (20150105.010000 is before
 range of list 735257-735362(20150528.000000 - 20150910.000000),file=INPUT/obc.nc
 ```
 
-`tier3_gom.yaml`'s own header still describes the boundary as a SODA five-day
-mean valid 2015-01-04, which it stopped being when the domain was rebuilt on
-GLORYS. Reconciling it means either extending the fetch backwards or restamping
-the smoke initial condition and moving the fixture dates, and either way it
-touches all four modules, so it is a change of its own rather than a fix to make
-in passing.
+**So a domain's boundary decides what dates an experiment on it may use, and
+every tier 3 fixture on `gom_25km` therefore carries the same start date**, set
+inside that span with room for the longest forecast any of them runs.
+`tests/experiments/tier3_gom.yaml` is where that is written down; the initial
+condition beside it (`ic/gom_25km/glorys-smoke`) and the smoke observation
+archive (`obs/gom-osse-smoke`) are built at the matching dates, and moving one
+means moving all three. `ackbar validate` step 3 reads the boundary's own time
+axis and refuses a span that does not fit, so the mismatch is a message before
+submission rather than a job that dies four minutes in.
 
 **A lagged boundary ensemble is shorter than the boundary it came from, and by
 enough to matter.** `tools/obc-lagged.py` cuts the largest lag off each end,
