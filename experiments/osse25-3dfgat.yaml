@@ -50,7 +50,8 @@ experiment:
 cycle:
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  count: 45
+  # The comparison length, identical across all six experiments in it.
+  count: 20
 
 solver:
   window:

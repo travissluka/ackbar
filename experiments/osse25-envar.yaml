@@ -1,4 +1,4 @@
-# The quarter degree OSSE's pure FGAT EnVar. A plumbing run, not a result.
+# The quarter degree OSSE's pure FGAT EnVar.
 #
 # See docs/osse.md. `osse25-hybrid` with one layer added, `da/envar`, which sets
 # `solver.covariance: ensemble`. So the background error is the twenty member
@@ -33,20 +33,20 @@
 # the variational analysis every cycle, so the ensemble follows the run being
 # reported.
 #
-# **Expect this to lose, and read it for the plumbing.** `rtps: 0.95` is on and
-# the LETKF and hybrid runs measure the ensemble losing about 85% of its
-# temperature spread over twenty cycles, because nothing on this domain grows
-# the prior's spread between cycles. A pure ensemble covariance is where that
-# hurts most, since there is no static half to carry what the ensemble stops
-# describing. Six cycles, and no number here belongs in the comparison until a
-# spread source exists.
+# **This is the arm most exposed to a decaying ensemble.** `rtps: 0.95` is on,
+# but the prior's spread still falls cycle over cycle, and a pure ensemble
+# covariance is where that hurts most, since there is no static half to carry
+# what the ensemble stops describing. Whether the spread sources hold it up
+# well enough to beat the hybrid is the question this arm answers; see
+# docs/ensemble-spread.md.
 #
 # Localization is 1.5 Rossby radii, floored at two grid cells, and not masked
 # over land: `loc_hz_open` in `config/static/diffusion.yaml`, built into
 # `loc_hz_open.nc` by `tools/soca-diffusion.sh`. Changing the multiplier means
-# rebuilding that file. The masked `loc_hz` is still calibrated and is selected
-# by `vars: {localization_hz: loc_hz}`, which is what every EnVar and hybrid run
-# before this one read.
+# rebuilding that file. The masked `loc_hz` is still calibrated and can be
+# selected with `vars: {localization_hz: loc_hz}`, but masking a localization
+# is wrong here: it is a taper, not a correlation, so land cells have to carry
+# a scale or a coastal observation stops reaching across the shelf.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
@@ -74,7 +74,8 @@ experiment:
 cycle:
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  count: 6
+  # The comparison length, identical across all six experiments in it.
+  count: 20
 
 solver:
   window:
