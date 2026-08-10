@@ -404,6 +404,42 @@ def test_cleanup_reaps_behind_the_long_forecast_that_is_never_finished(env):
     assert paths.cycle_out("rst", 3).exists()
 
 
+def test_cleanup_leaves_an_old_cycle_whose_long_forecast_is_still_reading_it(env):
+    """The arrears are proved one at a time, not by the horizon alone.
+
+    Extended forecasts are leaves on their own cadence, so several are in flight
+    at once and they finish out of order. A horizon at cycle 4 says the chain is
+    past cycle 3; it says nothing about whether cycle 1's `post.fcst` is still
+    reducing `run/1/fcst/`. The sweep reaches every cycle at or below the drop,
+    and `_reapable` uses `shutil.rmtree` with no `ignore_errors`, so without a
+    per-cycle proof this deletes a trajectory out from under a running job.
+
+    Not reachable before the walk-back landed: cleanup refused on every cycle of
+    every experiment with an extended forecast, so the arrears sweep never ran.
+    """
+    config, _, paths = env
+    config["forecast"] = {"extended": {"length": "P7D", "every": "PT24H"}}
+    for cycle in (1, 2, 3, 4):
+        _complete_cycle(env, cycle)
+
+    # Cycle 1's long forecast has integrated and been observed, but its
+    # reduction has not finished. Every later cycle's chain is done, so the
+    # horizon is well past it and the sweep reaches it.
+    for cycle in (1, 2, 3):
+        for task in ("forecast.ext", "hofx.ext", "post.fcst"):
+            if cycle == 1 and task == "post.fcst":
+                continue
+            sentinel = paths.sentinel(cycle, task, 1)
+            sentinel.parent.mkdir(parents=True, exist_ok=True)
+            sentinel.write_text("{}")
+
+    do(env, 5, "cleanup")
+
+    assert paths.cycle_out("rst", 1).exists(), (
+        "cycle 1's states went while its own post.fcst was still reading them")
+    assert not paths.cycle_out("rst", 2).exists()
+
+
 def test_a_keep_rule_pins_a_restart_every_so_often(env):
     """What makes a long experiment branchable.
 

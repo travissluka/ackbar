@@ -25,7 +25,8 @@ from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph import build_graph
-from ackbar.validate import _coverage_step, _needed_span, _stamp
+from ackbar.validate import (_coverage_step, _needed_span, _shared_timed,
+                             _stamp)
 
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
@@ -239,3 +240,69 @@ def test_a_file_with_neither_an_axis_nor_a_time_variable_is_still_skipped(
         f.createDimension("x", 3)
         f.createVariable("depth", "f8", ("x",))[:] = [1.0, 2.0, 3.0]
     assert _coverage_step({str(path)}, config, graph) == []
+
+
+# --- the shared boundary, which is not a per-member input at all --------------
+#
+# The check was built for `ensemble.inputs`, where a short archive is the failure
+# healing cannot recover. The same failure arrives through the domain's own
+# `INPUT/obc.nc`, and arrives more often: every regional experiment has a
+# boundary and only some have an ensemble of them.
+# `tests/experiments/tier3_gom.yaml` is the standing example, a fixture starting
+# 2015-01-05 against a GLORYS boundary that begins 2015-05-28, which stops MOM6
+# at its first timestep and blocks four tier 3 modules. Validate reported that
+# experiment clean on all six steps.
+
+
+def test_the_domains_own_boundary_is_collected(tmp_path):
+    """Not just the per-member ones: `model.input` supplies a file too."""
+    (tmp_path / "obc.nc").touch()
+    rendered = {"model": {"input": str(tmp_path)}}
+    assert _shared_timed(rendered) == [str(tmp_path / "obc.nc")]
+
+
+def test_a_closed_domain_has_no_boundary_to_collect(tmp_path):
+    """A global domain has no `obc.nc`, and a missing one is step 3's finding to
+    report rather than this one's."""
+    assert _shared_timed({"model": {"input": str(tmp_path)}}) == []
+
+
+def test_a_model_with_no_input_directory_is_not_a_boundary_question():
+    """`model: stub` and `model: persistence` have no `INPUT/` at all."""
+    assert _shared_timed({"model": {"name": "stub"}}) == []
+    assert _shared_timed({}) == []
+
+
+def test_a_short_shared_boundary_is_reported(experiment, tmp_path):
+    """The whole point: the same failure, from the file every member reads."""
+    config, graph = experiment
+    first, last = _needed_span(config, graph)
+    import datetime as dt
+    early = dt.datetime(first[0], first[1], first[2]) - dt.timedelta(days=30)
+    short = dt.datetime(last[0], last[1], last[2]) - dt.timedelta(days=1)
+    path = boundary(tmp_path / "obc.nc", early, short)
+    findings = _coverage_step({path}, config, graph, {path})
+    assert len(findings) == 1
+    assert "time_interp_external" in findings[0].message
+
+
+def test_the_two_cases_are_told_apart_because_the_repair_differs(experiment,
+                                                                tmp_path):
+    """A per-member archive cannot be extended in place, and telling someone
+    their afternoon's refetch has cost them the experiment is worse than saying
+    nothing. The domain's own boundary is simply refetched longer."""
+    config, graph = experiment
+    first, last = _needed_span(config, graph)
+    import datetime as dt
+    early = dt.datetime(first[0], first[1], first[2]) - dt.timedelta(days=30)
+    short = dt.datetime(last[0], last[1], last[2]) - dt.timedelta(days=1)
+    path = boundary(tmp_path / "obc.nc", early, short)
+
+    of_the_domain = _coverage_step({path}, config, graph, {path})[0].message
+    assert "shared input" in of_the_domain
+    assert "Refetch" in of_the_domain
+    assert "anomaly mean" not in of_the_domain
+
+    of_the_ensemble = _coverage_step({path}, config, graph)[0].message
+    assert "per-member input" in of_the_ensemble
+    assert "anomaly mean" in of_the_ensemble

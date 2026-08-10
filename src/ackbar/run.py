@@ -1716,7 +1716,7 @@ def _cleanup(config, paths, cycle):
     # those are the sub-window states of the horizon cycle's forecast, read by
     # the analysis one cycle later, and `rst/<keep>` existing means that analysis
     # and the forecast after it are both done with them.
-    for target, kind in _reapable(paths, drop, config):
+    for target, kind in _reapable(paths, drop, config, members):
         shutil.rmtree(target)
         print(f"ackbar: removed {target}")
 
@@ -1725,7 +1725,7 @@ def _cleanup(config, paths, cycle):
     # the whole debugging trace. By the time a cycle is this far behind the
     # horizon its logs have been kept by `keep_traces` and its trace is no
     # longer what anyone is reading.
-    for target in _reapable_scratch(paths, drop):
+    for target in _reapable_scratch(paths, drop, config, members):
         shutil.rmtree(target, ignore_errors=True)
         print(f"ackbar: removed {target}")
 
@@ -1862,11 +1862,14 @@ def pinned(config, paths, cycle):
     return not offset.total_seconds() % parse_duration(every).total_seconds()
 
 
-def _reapable(paths, drop, config):
+def _reapable(paths, drop, config, members):
     """Every state directory at or below the horizon, oldest first.
 
     Sweeps `run/` rather than indexing the horizon cycle, so that a cycle the
-    last pass declined to touch is collected by the next one.
+    last pass declined to touch is collected by the next one. Each one it
+    collects is proved in its own right, by `_proven`: the horizon says the
+    *chain* has moved past these states, and with long forecasts in flight that
+    is not the same as saying every consumer of each one has finished.
 
     Each kind has its own horizon, `drop` plus its offset in `REAPED`, because
     each is released by a different event. `rst` and `slot` are read by the cycle
@@ -1888,6 +1891,8 @@ def _reapable(paths, drop, config):
         number = cycle_of(paths, entry.name)
         if number is None:
             continue
+        if number < drop and not _proven(config, paths, number, members):
+            continue
         held = pinned(config, paths, number)
         for kind, offset in REAPED.items():
             if number > drop + offset:
@@ -1899,18 +1904,43 @@ def _reapable(paths, drop, config):
                 yield target, kind
 
 
-def _reapable_scratch(paths, drop):
+def _proven(config, paths, number, members):
+    """Whether cycle *number*'s states may go, on its own evidence.
+
+    Asked of the arrears only, the cycles strictly below `drop`. The horizon
+    proof covers `drop` and the `ana` offset at `keep` and says so; this is
+    about the ones behind them, which the horizon says nothing about.
+
+    It needs asking because extended forecasts are leaves on their own cadence,
+    so several are in flight at once and they finish out of order. The chain
+    reaching `keep` does not say whether cycle `keep - 4`'s `post.fcst` is still
+    reading `run/<keep-4>/fcst/`, and `_reapable` calls `shutil.rmtree` without
+    `ignore_errors`, so losing that race fails the cleanup job on one side and
+    takes the trajectory out from under a running reduction on the other.
+
+    Before `b3803e0` it could not bite: cleanup refused on every cycle of every
+    experiment with an extended forecast, so the arrears sweep never ran at all.
+    Making the sweep reachable is what made this reachable.
+    """
+    return not _incomplete(config, paths, number + keep_cycles(config), members)
+
+
+def _reapable_scratch(paths, drop, config, members):
     """Scratch directories of cycles at or below the horizon.
 
     Never pinned. A keep rule is about branch points, and a branch starts from a
     restart set; the working directory a task was killed in is not something an
-    experiment is ever resumed from.
+    experiment is ever resumed from. Proved per cycle for the same reason
+    `_reapable` is: a healed leaf of an old cycle can still be executing in it.
     """
     root = paths.scratch_dir
     if not root.is_dir():
         return
     for entry in sorted(root.iterdir(), key=lambda p: p.name):
         number = cycle_of(paths, entry.name)
+        if (number is not None and number < drop
+                and not _proven(config, paths, number, members)):
+            continue
         if entry.is_dir() and number is not None and number <= drop:
             yield entry
 

@@ -17,6 +17,7 @@ failure, and those are entirely checkable up front.
 """
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,13 +87,14 @@ def validate_experiment(config, schema, site, root, offline=False):
     findings += _graph_step(config, graph)
     findings += _template_step(root)
 
-    jobtime_findings, paths, observations, timed = _jobtime_step(config, graph)
+    jobtime_findings, paths, observations, (timed, shared) = _jobtime_step(
+        config, graph)
     findings += jobtime_findings
 
     if not offline:
         ran |= {3, 4, 5}
         findings += _path_step(paths, site)
-        findings += _coverage_step(timed, config, graph)
+        findings += _coverage_step(timed, config, graph, shared)
         findings += _observation_step(observations)
         findings += _executable_step(graph, root)
         findings += _limit_step(graph, site)
@@ -193,6 +195,7 @@ def _jobtime_step(config, graph):
     paths = set()
     observations = {}
     timed = set()
+    shared = set()
     for cycle, member in job_time_context(config, graph):
         try:
             rendered = render(config, symbols(config, cycle, member))
@@ -202,17 +205,42 @@ def _jobtime_step(config, graph):
             ))
             continue
         timed.update(((rendered.get("ensemble") or {}).get("inputs") or {}).values())
+        shared.update(_shared_timed(rendered))
         for where, value in unresolved_jobtime(rendered):
             findings.append(Finding(
                 2, where, f"cycle {cycle}: token survived substitution: {value!r}"
             ))
         _take_observation_inputs(rendered, observations)
         findings.extend(_forcing_pair(rendered))
+        findings.extend(_forcing_table_files(rendered))
         _collect_paths(rendered, paths)
 
     # One finding per distinct problem, not one per cycle: a bad symbol in a
     # shared config would otherwise be reported hundreds of times.
-    return _dedupe(findings), paths, observations, timed
+    return _dedupe(findings), paths, observations, (timed | shared, shared)
+
+
+#: Time-varying inputs the domain supplies to every member alike, as names under
+#: `model.input`. The coverage check was built for `ensemble.inputs`, where a
+#: short archive is the failure healing cannot recover, but the same failure
+#: arrives from the shared copy and arrives more often: every experiment has a
+#: boundary and only some have an ensemble of them. `tests/experiments/tier3_gom.yaml`
+#: is the standing example, a fixture starting 2015-01-05 against a boundary that
+#: begins 2015-05-28, which stops MOM6 at its first timestep.
+SHARED_TIMED = ("obc.nc",)
+
+
+def _shared_timed(rendered):
+    """The domain's own time-varying inputs, for the coverage check.
+
+    Only names that exist: a closed domain has no `obc.nc`, and a missing one is
+    step 3's finding to report rather than this one's.
+    """
+    where = ((rendered.get("model") or {}).get("input"))
+    if not isinstance(where, str):
+        return []
+    return [os.path.join(where, name) for name in SHARED_TIMED
+            if os.path.exists(os.path.join(where, name))]
 
 
 def _forcing_pair(rendered):
@@ -238,6 +266,53 @@ def _forcing_pair(rendered):
         f"shortwave read with ADD_DIURNAL_SW left on runs to completion and "
         f"applies the diurnal cycle twice."
     ))]
+
+
+#: What a data table row names as its file, `"INPUT/atm.nc"` in the fourth
+#: column. Quoted, and the table is whitespace-and-comma separated with no
+#: escaping, so a regex over the whole line is enough and a parser is not.
+TABLE_FILE = re.compile(r'"INPUT/([^"/]+)"')
+
+
+def _forcing_table_files(rendered):
+    """Every file a forcing table names has to be provided by something.
+
+    `_forcing_pair` checks that a table comes with a `SIS_forcing`, which is the
+    pairing that describes the *model*. This is the other half: a table names
+    files under `INPUT/`, and unlike every other input in the config those names
+    are not paths this validator would otherwise see, so nothing checks that
+    anything supplies them.
+
+    The failure it closes is `forcing/common` inherited without a source layer.
+    That sets `model.data_table` to a table whose every row reads `INPUT/atm.nc`
+    and sets `SIS_forcing`, so the pairing passes, and no `ensemble.inputs` and
+    no domain copy provides the file. The graph submits and every member's first
+    forecast dies inside `data_override`.
+
+    A name is satisfied by the domain's own `INPUT/` or by an `ensemble.inputs`
+    key, which are the two things that can put a file there.
+    """
+    model = rendered.get("model") or {}
+    table = model.get("data_table")
+    where = model.get("input")
+    if not isinstance(table, str) or not os.path.exists(table):
+        return []  # step 3 owns a table that is not there
+    staged = set(((rendered.get("ensemble") or {}).get("inputs") or {}))
+    with open(table) as handle:
+        wanted = sorted(set(TABLE_FILE.findall(handle.read())))
+    findings = []
+    for name in wanted:
+        if name in staged:
+            continue
+        if isinstance(where, str) and os.path.exists(os.path.join(where, name)):
+            continue
+        findings.append(Finding(2, "model.data_table", (
+            f"{table} reads INPUT/{name}, and nothing provides it: it is not in "
+            f"{where} and no ensemble.inputs key names it. Every forecast would "
+            f"fail inside data_override. A forcing table needs the source layer "
+            f"that supplies its file, not just the table."
+        )))
+    return findings
 
 
 def _take_observation_inputs(rendered, observations):
@@ -346,8 +421,8 @@ def _needed_span(config, graph):
     return min(begins), max(ends)
 
 
-def _coverage_step(timed, config, graph):
-    """Per-member forcing has to span the run, and this is the only chance.
+def _coverage_step(timed, config, graph, shared=frozenset()):
+    """A time-varying input has to span the run, and this is the only chance.
 
     A member input that stops early is the one input failure healing cannot
     recover. The run dies in `time_interp_external` at the cycle that walks off
@@ -398,13 +473,24 @@ def _coverage_step(timed, config, graph):
     # case where one member really does differ.
     for (start, end), paths in sorted(short.items()):
         common = os.path.commonpath(paths) if len(paths) > 1 else paths[0]
+        # The two cases end differently and the difference is the whole reason
+        # to catch this early. A per-member archive cannot be extended in place,
+        # so being told after the fact costs the experiment; the domain's own
+        # copy can simply be refetched longer, and the reader should not be told
+        # otherwise about a file they can fix in an afternoon.
+        if shared and not (set(paths) - shared):
+            what = f"{len(paths)} shared input(s)"
+            repair = ("Refetch the domain's boundary over the experiment's "
+                      "span before starting it.")
+        else:
+            what = f"{len(paths)} per-member input(s)"
+            repair = ("Rebuilding the archive then does not heal it: a rebuild "
+                      "changes the anomaly mean, so every earlier cycle would "
+                      "have integrated a boundary that no longer exists.")
         findings.append(Finding(3, common, (
-            f"{len(paths)} per-member input(s) cover {_stamp(start)} to "
-            f"{_stamp(end)}, but the experiment reaches {_stamp(first)} to "
-            f"{_stamp(last)}. The run would stop in time_interp_external at the "
-            f"cycle that leaves the file. Rebuilding the archive then does not "
-            f"heal it: a rebuild changes the anomaly mean, so every earlier "
-            f"cycle would have integrated a boundary that no longer exists."
+            f"{what} cover {_stamp(start)} to {_stamp(end)}, but the experiment "
+            f"reaches {_stamp(first)} to {_stamp(last)}. The run would stop in "
+            f"time_interp_external at the cycle that leaves the file. {repair}"
         )))
     return findings
 
