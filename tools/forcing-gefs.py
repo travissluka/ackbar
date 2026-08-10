@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 """Build the GEFS half of the forcing archive: one `atm.nc` per member.
 
-    tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84 \\
-        --members 20 \\
+    tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84,108 \\
+        --members 21 \\
         --domain gom_25km \\
         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+
+**Ask for a wider span than the experiment.** `time_interp_external` refuses to
+extrapolate, so a run whose first step lands before the first record dies with
+"time ... is before range of list" rather than holding the first value. The gap
+is real even when the dates look right: the flux fields are stamped at their
+window midpoints, so the first of them sits half an output interval after the
+requested start (+1.5 h for this era) and no amount of matching the start date
+closes it. A day of margin at each end is the fix, and `ackbar validate` reads
+the narrowest axis in the file, so an archive that is short reports itself
+before anything is submitted.
 
 GEFS forces every *experiment*, control and ensemble alike, while ERA5 forces the
 truth. That is the fraternal twin: the experiments see a forecast of the weather
@@ -83,14 +93,19 @@ boundary as a segment boundary.
 ## More members than the era has forecasts
 
 `--leads` takes a ladder, and the ensemble is its outer product with the era's
-members: five reforecast members at 12, 36, 60 and 84 hours are twenty members,
-every one of them a real forecast of these hours by a real model, and every one
-of them valid at the same times as the truth. That is the only way a 2015
-experiment gets twenty members, since the reforecast has five.
+members: five reforecast members at 12, 36, 60, 84 and 108 hours are twenty-five
+members, every one of them a real forecast of these hours by a real model, and
+every one of them valid at the same times as the truth. That is the only way a
+2015 experiment gets more than five members, since the reforecast has five.
+
+Count the runs rather than the members when sizing the ladder. An experiment
+with `ensemble.size: 20` and a control is twenty-one runs, `mem000` through
+`mem020`, so it needs twenty-one atmospheres: five rungs, not the four that
+give exactly twenty.
 
 **They are not exchangeable, and the filter assumes they are.** A member at 84
 hours is drawn from a wider error distribution than one at 12, so the ensemble is
-a mixture of four distributions rather than a sample of one. Two consequences
+a mixture of as many distributions as there are rungs. Two consequences
 worth stating rather than discovering: the spread is larger than any single
 lead's and the mean is worse than the shortest lead's, and a rank histogram will
 not be flat even with a perfect filter. The alternative is five members, which is
@@ -131,11 +146,18 @@ it: 137 MB each, of which a segment reads eight messages out of a hundred and
 sixty, because they carry the 10 m and 100 m winds interleaved.
 
 NCEP publishes a `.idx` beside every GRIB file giving each message's byte offset,
-so the wanted messages can be asked for by range and concatenated. The index is
-used as a *superset* filter and nothing else: which plane is which is still
-decided by eccodes in `harvest`, so a description the index parse does not
-understand costs a few unread bytes rather than a wrong field, and a filter that
-is too narrow is caught by `segment`'s missing check rather than silently
+so the wanted messages can be asked for by range and concatenated.
+
+The fourteenth is arithmetic on file sizes and message counts, not a measurement.
+What was measured is the wall clock: 84 seconds a member against about nine
+minutes, a factor of 6.4. The rest goes somewhere this has not profiled, most
+likely the per-field loop below, which fetches seven files in sequence and only
+parallelizes the ranges within each.
+
+The index is used as a *superset* filter and nothing else: which plane is which
+is still decided by eccodes in `harvest`, so a description the index parse does
+not understand costs a few unread bytes rather than a wrong field, and a filter
+that is too narrow is caught by `segment`'s missing check rather than silently
 producing a short series.
 """
 
@@ -272,7 +294,14 @@ WINDOWED = ("DSWRF", "DLWRF", "PRATE")
 #: Both parts are far below what a *real* misreading costs. Taking a six hour
 #: window for a three hour one puts hundreds of W m-2 in the wrong place, not
 #: tens, so the failure this is meant to catch is nowhere near these bounds.
-NEGATIVE_ABSOLUTE = {"DSWRF": 20.0, "DLWRF": 20.0, "PRATE": 2.0e-5}
+#: The absolute parts are set against each field's own domain mean, which is why
+#: they are not one number: 20 W m-2 is 2.4% of a 300 W m-2 shortwave, and the
+#: precipitation bound has to be read the same way. At 2e-5 kg m-2 s-1 it was
+#: 1.73 mm/day against a domain mean of 3.15, so a negative excursion of half
+#: the climatological rainfall would have been floored to zero and reported as
+#: one line of print. Flooring only ever adds water, so that is the direction
+#: that matters.
+NEGATIVE_ABSOLUTE = {"DSWRF": 20.0, "DLWRF": 20.0, "PRATE": 2.0e-6}
 NEGATIVE_RELATIVE = 0.02
 
 
@@ -286,6 +315,16 @@ def choose_era(start, end, named):
             raise SystemExit(
                 f"forcing-gefs: no era called {named!r}. Known: "
                 f"{', '.join(e.name for e in ERAS)}")
+        # Named explicitly still has to cover the dates. Without this, --era
+        # names a real product and the run walks into a 404 retried four times
+        # per file rather than saying which years that product holds.
+        if not (datetime.datetime.strptime(era.first, "%Y-%m-%d") <= start
+                and end <= datetime.datetime.strptime(era.last, "%Y-%m-%d")
+                + datetime.timedelta(hours=23)):
+            raise SystemExit(
+                f"forcing-gefs: --era {era.name} holds {era.first} to "
+                f"{era.last}, which does not cover {start:%Y-%m-%d} to "
+                f"{end:%Y-%m-%d}. Naming an era does not extend it.")
     else:
         covering = [e for e in ERAS
                     if datetime.datetime.strptime(e.first, "%Y-%m-%d") <= start
@@ -494,7 +533,16 @@ def harvest(path, specs, steps):
                         # the field about the equator, which in this box is a
                         # plausible looking wind blowing the wrong way rather
                         # than an error.
-                        lats = first_lat - step_lat * np.arange(nj)
+                        # The sign is read rather than assumed. GEFS scans
+                        # north to south, so the latitude increment is a
+                        # decrement, and reading it the other way flips the
+                        # field about the equator: over this box that is a
+                        # plausible looking wind blowing the wrong way, not an
+                        # error anything would raise.
+                        down = not eccodes.codes_get(handle,
+                                                     "jScansPositively")
+                        lats = (first_lat + (-step_lat if down else step_lat)
+                                * np.arange(nj))
                     found[(name, end)] = eccodes.codes_get_values(
                         handle).reshape(nj, ni)
                     spans[(name, end)] = (
@@ -622,10 +670,46 @@ def segment(era, init, member, lead, cache, box):
         for name in ("T2", "U10", "V10"):
             series[name].append((step, found[(name, step)]))
 
+    records, worst = deaverage(era, found, spans, ends, lead,
+                               f"{member} {init:%Y-%m-%d %H}")
+    for name, entries in records.items():
+        series[name].extend(entries)
+
+    return series, x, y, worst
+
+
+def deaverage(era, found, spans, ends, lead, where=""):
+    """Windows since a reset, turned into a mean over each output interval.
+
+    Pure: planes in, planes out, no network and no era beyond its arithmetic, so
+    the one part of this tool that can be quietly wrong is the part that can be
+    tested from synthetic numbers. *found* maps `(name, end step)` to a plane and
+    *spans* to the `(start, end)` that plane actually covers.
+
+    Returns `{name: [(hours after init, plane)]}` and the worst negative
+    excursion each field produced, which the caller reports.
+
+    The stamp is the window midpoint, `end - step/2`, not the end: these are
+    means over an interval and the model interpolates between stamps.
+    """
+    if era.reset % era.step:
+        # Otherwise `start - reset` can go negative and the weighted difference
+        # below adds the earlier window where it should subtract it, with the
+        # span check still passing because both windows are the ones expected.
+        raise SystemExit(
+            f"forcing-gefs: the {era.name} era resets every {era.reset} h and "
+            f"reports every {era.step} h, which do not divide. The de-averaging "
+            f"assumes each reset period is a whole number of output intervals.")
+
+    records = {name: [] for name in WINDOWED}
     worst = {name: 0.0 for name in WINDOWED}
     for name in WINDOWED:
         previous = {}
         for end in ends:
+            # Relative to `lead` rather than to forecast hour zero, which is
+            # only the same grid because `main` refuses a lead that is not a
+            # multiple of the reset period. The two are load bearing on each
+            # other.
             reset = lead + (end - 1 - lead) // era.reset * era.reset
             start = end - era.step
             whole = found[(name, end)]
@@ -652,12 +736,10 @@ def segment(era, init, member, lead, cache, box):
             if name == "PRATE":
                 plane = plane / (era.step * 3600.0)
                 scale = scale / (era.step * 3600.0)
-            plane, low = floor_at_zero(name, plane, scale,
-                                       f"{member} {init:%Y-%m-%d %H} +{end}")
+            plane, low = floor_at_zero(name, plane, scale, f"{where} +{end}")
             worst[name] = min(worst[name], low)
-            series[name].append((end - era.step / 2.0, plane))
-
-    return series, x, y, worst
+            records[name].append((end - era.step / 2.0, plane))
+    return records, worst
 
 
 def build(era, index, start, end, leads, cache, out, box, domain):
@@ -839,6 +921,11 @@ def main():
     # cache once the last member is written.
     for index in cache.glob("*.idx"):
         index.unlink()
+    # A `.part` is what an interrupted whole-file download leaves. Temp then
+    # rename means it is never mistaken for a finished file, but it is also
+    # never cleaned up, and one of them keeps the cache directory alive forever.
+    for part in cache.glob("*.part"):
+        part.unlink(missing_ok=True)
     if not any(cache.iterdir()):
         cache.rmdir()
 

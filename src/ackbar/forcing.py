@@ -8,16 +8,19 @@ nothing downstream of it, which is the point: **the data table does not vary by
 source.** One `data_table` names `INPUT/atm.nc` and the seven variables below,
 and swapping ERA5 for GEFS is swapping which file the symlink points at.
 
-That normalization is what keeps the per-member staging mechanism dumb. A member
-selects a *file*; a source selects a *config variant* (`data_table.<source>` and
-`SIS_override.<source>`, the latter because `ADD_DIURNAL_SW` is a property of how
-often the source reports shortwave). The two are separate mechanisms and only one
-of them is new.
+That normalization is what keeps the per-member staging mechanism dumb, and it
+is why there is no `data_table.<source>`: one `data_table.atm` serves every
+source, and a member selects a *file* through `ensemble.inputs` rather than a
+config variant. What a source does still set is `model.override.SIS_forcing`, a
+fourth SIS parameter file holding `ADD_DIURNAL_SW = False`, because how often a
+source reports shortwave is a property of the source. It is a separate file
+rather than a line in the domain's `SIS_override` because that file carries
+`NIGLOBAL` and `NJGLOBAL`, which must not be replaced.
 
 ## The field names are soca-science's
 
 `T2 Q2 U10 V10 DSWRF DLWRF PRATE`, which is what both prior workflows used and
-what `config/model/mom6sis2/domain/gom/common/data_table.gefs` already names. No
+what `config/model/mom6sis2/domain/gom/common/data_table.atm` already names. No
 reason to rename them, and one reason not to: a data table copied from either
 prior workflow keeps working.
 
@@ -153,18 +156,45 @@ def domain_box(domain, margin=MARGIN):
         return box_around(np.asarray(f["x"][:]), np.asarray(f["y"][:]), margin)
 
 
+def lon_extent(lon):
+    """(west, east) in [0, 360) covering *lon*, going the short way round.
+
+    `min` and `max` cannot do this, and the difference is not academic. A grid
+    that wraps through zero holds both 0.1 and 359.9, so its min/max extent is
+    the whole globe: a Gulf of Guinea domain from 350E to 10E, or any domain
+    straddling the antimeridian on a [-180, 180) grid, would be classified as
+    global and fetched as one, which is 290 MB of ERA5 becoming about 100 GB.
+
+    The extent is the complement of the largest gap between adjacent
+    longitudes. For a grid that genuinely covers the globe that gap is one cell
+    and the extent is everything; for a wrapped regional grid it is the ocean of
+    longitudes the domain does not touch, and the returned west is greater than
+    the returned east.
+    """
+    values = np.unique(np.asarray(lon).ravel() % 360.0)
+    if values.size < 2:
+        return float(values[0]), float(values[0])
+    gaps = np.diff(values)
+    across_zero = 360.0 - (values[-1] - values[0])
+    if across_zero >= gaps.max():
+        return float(values[0]), float(values[-1])
+    cut = int(np.argmax(gaps))
+    return float(values[cut + 1]), float(values[cut])
+
+
 def box_around(lon, lat, margin=MARGIN):
     """A padded box around supergrid coordinates *lon*, *lat*, in [0, 360).
 
     Takes the extent rather than the corners, so a curvilinear or rotated grid
     gets the box that contains it rather than a box through four of its points.
     """
-    west, east = float(lon.min()) - margin, float(lon.max()) + margin
+    west, east = lon_extent(lon)
+    covered = (east - west) % 360.0
     south, north = float(lat.min()) - margin, float(lat.max()) + margin
-    if east - west >= 360.0:
+    if covered + 2.0 * margin >= 360.0:
         west, east = 0.0, 360.0
     else:
-        west, east = west % 360.0, east % 360.0
+        west, east = (west - margin) % 360.0, (east + margin) % 360.0
         if west >= east:
             # A box straddling where the source's longitude axis wraps is two
             # slices, not one, and every caller here reads one. Refused rather
