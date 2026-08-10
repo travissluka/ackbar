@@ -216,7 +216,12 @@ def test_the_localization_read_the_domains_own_calibration(run):
     groups = localization["saber central block"]["read"]["groups"]
     assert groups[0]["horizontal"]["filepath"] == \
         str(STATIC / "static" / DOMAIN / "diffusion" / "loc_hz")
-    assert localization["localization variables"]
+    # Inside the group, which is the only place saber reads it, and equal to
+    # what the analysis solves for. This assertion used to read
+    # `localization variables` beside the method, a key nothing reads, so it
+    # passed while every group localized an empty variable list.
+    assert groups[0]["variables"] == \
+        var_document(run, LAST)["cost function"]["analysis variables"]
 
 
 def test_the_two_applications_read_their_observations_differently(run):

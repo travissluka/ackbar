@@ -67,8 +67,11 @@ solver:
     # different quantity again, computed by `soca_sqrtvertloc.x`, and adding it
     # untested would be a second unmeasured knob under the first.
     #
-    # `localization variables` is absent on purpose and filled in by
+    # Each group's `variables:` is absent on purpose and filled in by
     # `ackbar/soca.py`: it is the analysis variables, which are stated once.
+    # It has to sit inside the group, which is where `saber::DiffusionImpl`
+    # reads it: a group without it localizes an empty variable list, saber
+    # constructs and runs, and the covariance is the raw sample one.
     localization:
       localization method: SABER
       saber central block:

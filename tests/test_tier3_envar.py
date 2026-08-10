@@ -113,6 +113,14 @@ def test_the_covariance_had_no_static_component(run):
     assert "saber central block" not in error
     assert len(error["members"]) == len(MEMBERS)
     assert error["localization"]["localization method"] == "SABER"
+    # Every diffusion group names what it localizes. A group without its own
+    # `variables:` constructs, runs, and localizes nothing, which is the one
+    # failure this whole component cannot survive.
+    groups = error["localization"]["saber central block"]["read"]["groups"]
+    assert groups
+    for group in groups:
+        assert group["variables"] == \
+            var_document(run, LAST)["cost function"]["analysis variables"]
 
 
 def test_the_analysis_moved_the_state_towards_its_observations(run):

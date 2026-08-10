@@ -6,6 +6,7 @@ wrong value in this document is discovered by an application that has already
 been allocated eight nodes.
 """
 
+import copy
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -404,9 +405,7 @@ def test_4d_ens_var_takes_its_background_as_one_state_per_subwindow(var):
     """
     var["solver"]["window"] = {"type": "4d"}
     var["solver"]["covariance"] = "ensemble"
-    var["solver"]["ensemble error"] = {
-        "localization": {"localization method": "SABER"},
-    }
+    var["solver"]["ensemble error"] = copy.deepcopy(ENSEMBLE_ERROR)
     var.setdefault("forecast", {})["slots"] = "PT6H"
     document = soca.var_config(
         var, 2, [observer()], background=Path("/unused"),
@@ -443,9 +442,7 @@ def test_the_4d_increment_is_written_once_per_subwindow(var):
     """
     var["solver"]["window"] = {"type": "4d"}
     var["solver"]["covariance"] = "ensemble"
-    var["solver"]["ensemble error"] = {
-        "localization": {"localization method": "SABER"},
-    }
+    var["solver"]["ensemble error"] = copy.deepcopy(ENSEMBLE_ERROR)
     var.setdefault("forecast", {})["slots"] = "PT6H"
     document = soca.var_config(
         var, 2, [observer()], background=Path("/unused"),
@@ -474,9 +471,7 @@ def test_4d_hybrid_is_the_4d_document_with_a_weighted_static_component(var):
     var["solver"]["window"] = {"type": "4d"}
     var["solver"]["covariance"] = "hybrid"
     var["solver"]["hybrid weights"] = {"static": 0.5, "ensemble": 0.5}
-    var["solver"]["ensemble error"] = {
-        "localization": {"localization method": "SABER"},
-    }
+    var["solver"]["ensemble error"] = copy.deepcopy(ENSEMBLE_ERROR)
     var.setdefault("forecast", {})["slots"] = "PT6H"
     document = soca.var_config(
         var, 2, [observer()], background=Path("/unused"),
@@ -1122,7 +1117,7 @@ def members_at(cycle, members=(1, 2, 3)):
 @pytest.fixture
 def hybrid(config):
     solver = dict(SOLVER, covariance="hybrid",
-                  **{"ensemble error": ENSEMBLE_ERROR,
+                  **{"ensemble error": copy.deepcopy(ENSEMBLE_ERROR),
                      "hybrid weights": {"static": 0.4, "ensemble": 0.6}})
     return dict(config, solver=solver)
 
@@ -1169,15 +1164,49 @@ def test_the_ensemble_component_carries_the_members_it_was_given(hybrid):
 def test_the_localization_is_the_layers_with_the_variables_filled_in(hybrid):
     """The same omission as the balance operator's, from the other side.
 
-    `localization variables` is what the localization applies to, it is the
-    analysis variables, and they are stated once.
+    A diffusion group's `variables:` is what the localization applies to, it is
+    the analysis variables, and they are stated once. It goes inside the group:
+    `saber::DiffusionImpl` reads it nowhere else, and a group without it
+    localizes an empty list, which runs and localizes nothing.
     """
     error = soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
                                   ensemble=members_at(0))
     localization = error["components"][1]["covariance"]["localization"]
-    assert localization["localization variables"] == SOLVER["analysis variables"]
     assert localization["localization method"] == "SABER"
     assert localization["saber central block"]["saber block name"] == "diffusion"
+    groups = localization["saber central block"]["read"]["groups"]
+    assert [group["variables"] for group in groups] == \
+        [SOLVER["analysis variables"]]
+
+
+def test_every_diffusion_group_is_given_the_variables(hybrid):
+    """A second group is a second chance to localize nothing."""
+    groups = hybrid["solver"]["ensemble error"]["localization"][
+        "saber central block"]["read"]["groups"]
+    groups.append(dict(groups[0], horizontal={"filepath": "/static/loc_hz_2"}))
+    error = soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                                  ensemble=members_at(0))
+    assert [group["variables"] for group in error["components"][1]["covariance"][
+        "localization"]["saber central block"]["read"]["groups"]] == \
+        [SOLVER["analysis variables"]] * 2
+
+
+def test_a_localization_with_no_diffusion_groups_is_refused(hybrid):
+    """The failure this whole arrangement exists to stop being quiet."""
+    del hybrid["solver"]["ensemble error"]["localization"][
+        "saber central block"]["read"]["groups"]
+    with pytest.raises(ModelError, match="no groups"):
+        soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                              ensemble=members_at(0))
+
+
+def test_the_layers_localization_is_not_mutated(hybrid):
+    """The layer is read by every cycle; filling it in must not edit it."""
+    groups = hybrid["solver"]["ensemble error"]["localization"][
+        "saber central block"]["read"]["groups"]
+    soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
+                          ensemble=members_at(0))
+    assert "variables" not in groups[0]
 
 
 def test_a_hybrid_with_no_weights_is_refused(hybrid):
@@ -1215,8 +1244,8 @@ def test_an_ensemble_covariance_with_no_ensemble_is_refused(hybrid):
 def test_the_layer_is_not_mutated_by_assembling_a_hybrid(hybrid):
     soca.background_error(hybrid["solver"], SOLVER["analysis variables"],
                           ensemble=members_at(0))
-    assert "localization variables" not in \
-        hybrid["solver"]["ensemble error"]["localization"]
+    assert "variables" not in hybrid["solver"]["ensemble error"]["localization"][
+        "saber central block"]["read"]["groups"][0]
     assert "input variables" not in \
         hybrid["solver"]["background error"]["linear variable change"]
 

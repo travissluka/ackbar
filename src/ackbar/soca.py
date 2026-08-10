@@ -1507,14 +1507,43 @@ def _ensemble_error(solver, variables, ensemble):
     scale field is read and applied to every analysis variable, rather than one
     per variable. Getting it wrong is quiet in the way this file's other
     omissions are, because saber constructs either way.
+
+    The list belongs to each diffusion **group**, which is the only place
+    `saber::DiffusionImpl` reads it from. A `localization variables` key beside
+    the localization method looks like the same statement and is not one: oops
+    does not read it (`EnsembleCovariance.h` takes the localization's variables
+    from the ensemble), so a group left without its own `variables:` localizes
+    an empty list, which is to say it localizes nothing and the covariance is
+    the raw sample one. That is what this wrote until it was caught, and it is
+    why `_localization` refuses a group list it cannot fill in.
     """
     section = dict(_require(solver, "ensemble error"))
-    localization = dict(_require(section, "localization"))
     return {
         "covariance model": "ensemble",
         "members": list(ensemble),
-        "localization": dict(localization, **{"localization variables": variables}),
+        "localization": _localization(_require(section, "localization"), variables),
     }
+
+
+def _localization(localization, variables):
+    """The layer's localization with the analysis variables in every group."""
+    localization = copy.deepcopy(dict(localization))
+    groups = localization.get("saber central block", {}).get("read", {}).get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise ModelError(
+            "solver.ensemble error.localization states no "
+            "`saber central block.read.groups`; a diffusion localization with "
+            "no groups applies to no variable and leaves the ensemble "
+            "covariance unlocalized"
+        )
+    for group in groups:
+        if not isinstance(group, dict):
+            raise ModelError(
+                f"a diffusion localization group is {group!r} rather than a "
+                f"block of settings"
+            )
+        group["variables"] = list(variables)
+    return localization
 
 
 def member_states(locate, members, *, date, variables):
