@@ -65,16 +65,29 @@ esac
 # silently: the worktree would export its own ACKBAR_ROOT and still import the
 # other checkout, which is the exact failure the block above exists to prevent
 # and the one that is invisible from inside a job.
-if command -v python3 >/dev/null 2>&1; then
-  ackbar_where=$(python3 -c 'import ackbar,os;print(os.path.realpath(ackbar.__file__))' 2>/dev/null)
+#
+# Probed through the venv's interpreter, not `python3` from PATH. A job runs
+# `sys.executable` baked in at create time, which is this venv, and the strict
+# editable finder this guards against would be installed in that venv rather
+# than in whatever `python3` resolves to. Probing the wrong interpreter is a
+# guard that cannot fire for its own case.
+ackbar_python="$ACKBAR_ROOT/.venv/bin/python"
+if [ -x "$ackbar_python" ]; then
+  ackbar_where=$("$ackbar_python" -c 'import ackbar,os;print(os.path.realpath(ackbar.__file__))' 2>/dev/null)
   case "$ackbar_where" in
-    "$(cd "$ACKBAR_ROOT" && pwd -P)"/*|"") ;;
+    "$(cd "$ACKBAR_ROOT" && pwd -P)"/*) ;;
+    # Empty means the import failed outright, which is not "fine": a venv that
+    # cannot import ackbar at all runs nothing, and staying silent about it was
+    # how this branch reported success for a broken install.
+    "") echo "activate.sh: $ackbar_python cannot import ackbar at all." >&2
+        echo "  Install it with: pip install -e $ACKBAR_ROOT" >&2 ;;
     *) echo "activate.sh: ACKBAR_ROOT is $ACKBAR_ROOT but 'import ackbar' resolves" >&2
        echo "  to $ackbar_where. Jobs would run another checkout's code." >&2
        echo "  Reinstall with: pip install -e $ACKBAR_ROOT" >&2 ;;
   esac
   unset ackbar_where
 fi
+unset ackbar_python
 
 export ACKBAR_ROOT ACKBAR_SITE
 export ACKBAR_NJOBS ACKBAR_MPI_TASKS ACKBAR_BUILD_TYPE ACKBAR_CMAKE_GENERATOR

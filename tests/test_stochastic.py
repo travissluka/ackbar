@@ -87,9 +87,13 @@ def test_a_seed_is_never_zero_because_zero_means_ask_the_clock():
 
 def test_rerunning_a_cycle_reproduces_the_draw_it_had():
     # What `ackbar heal` rests on: the failed attempt and the healed one have to
-    # be the same forecast.
+    # be the same forecast. Healing runs in a *different process*, which is what
+    # the golden is for: two calls in one process agree even if the seed is
+    # `hash()`, which is salted per process and would give the healed member a
+    # different atmosphere with nothing recording that it had.
     assert (stochastic.seed(20150712, 4, 12, "sppt")
             == stochastic.seed(20150712, 4, 12, "sppt"))
+    assert stochastic.seed(20150712, 4, 12, "sppt") == 20150712004000120
 
 
 def test_two_experiments_that_differ_only_in_the_base_seed_are_independent():

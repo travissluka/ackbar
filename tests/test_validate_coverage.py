@@ -26,7 +26,7 @@ from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph import build_graph
 from ackbar.validate import (_coverage_step, _needed_span, _shared_timed,
-                             _stamp)
+                             _stamp, validate_experiment)
 
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
@@ -306,3 +306,36 @@ def test_the_two_cases_are_told_apart_because_the_repair_differs(experiment,
     of_the_ensemble = _coverage_step({path}, config, graph)[0].message
     assert "per-member input" in of_the_ensemble
     assert "anomaly mean" in of_the_ensemble
+
+
+def test_a_whole_validate_run_reaches_the_domains_boundary(tmp_path):
+    """The wiring, not the two halves of it.
+
+    Every other test here calls `_coverage_step` with a hand-built set, so the
+    two pieces that make this reach a real experiment are both unexercised:
+    `_jobtime_step` collecting from `model.input`, and `validate_experiment`
+    handing that set to the check. Drop either and every other test in this file
+    still passes while `tier3_gom` validates clean again, which is the state
+    this whole section exists to leave behind.
+
+    So: a real config, a short boundary where the model reads one, and the whole
+    six-step run. Asserted by message rather than by count, because a fake site
+    means plenty of other paths are legitimately missing.
+    """
+    keys = merge_keys(load_schema())
+    layers = resolve_layers(EXPERIMENTS / f"{FIXTURE}.yaml", LAYERS)
+    config = resolve(merge_layers(layers, keys), SITE)
+    graph = build_graph(config)
+    first, last = _needed_span(config, graph)
+    import datetime as dt
+    early = dt.datetime(first[0], first[1], first[2]) - dt.timedelta(days=30)
+    short = dt.datetime(last[0], last[1], last[2]) - dt.timedelta(days=1)
+    boundary(tmp_path / "obc.nc", early, short)
+    config["model"]["input"] = str(tmp_path)
+
+    findings, _graph, _ran = validate_experiment(
+        config, load_schema(), SITE, SITE["root"])
+    coverage = [f for f in findings if "time_interp_external" in f.message]
+    assert len(coverage) == 1, [f.message for f in findings]
+    assert "shared input" in coverage[0].message
+    assert coverage[0].where == str(tmp_path / "obc.nc")

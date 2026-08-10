@@ -68,6 +68,22 @@ def steps(findings):
     return sorted({f.step for f in findings})
 
 
+#: Step 4 checks the `soca_*.x` the graph names, and a checkout with no built
+#: bundle reports every one of them. That is step 4 working, but it lands in the
+#: finding list the step 3 tests assert on, so nine tests fail for a reason that
+#: has nothing to do with what they check. A git worktree is the case that
+#: matters: `pkg/` there is an empty submodule directory, so the whole suite is
+#: nine red lines that a reader learns to wave through.
+#:
+#: Skipped rather than filtered. Filtering would let a step 4 finding hide
+#: inside a step 3 assertion forever, and these are the tests that pin which
+#: step reports what. Tier 3 already gates on staged data the same way.
+BUILT = (REPO / "pkg" / "jedi" / "build" / "bin" / "soca_var.x").exists()
+needs_build = pytest.mark.skipif(
+    not BUILT, reason="pkg/jedi/build/bin is empty; step 4 reports every "
+                      "executable and its findings land in these assertions")
+
+
 def offline(config, schema, site=None):
     findings, _, _ = validate_experiment(
         config, schema, site or SITE, str(REPO), offline=True
@@ -239,6 +255,7 @@ class TestStep3InputPaths:
         path.write_text(yaml.safe_dump(source))
         return load(None, keys, path, site=local_site)
 
+    @needs_build
     def test_the_experiment_passes_once_everything_it_names_is_staged(
         self, staged, schema, local_site
     ):
@@ -246,12 +263,14 @@ class TestStep3InputPaths:
         stage_observations(staged)
         assert full(staged, schema, site=local_site) == []
 
+    @needs_build
     def test_a_missing_grid_file_is_rejected(self, staged, schema, local_site):
         stage_observations(staged)
         found = full(staged, schema, site=local_site)
         assert steps(found) == [3]
         assert all("does not exist" in f.message for f in found)
 
+    @needs_build
     def test_an_unreadable_input_is_rejected_too(self, staged, schema, local_site):
         stage(full(staged, schema, site=local_site))
         stage_observations(staged)
@@ -263,6 +282,7 @@ class TestStep3InputPaths:
         finally:
             target.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
+    @needs_build
     def test_an_archive_with_a_gap_is_data_and_not_a_finding(
         self, staged, schema, local_site
     ):
@@ -277,6 +297,7 @@ class TestStep3InputPaths:
         stage_observations(staged, skip=("2018041600",))
         assert full(staged, schema, site=local_site) == []
 
+    @needs_build
     def test_an_observer_with_no_file_in_any_cycle_is_a_typo_and_is_reported(
         self, staged, schema, local_site
     ):
@@ -289,6 +310,7 @@ class TestStep3InputPaths:
         assert [f.where for f in found] == ["observations.adt_3a"]
         assert "wrong path" in found[0].message
 
+    @needs_build
     def test_a_required_observer_is_reported_for_every_window_it_is_missing(
         self, staged, schema, local_site
     ):
@@ -416,6 +438,7 @@ class TestStep4Executables:
         assert len(found) == 2
         assert all("not runnable" in f.message for f in found)
 
+    @needs_build
     def test_the_real_tree_has_the_executables_the_graph_names(self, keys, schema):
         # Which is also a check that the names in tasks.py are the ones the
         # bundle actually builds.
@@ -470,6 +493,7 @@ class TestStep6Graph:
 
 
 class TestOfflineIsAStatedSubset:
+    @needs_build
     def test_offline_skips_exactly_the_filesystem_steps(self, keys, schema):
         config = load("var_om1deg", keys)
         assert steps(full(config, schema)) == [3]

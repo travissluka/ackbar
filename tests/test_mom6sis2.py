@@ -1101,11 +1101,19 @@ def test_cleanup_looks_for_the_model_s_own_restarts_and_not_the_stub_s(env):
     assert paths.cycle_out("rst", 2).exists()
 
 
+@pytest.mark.skipif(
+    not (REPO / "pkg" / "mom6sis2" / "ice_ocean_SIS2").is_dir(),
+    reason="pkg/mom6sis2 is an unpopulated submodule; this asserts on the "
+           "checkout's own MOM6-examples tree, not on anything in ackbar")
 def test_the_config_layer_points_at_a_case_that_is_actually_there(config):
     """The layer names paths in this checkout, and `validate` stats them.
 
     Asserted here as well because a broken path in the model layer takes down
     every mom6sis2 experiment at once, and this is the cheap place to find out.
+
+    Skipped where `pkg/` is empty, which is every git worktree: the submodule is
+    not checked out there and this would report the layer as broken when what is
+    missing is the clone. Failing in that case trained a reader to expect red.
     """
     layers = resolve_layers(EXPERIMENTS / "free_om1deg.yaml", LAYERS)
     merged = resolve(merge_layers(layers, merge_keys(load_schema())), {

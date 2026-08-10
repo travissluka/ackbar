@@ -30,12 +30,23 @@
 # five-day mean valid 2015-01-04 13:00, frozen for the length of the run. The
 # domain was rebuilt on a 106 record GLORYS series covering 2015-05-28 to
 # 2015-09-10 and this date was not moved with it, so MOM6 stops at the first
-# timestep with `time_interp_external ... is before range of list`. Every module
-# that inherits this fixture is blocked on it: test_tier3.py, test_tier3_gom.py,
-# test_tier3_diffusion.py and test_tier3_gom_obc.py. Fixing it means restamping
-# the smoke initial condition and moving these dates into the GLORYS window, or
-# fetching GLORYS backwards to cover January. docs/domains.md carries the
-# reasoning; do not "fix" it by pointing this at a frozen boundary again.
+# timestep with `time_interp_external ... is before range of list`.
+#
+# It is not only the modules that inherit *this* file. Every gom_25km tier 3
+# fixture carries the same date, so 77 of the suite's 117 tier 3 tests are
+# blocked across nine modules: test_tier3.py, test_tier3_gom.py,
+# test_tier3_gom_obc.py, test_tier3_letkf.py, test_tier3_fgat.py,
+# test_tier3_fcst.py, test_tier3_hofx.py, test_tier3_4denvar.py, and the
+# `cycled` half of test_tier3_var.py. test_tier3_diffusion.py is *not* blocked,
+# despite an earlier version of this note: it never runs a forecast and only
+# reads the fixture for an initial condition path.
+#
+# `ackbar validate` reports this at step 3 now rather than leaving it to MOM6,
+# so the failure arrives before submission. That does not unblock anything.
+# Fixing it means restamping the smoke initial condition and moving these dates
+# into the GLORYS window, or fetching GLORYS backwards to cover January.
+# docs/domains.md carries the reasoning; do not "fix" it by pointing this at a
+# frozen boundary again.
 inherit:
   - domain/gom_25km
   - model/mom6sis2

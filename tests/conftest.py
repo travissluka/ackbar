@@ -1,9 +1,18 @@
 """A fixed site for the whole suite.
 
-Tiers 0 and 1 need python and nothing else, which has to include not needing
-`source site/activate.sh` first. It also has to include not depending on which
-machine the suite runs on: a test that passes on rancor because rancor's
-scratch root happens to be where it is would be a test of rancor.
+Tiers 0 and 1 do not read the site: every root they see is pinned below, so a
+test that passed on rancor because rancor's scratch root happens to be where it
+is would be a test of rancor, and none of them can be.
+
+They do still need the *environment*, which is a separate thing and worth
+stating plainly because the two get conflated. `.venv` is built with
+`include-system-site-packages = false` and carries neither pygments nor numpy,
+netCDF4, scipy or yaml, so with `PYTHONPATH` unset `.venv/bin/python -m pytest`
+does not reach a test at all. In practice the suite runs with the spack stack on
+`PYTHONPATH`, which `source site/activate.sh` is what supplies, and sourcing it
+also sets `ACKBAR_OUTPUT_ROOT`, which is half of what arms tier 2 below. So the
+ordinary full-suite invocation on this machine submits real jobs, by design, and
+not as an accident of someone's shell.
 
 `site.load_site` takes an explicit environment, so the tests that are about the
 site layer itself are unaffected by this.

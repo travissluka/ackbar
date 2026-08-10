@@ -4,7 +4,9 @@ The script is a header carrier, not generated code, so these tests are about
 the `#SBATCH` block and about the two things deliberately *missing* from it.
 """
 
+import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -120,4 +122,17 @@ def test_writing_a_script_does_not_create_the_cycle_directory(paths):
 def test_the_script_is_a_pure_function_of_the_node(paths):
     # Healing regenerates it long after submission and must get the same
     # answer, so nothing here may consult the clock or the filesystem.
+    #
+    # Two calls microseconds apart do not show that: a second-resolution
+    # timestamp in the script satisfies them and they still agree. Moving the
+    # clock a year and asking again is what shows it, and it is the situation
+    # healing is actually in.
     assert text(paths, ARRAY) == text(paths, ARRAY)
+
+    before = text(paths, ARRAY)
+    with mock.patch("time.time", return_value=time.time() + 31_536_000), \
+         mock.patch("time.localtime",
+                    return_value=time.localtime(time.time() + 31_536_000)), \
+         mock.patch("time.gmtime",
+                    return_value=time.gmtime(time.time() + 31_536_000)):
+        assert text(paths, ARRAY) == before

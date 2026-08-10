@@ -24,9 +24,16 @@ experiment:
   name: tier3_var
   description: phase 6, 3DVar cycling at gom_25km
 cycle:
-  # Twelve hour cycles from where the cold start leaves off. The domain's open
-  # boundary is a single frozen SODA snapshot, which is a known limit of this
-  # domain recorded in docs/domains.md and does not affect what this checks.
+  # Twelve hour cycles from where the cold start leaves off.
+  #
+  # THIS DATE NO LONGER MATCHES THE DOMAIN'S BOUNDARY, so the `cycled` tests in
+  # test_tier3_var.py cannot run: gom_25km carries a 106 record GLORYS series
+  # covering 2015-05-28 to 2015-09-10 and MOM6 stops at the first timestep with
+  # `time_interp_external ... is before range of list`. It used to be a single
+  # frozen SODA snapshot, which is what the sentence that stood here described,
+  # and that sentence is what would stop someone finding this. The `persist`
+  # tests are unaffected: they never integrate. tests/experiments/tier3_gom.yaml
+  # carries the full account and the two ways out.
   start: '2015-01-05T01:00:00Z'
   length: PT12H
   count: 3

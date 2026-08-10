@@ -186,6 +186,7 @@ def runs(tmp_path_factory):
     for name, options in EXPERIMENTS.items():
         _purge(name)
         assert main(["create", str(build(tmp_path, name, **options))]) == 0
+        _claim(name)
         assert main(["start", name]) == 0
         started[name] = _paths_for(name)
 
@@ -209,6 +210,7 @@ def experiment(tmp_path):
         _purge(name)
         created.append(name)
         assert main(["create", str(build(tmp_path, name, **kwargs))]) == 0
+        _claim(name)
         return _paths_for(name)
 
     yield factory
@@ -232,9 +234,60 @@ def _purge(target):
     if ledger_file.exists():
         paths = _paths_for(name)
         live = set(slurm.queue()) & {r["job_id"] for r in ledger.read(paths)}
+        _refuse_if_not_ours(name, live)
         slurm.scancel(sorted(live))
     shutil.rmtree(experiment_dir, ignore_errors=True)
     shutil.rmtree(Path(site["scratch_root"]) / name, ignore_errors=True)
+
+
+#: Written into an experiment by the process that created it. `_purge` deletes
+#: by a *fixed* name, so without a mark it cannot tell its own leftovers from
+#: another suite run's live experiment. A pid is enough: the two runs that
+#: collide are two pytest processes on one machine.
+OWNER = "tier2-owner"
+_ME = str(os.getpid())
+
+
+def _claim(name):
+    """Mark an experiment as this process's, as soon as it exists."""
+    site = load_site()
+    mark = Path(site["output_root"]) / name / OWNER
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    mark.write_text(_ME + "\n")
+
+
+def _refuse_if_not_ours(name, live):
+    """Stop rather than delete a run this process did not start.
+
+    Two suites at once was a slow, wrong failure rather than a refusal, and it
+    took a reviewer twenty five minutes on fourteen seconds of CPU to find out
+    why. Three things combine. `_purge` rmtree's a *fixed* name in the shared
+    output root, so it deletes the other run's frozen config and ledger out from
+    under it. `_rows` filters a global `squeue` by job name prefix with no user
+    or session scope, so each run counts the other's jobs as its own. And
+    `wait_for_quiet` therefore reaches neither "drained", because the other
+    run's rows are there, nor "stuck", because they are healthy, so it spins to
+    its timeout and fails naming job ids belonging to a run the reader cannot
+    see.
+
+    The cheapest place to break that chain is here, before anything is deleted.
+    A live job in this experiment's ledger that this process did not submit is
+    somebody else's run, and there is no repair for having deleted it.
+    """
+    if not live:
+        return
+    mark = Path(load_site()["output_root"]) / name / OWNER
+    owner = mark.read_text().strip() if mark.exists() else "unknown"
+    if owner == _ME:
+        return
+    raise pytest.UsageError(
+        f"experiment {name!r} has live job(s) {sorted(live)} and belongs to "
+        f"process {owner}, not to this one ({_ME}), so another tier 2 run is "
+        f"using it. These tests share fixed experiment names in one output "
+        f"root and cannot run twice at once. Refusing to delete it: wait for "
+        f"the other run to finish, or give this one its own "
+        f"ACKBAR_OUTPUT_ROOT."
+    )
 
 
 def wait_for_quiet(name, timeout=QUIET_TIMEOUT):
