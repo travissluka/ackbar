@@ -2,7 +2,7 @@
 # Cold start a domain and promote the restarts it writes to the IC stage.
 #
 #   tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <source-slug>
-#   tools/coldstart-ic.sh gom_25km 2015-01-04T12 12 hycom-smoke
+#   tools/coldstart-ic.sh gom_25km 2015-07-10T00 24 glorys-smoke
 #
 # Writes $ACKBAR_STATIC_ROOT/ic/<domain>/<source-slug>/<YYYYmmddThh>, which is
 # what an experiment's `model.initial_condition` names.

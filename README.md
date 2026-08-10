@@ -204,7 +204,7 @@ must run first. Per domain, once:
 tools/soca-gridspec.sh  gom_25km      # SOCA's geometry. Also after a bundle bump
 tools/soca-diffusion.sh gom_25km      # correlation lengths for the static B, and localization
 tools/soca-dirac.sh     gom_25km      # check that calibration with a dirac through B
-tools/coldstart-ic.sh   gom_25km 2015-01-04T12 12 hycom-smoke   # a first restart set
+tools/coldstart-ic.sh   gom_25km 2015-07-10T00 24 glorys-smoke  # a first restart set
 tools/ensemble-ic.sh    gom_25km 20                             # one restart set per member
 ```
 
