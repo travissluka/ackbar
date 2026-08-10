@@ -511,30 +511,23 @@ def decay_figure(report, out):
         axis.set_xlabel("cycle")
     axes[0][0].set_ylabel("spread")
     axes[1][0].set_ylabel("spread")
-    # The sixth cell carries the fitted rates, because a reader who has just
-    # been shown two nearly parallel lines wants the number immediately.
-    summary = flat[len(SURFACE)]
-    summary.axis("off")
-    lines = [f"{'e-folding, cycles':<20}"]
-    for name in names:
-        lines.append(name)
-        row = "  "
-        for key, short, *_ in SURFACE:
-            fit = report["experiments"][name].get("decay", {}).get(key)
-            row += (f"{short} {fit['efold_cycles']:.0f}+-"
-                    f"{fit['efold_stderr']:.0f}  " if fit else f"{short} -  ")
-        lines.append(row)
-    summary.text(0.0, 1.0, "\n".join(lines), va="top", ha="left", fontsize=6.5,
-                 family="monospace", transform=summary.transAxes)
+    # The sixth cell stays empty. It used to carry the fitted rates as a
+    # monospace block, on the reasoning that a reader shown two nearly parallel
+    # lines wants the number immediately. At print size it was unreadable, it
+    # clipped at the right edge, and it printed a large negative e-folding for a
+    # slope indistinguishable from zero, which reads as a contradiction against
+    # prose that calls that field arrested. The rates belong in a table, which
+    # `decay.csv` and the report both carry.
+    flat[len(SURFACE)].axis("off")
     figure.suptitle("Does the spread hold? Spread per cycle on a log axis",
                     fontsize=10)
     footer(figure,
             "Domain root mean square ensemble spread against cycle, log scale, "
             "so a constant fraction lost per cycle is a straight line. Dotted "
-            "lines are the least squares fit whose e-folding time, in cycles, "
-            "is printed in the last panel with the standard error of the fit. "
-            "Two experiments whose lines are parallel differ in where the "
-            "spread sits, not in whether it is held.",
+            "lines are the least squares fit; the fitted e-folding times and "
+            "their standard errors are in decay.csv beside this figure. Two "
+            "experiments whose lines are parallel differ in where the spread "
+            "sits, not in whether it is held.",
            axis=flat[0], columns=min(len(names), 3))
     path = out / "spread-decay.png"
     figure.savefig(path)
