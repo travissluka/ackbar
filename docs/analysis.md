@@ -397,12 +397,49 @@ domain's `soca_gridspec.nc`, which is also what the geometry and the diffusion
 calibration read, so the analysis, its background error and its writeback cannot
 disagree about where the coast is.
 
-**`u` and `v` are staggered.** The forecast's MOM6 is built with symmetric
-memory, so its restart carries `u` one column wider and `v` one row taller than
-the tracer grid; SOCA's is not symmetric and hands back the tracer-sized array.
-Writing that straight in shifts every velocity by one cell, which surfaces as a
-model that grows a strange coastal jet a week later. Not exercised by the
-default `analysis variables`, which is exactly why it is handled and tested.
+**`u` and `v` are staggered, and which face an index means is settled by the
+gridspec.** The forecast's MOM6 is built with symmetric memory, so its restart
+carries `u` one column wider and `v` one row taller than the tracer grid. The
+extra face is at the *west* and *south*, because a symmetric grid sets
+`IsdB = isd-1`, so restart column 0 of `u` is the west face of tracer 0. SOCA's
+MOM6 is not symmetric and has no index for that face at all: `soca_gridgen.x`
+writes a `lonu` and a `mask2du` describing the *east* faces, since MOM6's `u(I)`
+always sits between `h(I)` and `h(I+1)`.
+
+Those two do not line up, and SOCA cannot be asked to line them up: its reader
+(`commit_reader_strided`) starts every variable at the tracer origin and reads a
+tracer count of columns, with no branch on which grid a field is on. So SOCA
+loads the west faces however the gridspec is labelled. ACKBAR therefore moves the
+label to the data, in `ackbar.gridspec.shift_staggered`, applied once per domain
+by `tools/soca-gridspec.sh`: every staggered field is shifted one index so that
+index i is the face on the low side of tracer i, `mask2du(i)` becomes
+`mask2dT(i-1) * mask2dT(i)`, which is the model's own `mask2dCu` at the face the
+reader takes, and the gridspec records the convention as
+`ackbar_staggered_faces = "west/south"`. `writeback` and `post` keep the leading
+tracer-sized corner, which is what SOCA reads, so nothing else moves.
+
+The alternative, converting every restart before SOCA reads it as
+soca-science's `soca_dynsym2dyn.sh` did, is equally correct and costs a copy of
+every restart the solver reads: about 3.9 GB per cycle at gom_25km with twenty
+members and five slots, against a 16 GB experiment.
+
+The evidence, so nobody has to re-derive it, measured on gom_25km:
+`max|lonu - lonq[1:88]|` is 0.0 exactly against 0.25 for `lonq[0:87]`;
+`mask2du == mask2d[i] * mask2d[i+1]` with 0 mismatches of 4816; and pairing SOCA
+index i with restart column i left 128 u and 110 v faces that the gridspec called
+ocean and the model has no velocity on, which the shift takes to zero. Re-check
+it on any domain with `tools/uv-stagger-figures.py`, which counts and draws it,
+or at tier 0 with `tests/test_gridspec_stagger.py`.
+
+**A velocity record written before this change is on the other convention.**
+`post` labels archived `u` with the gridspec's `lonu`, so every `bkg/` and `ana/`
+velocity in an experiment run before the shift is one cell from where its
+coordinate says. Truth archives carry the identical offset, so an experiment's
+own velocity diagnostics are self-consistent and its scores against truth stand;
+what does not work is reading a velocity record from before the shift alongside
+one from after. Temperature, salinity, thickness and sea surface height are
+unaffected in every case. Which convention a record is on is answerable from its
+domain's gridspec, which carries the attribute, rather than from its date.
 
 **The `checksum` attribute is a claim about the data.** MOM6 reads it back and
 aborts on a mismatch, which is right and is what a modified restart triggers.

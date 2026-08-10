@@ -464,11 +464,18 @@ def _tracer_corner(values, shape, restart, source, key):
     wider and `v` one row taller than the gridspec's staggered grids. SOCA is
     not symmetric and works in the tracer-sized array.
 
-    The *leading* corner, and that is not a guess: it is exactly the slice
-    `writeback._place` writes an analysis into (`data[..., :height, :width]`).
-    The cells this records therefore have to be those cells, or the record and
-    the thing the model actually integrates are two different grids and the
-    velocity in the archive is shifted a column from the velocity in the run.
+    The *leading* corner, and that is not a guess: it is the corner SOCA's
+    reader takes, so it is what an analysis holds and what `writeback._place`
+    writes back (`data[..., :height, :width]`). The cells this records therefore
+    have to be those cells, or the record and the thing the model actually
+    integrates are two different grids and the velocity in the archive is
+    shifted a column from the velocity in the run.
+
+    Those are the *west* and *south* faces. The coordinates written beside them
+    say so, because the domain's gridspec has been shifted onto the same faces
+    and this reads `lonu` and `latu` straight out of it. See `ackbar.gridspec`
+    for why, and note that a record written before that shift is on the other
+    convention.
 
     Anything that does not differ by a single staggered edge is refused. Silence
     is how a field vanishes from an archive without anything saying so, and a
