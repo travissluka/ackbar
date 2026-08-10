@@ -207,11 +207,37 @@ def _jobtime_step(config, graph):
                 2, where, f"cycle {cycle}: token survived substitution: {value!r}"
             ))
         _take_observation_inputs(rendered, observations)
+        findings.extend(_forcing_pair(rendered))
         _collect_paths(rendered, paths)
 
     # One finding per distinct problem, not one per cycle: a bad symbol in a
     # shared config would otherwise be reported hundreds of times.
     return _dedupe(findings), paths, observations, timed
+
+
+def _forcing_pair(rendered):
+    """A forcing source is a data table and a `SIS_forcing`, or it is neither.
+
+    `mom6sis2.stage` enforces this too, but that runs inside a submitted job, so
+    without this an experiment configured with one half passes every validate
+    step and dies in its first forecast. The paths themselves are checked by
+    step 3 like any other; only the pairing is checked here.
+    """
+    model = rendered.get("model") or {}
+    table = model.get("data_table")
+    forcing = (model.get("override") or {}).get("SIS_forcing")
+    if bool(table) == bool(forcing):
+        return []
+    have, missing = (("model.data_table", "model.override.SIS_forcing")
+                     if table else
+                     ("model.override.SIS_forcing", "model.data_table"))
+    return [Finding(2, have, (
+        f"{have} is set and {missing} is not. A forcing source is both: the "
+        f"table says which file the fluxes come from, and SIS_forcing says "
+        f"what that file's cadence implies about the model. A sub-daily "
+        f"shortwave read with ADD_DIURNAL_SW left on runs to completion and "
+        f"applies the diurnal cycle twice."
+    ))]
 
 
 def _take_observation_inputs(rendered, observations):
@@ -336,9 +362,14 @@ def _coverage_step(timed, config, graph):
     started writing them, and would be checking an annotation rather than the
     thing the model reads. The axis is what MOM6 opens.
 
-    A file with no `time` variable is not a time-varying input and is skipped:
+    A file with no time axis at all is not a time-varying input and is skipped:
     `ensemble.inputs` is a general mechanism, and a per-member static field is a
-    legitimate use of it.
+    legitimate use of it. "No time axis" means no variable carrying `axis = "T"`
+    and no variable called `time`, which is deliberately wider than the latter
+    alone: the atmospheric archive gives every field its own unlimited axis
+    (`time_T2`, `time_DSWRF`, ...) and carries no variable named `time`, so a
+    check keyed on that name would collect every `atm.nc`, find nothing, skip
+    it, and report the experiment clean.
     """
     first, last = _needed_span(config, graph)
     if first is None:
@@ -379,19 +410,36 @@ def _coverage_step(timed, config, graph):
 
 
 def _covered_span(path):
-    """(first, last) on a file's own time axis, or None if it has no axis."""
+    """(first, last) covered by *every* time axis in a file, or None if it has none.
+
+    Narrowest rather than first, because a file's axes need not agree. The
+    atmospheric archive gives each field its own, and an interval-mean field is
+    stamped at its window midpoint, so its last record sits half an interval
+    before the instantaneous fields' last record. The run stops when the
+    earliest axis runs out, so that is the one the span has to report.
+
+    Axes are found by `axis = "T"`, with `time` as the fallback for a file that
+    predates the convention.
+    """
     import netCDF4
 
+    spans = []
     with netCDF4.Dataset(path) as data:
-        if "time" not in data.variables or not len(data["time"]):
-            return None
-        axis = data["time"]
-        units = getattr(axis, "units", "")
-        if not units:
-            return None
-        calendar = getattr(axis, "calendar", "standard")
-        edges = netCDF4.num2date([axis[0], axis[-1]], units, calendar)
-    return _fields(edges[0]), _fields(edges[-1])
+        names = [name for name, variable in data.variables.items()
+                 if getattr(variable, "axis", "") == "T"]
+        for name in names or ["time"]:
+            if name not in data.variables or not len(data[name]):
+                continue
+            axis = data[name]
+            units = getattr(axis, "units", "")
+            if not units:
+                continue
+            calendar = getattr(axis, "calendar", "standard")
+            edges = netCDF4.num2date([axis[0], axis[-1]], units, calendar)
+            spans.append((_fields(edges[0]), _fields(edges[-1])))
+    if not spans:
+        return None
+    return max(begin for begin, _ in spans), min(end for _, end in spans)
 
 
 def _fields(when):

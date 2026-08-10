@@ -161,3 +161,81 @@ def test_a_file_that_is_not_netcdf_is_reported_rather_than_raised(experiment,
     findings = _coverage_step({str(path)}, config, graph)
     assert len(findings) == 1
     assert "cannot be opened" in findings[0].message
+
+
+# --- an archive whose fields each carry their own axis ------------------------
+#
+# The atmospheric archive gives every field its own unlimited axis and writes no
+# variable called `time`, so a check keyed on that name collects every `atm.nc`,
+# finds nothing, skips it, and reports the experiment clean. Which is the one
+# outcome this step exists to prevent.
+
+
+def atmosphere(path, first, last, short=()):
+    """Seven fields, seven axes, and no variable named `time`.
+
+    *short* names fields whose axis stops a day early, which is what an
+    interval-mean field stamped at its window midpoint does at the end of a
+    series.
+    """
+    fields = ("T2", "Q2", "U10", "V10", "DSWRF", "DLWRF", "PRATE")
+    with netCDF4.Dataset(path, "w", format="NETCDF4") as f:
+        for name in fields:
+            axis = f"time_{name}"
+            f.createDimension(axis, None)
+            t = f.createVariable(axis, "f8", (axis,))
+            t.units = f"days since {first:%Y-%m-%d} 00:00:00"
+            t.calendar = "NOLEAP"
+            t.axis = "T"
+            days = (last - first).days + 1 - (1 if name in short else 0)
+            t[:] = np.arange(days, dtype="f8")
+    return str(path)
+
+
+def test_an_atmosphere_that_covers_the_run_is_silent(experiment, tmp_path):
+    config, graph = experiment
+    first, last = _needed_span(config, graph)
+    import datetime as dt
+    early = dt.datetime(first[0], first[1], first[2]) - dt.timedelta(days=30)
+    late = dt.datetime(last[0], last[1], last[2]) + dt.timedelta(days=30)
+    path = atmosphere(tmp_path / "mem000.nc", early, late)
+    assert _coverage_step({path}, config, graph) == []
+
+
+def test_an_atmosphere_that_stops_early_is_caught_and_not_skipped(experiment,
+                                                                 tmp_path):
+    """The regression: per-field axes are a time axis, and a file carrying only
+    those must not read as a static field."""
+    config, graph = experiment
+    first, last = _needed_span(config, graph)
+    import datetime as dt
+    early = dt.datetime(first[0], first[1], first[2]) - dt.timedelta(days=30)
+    stops = dt.datetime(last[0], last[1], last[2]) - dt.timedelta(days=5)
+    path = atmosphere(tmp_path / "mem000.nc", early, stops)
+    findings = _coverage_step({path}, config, graph)
+    assert len(findings) == 1
+    assert "time_interp_external" in findings[0].message
+
+
+def test_the_narrowest_axis_is_the_one_that_counts(experiment, tmp_path):
+    """A file's axes need not agree, and the run stops when the first runs out,
+    so taking whichever axis came first would pass a file that fails."""
+    config, graph = experiment
+    first, last = _needed_span(config, graph)
+    import datetime as dt
+    early = dt.datetime(first[0], first[1], first[2]) - dt.timedelta(days=30)
+    edge = dt.datetime(last[0], last[1], last[2])
+    # Every field reaches the end except the shortwave, which stops a day short.
+    path = atmosphere(tmp_path / "mem000.nc", early, edge, short=("DSWRF",))
+    assert len(_coverage_step({path}, config, graph)) == 1
+
+
+def test_a_file_with_neither_an_axis_nor_a_time_variable_is_still_skipped(
+        experiment, tmp_path):
+    """A per-member static field remains a legitimate use of the mechanism."""
+    config, graph = experiment
+    path = tmp_path / "static.nc"
+    with netCDF4.Dataset(path, "w", format="NETCDF4") as f:
+        f.createDimension("x", 3)
+        f.createVariable("depth", "f8", ("x",))[:] = [1.0, 2.0, 3.0]
+    assert _coverage_step({str(path)}, config, graph) == []
