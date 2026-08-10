@@ -1,0 +1,123 @@
+# `osse25-4dletkf` with the mass field written back, and nothing else changed.
+#
+# **The question.** With `rtps` holding the posterior spread up, whatever spread
+# is still lost is lost in the forecast or in the writeback rather than in the
+# filter. The writeback is the cheaper of the two to rule out, because there is
+# a known omission sitting in it: `sea_water_cell_thickness` is a background
+# variable in `da/letkf` and not an analysis variable, so the filter's increment
+# to it is computed, written to the analysis file, and then discarded. Under
+# `BOUSSINESQ = True` a column's free surface is `sum(h) - D`, so that field is
+# the one carrying sea level, and sea level is where the collapse is worst.
+#
+# Measured on this experiment's own cycle 2015-08-02, member 005: the analysis's
+# column integral differs from the background's by **5.6 cm rms and 1.53 m at
+# most**. That is the increment being thrown away every cycle.
+#
+# **What is being tested is a mechanism, not a tuning.** If the sea level decay
+# rate moves, a substantial part of the spread collapse is a plumbing defect and
+# the amplitude tuning in the spread report was being done around it. If it does
+# not move, the collapse is a property of a 24 hour forecast on this domain and
+# the writeback is exonerated. Both answers are worth the machine; the second is
+# the one that closes a question rather than opening one.
+#
+# **Why the plain baseline and not one of the three mechanism runs.** `-obc` is
+# the only experiment where sea level decay is already slowed, so a change there
+# would have to be separated from an interaction. The baseline has the fastest
+# sea level collapse of the five and nothing else acting on it, so it has the
+# most room to move and the cleanest attribution.
+#
+# **What the write does, and what it deliberately does not.** Each wet column is
+# scaled by `sum(h_ana) / sum(h_bkg)`, which moves exactly the column integral
+# and cannot produce a negative thickness. The per-layer form is not an option:
+# the analysis itself puts 0.30% of this domain's cells at or below zero
+# thickness, which is `adjust_interface_motion: implied h<0` a few steps into
+# the forecast. So the filter's *vertical* redistribution of mass is dropped and
+# only the barotropic residual is kept. Under Z* the model regrids on its first
+# step anyway, so the interfaces are the coordinate's business and the column
+# integral is the state. `ackbar.writeback.place_thickness` carries the full
+# argument.
+#
+# The form was tried against a real restart before this experiment was written:
+# one day of `gom_25km` from the scaled set ran with zero truncations, a maximum
+# CFL of 0.088 against the unscaled set's 0.094, and a domain mean sea level 1.1
+# mm from it. The increment is very nearly mean-free, which is what a barotropic
+# residual should be and is also why `ufo::ObsADT` would never have seen it.
+#
+# Everything else, including the ensemble and its provenance, is
+# `osse25-4dletkf.yaml`. Read that file first; nothing about it is restated here.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf-h
+  description: OSSE, gom_25km 4D LETKF with the mass field written back
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # Twenty two rather than the baseline's configured thirty, because twenty two
+  # is what the baseline actually produced before it was halted, and a paired
+  # difference is only paired over cycles both runs have. Nothing here needs the
+  # tail: the sea level e-folding this is measured by is fitted over the window
+  # the report already uses.
+  count: 22
+
+solver:
+  window:
+    type: '4d'
+
+  # `da/letkf`'s five, plus the mass field. The one changed line in this file.
+  #
+  # Restated in full rather than appended to, because a layered list replaces
+  # rather than merges, and a reader of this file should be able to see what the
+  # solver writes without also holding the layer in their head.
+  #
+  # **This does not go in `da/letkf` yet.** It is the thing under test, and a
+  # layer is where a settled answer lives. If the decay rate moves it belongs
+  # there, and in `da/hybrid` too, whose ensemble half loses the same part.
+  analysis variables:
+  - sea_water_potential_temperature
+  - sea_water_salinity
+  - sea_surface_height_above_geoid
+  - eastward_sea_water_velocity
+  - northward_sea_water_velocity
+  - sea_water_cell_thickness
+
+forecast:
+  slots: PT6H
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

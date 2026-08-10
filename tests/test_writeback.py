@@ -598,3 +598,152 @@ def test_the_limit_reaches_the_staggered_outer_face(scene):
         "the outer face took the raw increment rather than the bounded one"
     assert np.any(np.abs(outer - 1.0) > 0.4), \
         "the outer face took no increment at all, so this proves nothing"
+
+
+# --- the mass field ----------------------------------------------------------
+
+THICKNESS = "sea_water_cell_thickness"
+
+
+def thicknesses(path, values):
+    """Give the analysis file an `h`, which `write_analysis` does not write.
+
+    Only an ensemble filter's analysis carries one: it is a background variable
+    everywhere, and an analysis variable only where the increment to it exists.
+    """
+    with netCDF4.Dataset(path, "r+") as data:
+        var = data.variables.get("h")
+        if var is None:
+            var = data.createVariable(
+                "h", "f8", ("Time", "zaxis_1", "yaxis_1", "xaxis_1"))
+        var[:] = values
+
+
+def layered(base):
+    """A background thickness that differs by level, so a scaling is visible."""
+    column = base * (1.0 + np.arange(NZ, dtype="f8"))
+    return np.broadcast_to(column.reshape(NZ, 1, 1), (NZ, NY, NX)).copy()
+
+
+def with_thickness(scene, analysis_h, background_h=None):
+    """Run with `h` among the analysis variables. Returns the written field."""
+    config, paths, background, written, target = scene
+    config["solver"]["analysis variables"] = list(VARIABLES) + [THICKNESS]
+    if background_h is not None:
+        with netCDF4.Dataset(background / "MOM.res.nc", "r+") as data:
+            data.variables["h"][:] = background_h
+    thicknesses(written, analysis_h)
+    run(scene)
+    return field(target / "MOM.res.nc", "h")
+
+
+def test_the_column_takes_the_analysis_total(scene):
+    """What the write is for: the sea level the filter inferred.
+
+    Under `BOUSSINESQ = True` a column's free surface is `sum(h) - D`, so the
+    column integral *is* the sea level, and moving it is the entire purpose.
+    """
+    background = layered(1.0)
+    analysis = background * 1.004
+    written = with_thickness(scene, analysis, background)
+    ocean = mask()
+    assert written.sum(axis=0)[ocean] == pytest.approx(
+        analysis.sum(axis=0)[ocean])
+
+
+def test_the_column_keeps_its_shape(scene):
+    """Only the integral moves; the layer proportions are the background's.
+
+    The filter also redistributed mass between layers and that part is dropped
+    rather than approximated. Under Z* the model regrids on its first step, so
+    the interfaces are the coordinate's business and the integral is the state.
+    """
+    background = layered(1.0)
+    # An analysis that inverts the profile while barely changing the total. A
+    # per-layer write would follow it; a column scaling must not.
+    analysis = background[::-1] * 1.001
+    written = with_thickness(scene, analysis, background)
+    ocean = mask()
+    ratio = written[:, ocean] / background[:, ocean]
+    assert ratio.max() - ratio.min() < 1e-12, \
+        "the layers moved relative to each other, so this is not a scaling"
+
+
+def test_an_analysis_layer_at_zero_does_not_reach_the_restart(scene):
+    """The reason for the scaling, and the crash it exists to avoid.
+
+    Writing `h_ana` cell by cell is the obvious form. On `gom_25km` the analysis
+    itself puts a fraction of a percent of cells at or below zero thickness, and
+    MOM6 reports that several steps downstream as `adjust_interface_motion:
+    implied h<0`. The scaling cannot produce one while the column total is
+    positive, whatever the individual levels say.
+    """
+    background = layered(1.0)
+    analysis = background.copy()
+    analysis[1, 2, 3] = -0.5
+    written = with_thickness(scene, analysis, background)
+    assert np.all(written[:, mask()] > 0.0)
+    # And the column still took the total it was asked for, so the guard is the
+    # form of the write rather than the analysis having been ignored.
+    assert written[:, 2, 3].sum() == pytest.approx(analysis[:, 2, 3].sum())
+
+
+def test_a_column_the_analysis_empties_is_refused(scene):
+    """A negative total is a state the model has no representation for, and it
+    is refused rather than written as something else."""
+    background = layered(1.0)
+    analysis = background.copy()
+    analysis[:, 2, 3] = -50.0
+    config, paths, _, written_file, _ = scene
+    with pytest.raises(ModelError, match="negative"):
+        with_thickness(scene, analysis, background)
+
+
+def test_the_land_keeps_its_background_thickness(scene):
+    """The analysis carries a fill value on land, and a scale factor built from
+    one is not a number the restart should take."""
+    background = layered(1.0)
+    analysis = np.where(mask(), background * 1.004, 0.0)
+    written = with_thickness(scene, analysis, background)
+    assert np.all(written[:, ~mask()] == background[:, ~mask()])
+
+
+def test_relaxation_reaches_the_column_delta(scene):
+    """Written weaker on the same rule as every other field."""
+    config = scene[0]
+    config["solver"]["increment relaxation"] = 0.5
+    background = layered(1.0)
+    analysis = background * 1.004
+    written = with_thickness(scene, analysis, background)
+    ocean = mask()
+    moved = written.sum(axis=0)[ocean] - background.sum(axis=0)[ocean]
+    whole = analysis.sum(axis=0)[ocean] - background.sum(axis=0)[ocean]
+    assert moved == pytest.approx(0.5 * whole)
+
+
+def test_the_thickness_checksum_is_dropped(scene):
+    """The file's claim about `h` is false once it has been scaled."""
+    background = layered(1.0)
+    with_thickness(scene, background * 1.004, background)
+    config, paths, _, _, target = scene
+    with netCDF4.Dataset(target / "MOM.res.nc") as data:
+        assert "checksum" not in data.variables["h"].ncattrs()
+
+
+def test_thickness_is_untouched_when_it_is_not_an_analysis_variable(scene):
+    """The split by solver, enforced where it is decided.
+
+    A variational analysis over the static B loses nothing by skipping this: its
+    SSH increment is steric by construction, so the temperature and salinity
+    increment already *is* the sea level increment and the model realizes the
+    height over the following hours. Writing `h` as well would apply the same
+    information twice. So the mass field is written when, and only when, the
+    experiment names it.
+    """
+    background = layered(1.0)
+    config, paths, rst, written_file, target = scene
+    with netCDF4.Dataset(rst / "MOM.res.nc", "r+") as data:
+        data.variables["h"][:] = background
+    thicknesses(written_file, background * 1.5)
+    run(scene)
+    assert np.all(field(target / "MOM.res.nc", "h") == background)
