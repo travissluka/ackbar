@@ -320,6 +320,37 @@ def test_a_member_reads_its_own_input_and_not_the_domains(env, boundaries, data)
         assert link.read_text() == f"boundary {member}\n"
 
 
+def test_what_a_member_resolved_to_outlives_the_run_directory(env, boundaries,
+                                                             data):
+    """`readlink` answers only while the job runs; this has to answer after.
+
+    `INPUT/` is scratch and is deleted on success, and the whole point of a
+    paired experiment is being able to say afterwards which boundary each member
+    integrated. The record is written beside the run and `TRACES` carries it out
+    with the model's own logs.
+    """
+    from ackbar.mom6sis2 import TRACES
+
+    config, _, _ = env
+    with_inputs(config, boundaries)
+    run_dir = staged(env, member=2)
+    record = run_dir / "ensemble.inputs"
+    assert record.exists(), "no record of what this member read"
+    line = record.read_text().strip()
+    assert line.startswith("obc.nc -> ")
+    assert line.endswith("mem002.nc"), line
+    assert "ensemble.inputs" in TRACES, (
+        "the record is written but not copied out of scratch, so it dies with "
+        "the run directory it was written to explain")
+
+
+def test_an_experiment_with_no_inputs_writes_no_record(env, data):
+    """An empty file for every non-ensemble forecast would be noise in a log
+    directory that is read by hand."""
+    (data / "obc.nc").write_bytes(b"the domain's shared boundary\n")
+    assert not (staged(env, member=0) / "ensemble.inputs").exists()
+
+
 def test_the_control_gets_one_too(env, boundaries, data):
     # mem000 is a member, not a parallel concept, and its boundary is the
     # unperturbed one rather than the domain's by accident.

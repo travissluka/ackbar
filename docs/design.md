@@ -1268,9 +1268,19 @@ stops, holding 0.0432 to 0.0448 m over the last five cycles. They differ by 1.9 
 last cycle and the gap is widening. An LETKF's analysis removes more variance than its forecast
 regenerates; what a boundary ensemble supplies is a source the analysis cannot consume, because
 it is re-imposed from outside the domain each cycle rather than carried in the state the filter
-updates. Banded by distance from the nearest open segment the ratio is 2.78 within 50 km and
-1.10 beyond 400 km, so it fills the hole the shared boundary creates rather than inflating the
-basin. `tools/obc-spread.py` computes it and `site/monitor/osse/obc/` carries the figures.
+updates. Banded by distance from the nearest open segment, and averaged over the ten cycles
+rather than taken at the last one, the ratio is 2.78 within 50 km and 1.10 beyond 400 km: the
+effect is concentrated where the shared boundary suppressed spread, not spread evenly over the
+basin.
+
+**That is a statement about spread and not about calibration.** Both runs share truth's
+boundary, so neither carries a boundary error and nothing here says the added spread is
+*earned*; an ensemble can be given spread it has not earned, and the number that would settle it
+is spread over error against a truth whose boundary differs. It also runs at amplitude 1 where
+the inter-product anchor points at 1.5, and some unknown fraction of the sea surface height
+spread is the basin-wide mode no altimeter reports, so the arrested curve is an upper bound on
+the arrest the filter feels. `tools/obc-spread.py` computes it and `site/monitor/osse/obc/`
+carries the figures and the same caveats.
 
 Three of the four are implemented: `ensemble.stochastic` is the model-internal one, and the
 other two arrive as files through `ensemble.inputs` (below). Stochastic physics is *stochastic*
@@ -1291,8 +1301,11 @@ The key is the name the model opens and the value is where that file's ensemble 
 two are deliberately independent, so a boundary ensemble and an atmospheric one can be built by
 different offline stages with different layouts and staged by the same code. Every member
 resolves to a file, including the control and including a source with only one realization,
-which materializes as N symlinks to that one file; so `readlink INPUT/atm.nc` inside a member's
-run directory always answers what that member read. A missing file is refused rather than
+which materializes as N symlinks to that one file. What each member resolved to is written to
+an `ensemble.inputs` file beside the run and copied out with the model's other traces, because
+`readlink INPUT/atm.nc` answers only while the job is running: the run directory is scratch and
+is deleted on success, so a paired experiment whose result is "which boundary did each member
+integrate" could otherwise not answer its own question once it finished. A missing file is refused rather than
 falling back to the domain's copy, because the fallback is a member with no perturbation whose
 only symptom is an ensemble slightly less spread than it should be.
 

@@ -48,7 +48,33 @@ export CMAKE_GENERATOR=$ACKBAR_CMAKE_GENERATOR
 #
 # A no-op when sourced from the checkout pip was pointed at, which is the
 # ordinary case.
-export PYTHONPATH="$ACKBAR_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+#
+# Prepended rather than assigned, because replacing it removes the interpreter's
+# own additions and pytest stops finding its plugins. Guarded against being
+# there twice, because this file is sourced once per submitted job and the
+# duplicates accumulate.
+case ":$PYTHONPATH:" in
+  *":$ACKBAR_ROOT/src:"*) ;;
+  *) export PYTHONPATH="$ACKBAR_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" ;;
+esac
+
+# And verify it actually won. PYTHONPATH beats the `.pth` file setuptools writes
+# for an editable install, but only because that strategy puts the path in
+# `sys.path`. Under `editable_mode=strict` setuptools installs a meta_path
+# finder instead, which is consulted *before* `sys.path` and would beat this
+# silently: the worktree would export its own ACKBAR_ROOT and still import the
+# other checkout, which is the exact failure the block above exists to prevent
+# and the one that is invisible from inside a job.
+if command -v python3 >/dev/null 2>&1; then
+  ackbar_where=$(python3 -c 'import ackbar,os;print(os.path.realpath(ackbar.__file__))' 2>/dev/null)
+  case "$ackbar_where" in
+    "$(cd "$ACKBAR_ROOT" && pwd -P)"/*|"") ;;
+    *) echo "activate.sh: ACKBAR_ROOT is $ACKBAR_ROOT but 'import ackbar' resolves" >&2
+       echo "  to $ackbar_where. Jobs would run another checkout's code." >&2
+       echo "  Reinstall with: pip install -e $ACKBAR_ROOT" >&2 ;;
+  esac
+  unset ackbar_where
+fi
 
 export ACKBAR_ROOT ACKBAR_SITE
 export ACKBAR_NJOBS ACKBAR_MPI_TASKS ACKBAR_BUILD_TYPE ACKBAR_CMAKE_GENERATOR

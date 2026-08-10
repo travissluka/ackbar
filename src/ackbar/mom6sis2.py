@@ -149,9 +149,14 @@ class ModelError(Exception):
 #: difference that is invisible everywhere else. About 150 KB against a restart
 #: set of a gigabyte, so the duplication across cycles is not worth a special
 #: case to avoid.
+#:
+#: `ensemble.inputs` is written by `_input_dir` rather than by the model, and is
+#: here for the same reason as the parameter docs: it is the only record of which
+#: per-member file this member resolved to, and the directory holding the link is
+#: deleted on success.
 TRACES = ("ocean.stats", "SIS.stats", "logfile.000000.out",
           "MOM_parameter_doc.all", "SIS_parameter_doc.all",
-          "MOM_parameter_doc.layout")
+          "MOM_parameter_doc.layout", "ensemble.inputs")
 
 
 def forecast(config, site, paths, cycle, task, member, *, source, target,
@@ -285,9 +290,11 @@ def member_inputs(config, cycle, member, task="forecast"):
     Every member resolves to a path, including the control. A source with only
     one realization is not a special case: `tools/obc-lagged.py` writes the
     unperturbed `mem000.nc` beside the perturbed ones, and a deterministic
-    source materializes every member as a symlink to its single file, so
-    `readlink INPUT/atm.nc` answers what member seven actually read whether or
-    not member seven had anything of its own.
+    source materializes every member as a symlink to its single file, so what
+    member seven read is recorded whether or not member seven had anything of
+    its own. The record is the `ensemble.inputs` file written beside the run and
+    kept with the traces; `readlink INPUT/atm.nc` says the same thing but only
+    until the run directory is reaped.
 
     That is also why a missing file raises rather than falling back to the
     domain archive's copy. The fallback is a member with no perturbation, and
@@ -343,13 +350,13 @@ def _input_dir(run, data, source, overlay=()):
     forecast whose previous attempt left a stale `coupler.res` here would resume
     from the wrong date, and the model would run happily.
     """
-    target = _fresh(run / "INPUT")
-    for entry in sorted(os.scandir(data), key=lambda e: e.name):
-        _link(target / entry.name, entry.path)
-    for name, path in overlay:
-        _link(target / name, path)
-    restarts = {entry.name for entry in os.scandir(source)}
-    shadowed = sorted(name for name, _ in overlay if name in restarts)
+    # The restart set is read once and the collision refused *before* anything
+    # is linked, so a run that is going to be rejected does not first build a
+    # directory that looks staged. Checking afterwards left the failure sitting
+    # on top of a half-populated INPUT/, which is the state a healer would find.
+    restarts = sorted(os.scandir(source), key=lambda e: e.name)
+    names = {entry.name for entry in restarts}
+    shadowed = sorted(name for name, _ in overlay if name in names)
     if shadowed:
         raise ModelError(
             f"{', '.join(shadowed)} is both an ensemble.inputs name and a file "
@@ -357,8 +364,24 @@ def _input_dir(run, data, source, overlay=()):
             f"would win, so the per-member file would be built, linked, "
             f"overwritten and never read."
         )
-    for entry in sorted(os.scandir(source), key=lambda e: e.name):
+
+    target = _fresh(run / "INPUT")
+    for entry in sorted(os.scandir(data), key=lambda e: e.name):
         _link(target / entry.name, entry.path)
+    for name, path in overlay:
+        _link(target / name, path)
+    for entry in restarts:
+        _link(target / entry.name, entry.path)
+
+    # What this member actually read, written where it survives the cycle.
+    # `INPUT/` is scratch and is deleted on success, so `readlink INPUT/obc.nc`
+    # answers only while the job is running: for a paired experiment whose whole
+    # result is "which boundary did each member integrate", a finished run could
+    # not answer its own question. `TRACES` carries this out beside the log.
+    if overlay:
+        (run / "ensemble.inputs").write_text(
+            "".join(f"{name} -> {os.path.realpath(path)}\n"
+                    for name, path in overlay))
 
 
 def _fresh(target):

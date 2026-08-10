@@ -23,11 +23,19 @@
 # global-only behaviour left in the forecast path to lose by moving.
 #
 # Twelve hour cycles from 2015-01-05 01:00, which is where the cold start in
-# ic/gom_25km/hycom-smoke leaves off. The case's own ic.nc and obc.nc are a
-# single SODA 3.3.1 five-day mean valid 2015-01-04 13:00, so the boundary is
-# frozen at that snapshot and does not move for the length of the run. That is a
-# known limit of this domain rather than a property of the workflow, and it is
-# recorded in docs/domains.md. It does not affect what this test checks.
+# ic/gom_25km/hycom-smoke leaves off.
+#
+# THIS DATE NO LONGER MATCHES THE DOMAIN'S BOUNDARY, AND THAT IS WHY THIS
+# FIXTURE FAILS. It used to be true that the case carried a single SODA 3.3.1
+# five-day mean valid 2015-01-04 13:00, frozen for the length of the run. The
+# domain was rebuilt on a 106 record GLORYS series covering 2015-05-28 to
+# 2015-09-10 and this date was not moved with it, so MOM6 stops at the first
+# timestep with `time_interp_external ... is before range of list`. Every module
+# that inherits this fixture is blocked on it: test_tier3.py, test_tier3_gom.py,
+# test_tier3_diffusion.py and test_tier3_gom_obc.py. Fixing it means restamping
+# the smoke initial condition and moving these dates into the GLORYS window, or
+# fetching GLORYS backwards to cover January. docs/domains.md carries the
+# reasoning; do not "fix" it by pointing this at a frozen boundary again.
 inherit:
   - domain/gom_25km
   - model/mom6sis2

@@ -512,15 +512,25 @@ properties:
       #
       # Every member resolves to a file, including the control and including a
       # source that has only one realization, which materializes as N symlinks
-      # to the one file. So `readlink INPUT/obc.nc` inside a member's run
-      # directory always answers what that member read, and a missing file is an
-      # error rather than a silent fall back to the domain's copy.
+      # to the one file. What each member resolved to is written to
+      # `ensemble.inputs` in the run directory and copied out with the other
+      # traces, because `readlink INPUT/obc.nc` only answers while the job is
+      # running: the run directory is scratch and is deleted on success. A
+      # missing file is an error rather than a silent fall back to the domain's
+      # copy.
       #
       # A name that is also in the restart set is refused: restarts are staged
       # last and would win, so the per-member file would be built, linked,
       # overwritten and never read.
       inputs:
         type: object
+        # The key is a plain filename inside the model's `INPUT/`, so it is
+        # constrained as one. Unconstrained, a key carrying a `/` or a `..`
+        # became a symlink outside the run directory, or a mkdir failure, from
+        # inside a submitted job rather than a step 1 finding here.
+        propertyNames:
+          pattern: '^[A-Za-z0-9_.-]+$'
+          not: { pattern: '^\.\.?$' }
         additionalProperties: { type: string }
       # A missing member is routine once members are array elements, so the
       # policy is per experiment and is stated rather than defaulted silently.

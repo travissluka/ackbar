@@ -253,6 +253,7 @@ def build_graph(config):
     """The whole experiment: every cycle, every task, every edge."""
     _check_ensemble_source(config)
     _check_stochastic(config)
+    _check_member_inputs(config)
     _check_hours(config)
     _check_window(config)
     _check_four_d_covariance(config)
@@ -326,6 +327,28 @@ def _check_stochastic(config):
             f"schemes are MOM6's, read out of a MOM6 parameter file by a "
             f"pattern generator compiled into `coupler_main`, so a {name!r} "
             f"forecast would integrate exactly as it does without them."
+        )
+
+
+def _check_member_inputs(config):
+    """Per-member inputs need a model that reads an input directory.
+
+    The same relation as `_check_stochastic` and refused the same way: only
+    `mom6sis2` stages an `INPUT/`, so `model: stub` or `model: persistence` with
+    `ensemble.inputs` set runs every cycle to completion, stages nothing, and
+    reports a full ensemble whose members all read the same nothing. That is the
+    failure mode the whole key exists to make impossible, and it would show up
+    as an experiment with less spread than it was configured for.
+    """
+    if not (config.get("ensemble") or {}).get("inputs"):
+        return
+    name = config["model"]["name"]
+    if name != "mom6sis2":
+        raise GraphError(
+            f"ensemble.inputs is set and model.name is {name!r}. Only mom6sis2 "
+            f"stages an INPUT/ directory for a member's files to be linked "
+            f"into, so a {name!r} forecast would silently read none of them and "
+            f"the ensemble would carry no perturbation at all."
         )
 
 

@@ -97,9 +97,18 @@ def covered_or_skip():
 
         first, last = day(t[0]), day(t[-1])
     start = str(config["cycle"]["start"])[:10]
-    if not first <= start <= last:
+    # The end as well as the start. A fixture that begins inside the window and
+    # runs out of it is the same failure arriving later, and checking only the
+    # start is how the archive-too-short case stayed invisible until a cycle
+    # walked off the end.
+    from ackbar.duration import parse_duration, parse_instant
+    finish = (parse_instant(str(config["cycle"]["start"]))
+              + parse_duration(config["cycle"]["length"])
+              * int(config["cycle"]["count"]))
+    end = f"{finish.year:04d}-{finish.month:02d}-{finish.day:02d}"
+    if not first <= start <= last or not end <= last:
         pytest.skip(
-            f"tier3_gom starts {start}, outside the gom_25km boundary's "
+            f"tier3_gom runs {start} to {end}, outside the gom_25km boundary's "
             f"{first} to {last}. Every tier 3 test on this fixture is blocked "
             f"on it, not just this one.")
 
@@ -120,15 +129,36 @@ def archive(tmp_path_factory):
     return out
 
 
-def experiment(tmp_path, name, boundary):
-    """`tier3_gom` with `ensemble.inputs` pointing at *boundary*."""
+def experiment(tmp_path, name, directory):
+    """`tier3_gom` with `ensemble.inputs` templated over *directory*.
+
+    The value carries `{{member_dir}}` rather than a resolved filename, because
+    that token is what this module's own header says is the point and a concrete
+    path never puts it in front of `render`: the test would pass with templating
+    entirely broken.
+    """
     config = yaml.safe_load(SOURCE.read_text())
     config["experiment"]["name"] = name
     config["ensemble"] = {"size": 1, "control": True,
-                          "inputs": {"obc.nc": str(boundary)}}
+                          "inputs": {"obc.nc": f"{directory}/{{{{member_dir}}}}.nc"}}
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False))
     return path
+
+
+def ensemble_dir(root, archive, lagged):
+    """A directory of `mem000.nc`/`mem001.nc` for the template to resolve into.
+
+    Both variants give the control the unperturbed boundary and differ only in
+    what `mem001` gets, so the experiments differ in exactly one member. That is
+    what lets the control double as a negative control: if per-member staging
+    were really per-experiment, mem000 would move too.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "mem000.nc").symlink_to(archive / "mem000.nc")
+    (root / "mem001.nc").symlink_to(
+        archive / ("mem001.nc" if lagged else "mem000.nc"))
+    return root
 
 
 def cycled(path, name):
@@ -149,16 +179,18 @@ def runs(tmp_path_factory, archive):
     """The same experiment against the unperturbed boundary and a lagged one."""
     tmp = tmp_path_factory.mktemp("obc-experiments")
     out = {}
-    for name, member in (("tier3_gom_obc_base", "mem000.nc"),
-                         ("tier3_gom_obc_lagged", "mem001.nc")):
-        out[name] = cycled(experiment(tmp, name, archive / member), name)
+    for name, lagged in (("tier3_gom_obc_base", False),
+                         ("tier3_gom_obc_lagged", True)):
+        where = ensemble_dir(tmp / f"{name}.ens", archive, lagged)
+        out[name] = cycled(experiment(tmp, name, where), name)
     yield out, archive
     for paths in out.values():
         _purge(paths)
 
 
-def final_state(paths, cycle=3):
-    with netCDF4.Dataset(paths.member_out("rst", cycle, 0) / "MOM.res.nc") as f:
+def final_state(paths, member=1, cycle=3):
+    """`mem001`'s ocean by default: it is the member the two runs differ in."""
+    with netCDF4.Dataset(paths.member_out("rst", cycle, member) / "MOM.res.nc") as f:
         return np.ma.filled(f["Temp"][:].astype("f8"), np.nan)
 
 
@@ -201,12 +233,25 @@ def test_the_difference_is_the_boundary_and_not_the_whole_ocean(runs):
         f"is too much of it to have come from the boundary")
 
 
-def test_the_member_read_the_archive_and_not_the_domains_own_copy(runs):
-    """`readlink` answers what a member read, which is the design's own claim."""
+def test_the_member_that_was_not_perturbed_did_not_move(runs):
+    """The negative half, and the one that says *per member* rather than per run.
+
+    Both experiments give `mem000` the same unperturbed boundary and differ only
+    in what `mem001` reads. If `ensemble.inputs` resolved once per experiment
+    instead of once per member, or if the overlay leaked between members, the
+    control would move too and the difference above would not be attributable to
+    the boundary of one member.
+    """
+    outputs, _ = runs
+    base = final_state(outputs["tier3_gom_obc_base"], member=0)
+    lagged = final_state(outputs["tier3_gom_obc_lagged"], member=0)
+    np.testing.assert_array_equal(base, lagged)
+
+
+def test_the_domain_really_has_an_open_boundary_to_perturb(runs):
+    """Otherwise every assertion above is about something else entirely."""
     outputs, archive = runs
     paths = outputs["tier3_gom_obc_lagged"]
-    linked = sorted((paths.log_dir(3)).glob("forecast*.model.log"))
-    assert linked, "no forecast log for cycle 3"
     # The run directory is scratch and is gone on success, so the evidence that
     # survives is the parameter document MOM6 itself wrote.
     docs = sorted((paths.log_dir(3)).glob("forecast*.MOM_parameter_doc.all"))

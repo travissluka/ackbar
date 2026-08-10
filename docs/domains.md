@@ -225,8 +225,8 @@ warm at depth and looks like a model bias.
 
 The GLORYS span is the constraint to know about, because a run outside it fails
 in `time_interp_external` at the first timestep. **Every tier 3 fixture starts
-2015-01-05, which is outside it, and this is not a latent problem: the gom tier 3
-tests fail on it today.** `test_tier3.py`, `test_tier3_gom.py`,
+2015-01-05, which is outside it, and this is not a latent problem: it is what
+the gom tier 3 tests fail on.** `test_tier3.py`, `test_tier3_gom.py`,
 `test_tier3_diffusion.py` and `test_tier3_gom_obc.py` all inherit `tier3_gom`,
 and the model stops with
 
