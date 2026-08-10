@@ -278,8 +278,9 @@ domain was too slow to iterate on: a simulated day costs 178 seconds there again
 `gom_25km`. That work added the Gulf of Mexico domains, split a MOM6 case into the text half
 that belongs in git and the data half that does not, gave ACKBAR its own `MOM_override`, and
 answered two of the spikes below. It did not add the regional stages the design calls for:
-domain-scoped observation culling is still owed, and it is owed before a regional *analysis*
-rather than before a regional free run. Grid-edge masking is no longer on that list as work:
+domain-scoped observation culling landed later, as `tools/obs-cull-domain.py`, and it was owed
+before a regional *analysis* rather than before a regional free run. Grid-edge masking is no
+longer on that list as work:
 it is an open question to settle by looking at the first regional 3DVar increment, since v2's
 workaround may be describing a SOCA that no longer exists. See Domains in `design.md`.
 `docs/domains.md` is the entry point.
@@ -327,14 +328,19 @@ attribute no longer describes the data, which is exactly what editing one in pla
 the attribute from the three variables it writes, and every other variable in the file keeps
 its integrity check.
 
-**A regional analysis still needs domain-scoped observation culling**, and the reason is not the
-one the design predicted. Global observation files do not break a regional domain: SOCA runs,
-every out-of-domain observation fails QC, and the cycle completes. What it produces is an
-analysis with nothing in it, so the culling is owed for the sake of the *observation counts*,
-not for stability. What tier 3 does instead is read an archive that was generated in-domain
-(`obs/gom-osse-smoke`), which sidesteps the question rather than answering it: the first
-experiment to point a regional domain at a global archive still gets an empty analysis and no
-complaint.
+**A regional analysis needs domain-scoped observation culling**, and the reason is not the one
+the design predicted. Global observation files do not break a regional domain: SOCA runs, every
+out-of-domain observation fails QC, and the cycle completes. What it produces is an analysis
+with nothing in it, so the culling is owed for the sake of the *observation counts*, not for
+stability. Tier 3 sidesteps the question by reading an archive that was generated in-domain
+(`obs/gom-osse-smoke`), so it never answered it.
+
+It is answered now by `tools/obs-cull-domain.py`, an offline stage keyed on domain, plus the
+two checks that make its absence loud rather than silent: `validate` step 3 refuses an
+experiment whose every observer has nothing inside the domain, and `post.obs` fails a cycle
+that read observations and assimilated none of them. Culling on the grid's *extent* and never
+on its land mask is the part most likely to be "fixed" by a later reader; the tool says why at
+length, and `tests/test_obs_cull.py` pins it.
 
 ## Phase 7. LETKF
 
@@ -778,8 +784,8 @@ The plan had all of the above on the global domains, `OM_1deg` for development a
 production, with regional coming once global cycling worked. It came between phases 5 and 6
 instead, because the global domain was too slow to iterate on, and tier 3 is now entirely
 `gom_25km`. See Domains in `design.md` for what it pulled in, and `domains.md` for what each
-domain costs and what is wrong with it. What is still owed from doing it early is
-domain-scoped observation culling.
+domain costs and what is wrong with it. What was owed from doing it early was domain-scoped
+observation culling, which landed as `tools/obs-cull-domain.py`.
 
 ## Spikes, and the phase each must precede
 

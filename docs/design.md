@@ -1041,6 +1041,22 @@ Regional costs more than a different grid file. What it actually pulls in:
   the counts it assimilated, so that a `Domain Check` rejection means what it says rather than
   "outside the grid", and so that the archive is not orders of magnitude larger than the domain
   needs.
+
+  Built as `tools/obs-cull-domain.py`. Two decisions inside it are worth stating here because
+  both are the kind a later reader reverses on sight. It culls on the grid's **extent** and
+  never on its land mask, which keeps a culled archive keyed on the extent alone, so a change
+  to a domain's mask or topography does not invalidate it, and leaves a land rejection to
+  SOCA's `Domain Check` where it is counted honestly. And a window with nothing in it gets an
+  **empty file** rather than no file, because ioda has a canonical empty representation and an
+  absent file already means something else here: a gap in the archive, which `stage.obs` drops
+  an observer for.
+
+  Because the stage is offline, nothing stops an experiment pointing at an unculled archive, so
+  two checks make that loud rather than silent. `validate` step 3 refuses an experiment whose
+  *every* observer has nothing inside the domain, which is a wrong path rather than a quiet
+  platform, and `post.obs` fails a cycle that read observations and assimilated none of them.
+  Neither existed when this bullet was written, and without them the offline placement would
+  have traded a silent empty analysis for a silent empty archive.
 - **Domain-specific observation configuration.** v2 kept a parallel tree under
   `configs/soca/regional/hat10/obs/` where several observers genuinely differ from their
   global counterparts (for example ADT variants referenced to a different geoid). So observer

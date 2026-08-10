@@ -411,7 +411,8 @@ env -u PYTHONPATH .venv-data/bin/python \
 tools/coldstart-ic.sh <domain> <YYYY-MM-DDThh> <hours> <slug>  # the IC stage
 tools/soca-diffusion.sh <domain>                               # for a DA experiment
 tools/soca-dirac.sh <domain>                                   # and check it
-tools/obs-archive-osse.py --domain <domain> ...                # observations that reach it
+tools/obs-archive-osse.py --domain <domain> ...                # synthetic observations, or
+tools/obs-cull-domain.py <domain> --in <archive> --out <...>   # a real archive cut down to it
 tools/ensemble-ic.sh <domain> <members>                        # for an ensemble experiment
 env -u PYTHONPATH .venv-data/bin/python tools/obc-lagged.py \
     --span 21 --members <members> \
@@ -437,14 +438,31 @@ on the background error, since that is what its perturbations are drawn from.
 See [`background-error.md`](background-error.md) and
 [`analysis.md`](analysis.md).
 
-**Observations have to be built for the domain, and this is quiet when it is
-wrong.** A global observation file handed to a regional domain does not fail:
-SOCA runs, every observation outside the grid fails its `Domain Check`, and the
-cycle completes with an analysis that assimilated nothing. The only symptom is
-an increment of zero. `obs-archive-osse.py` generates from the domain's own
-gridspec; a real archive needs the domain-scoped culling stage described in
-Domains in [`design.md`](design.md).
+**Observations have to be built for the domain, and this used to be quiet when
+it was wrong.** A global observation file handed to a regional domain does not
+fail: SOCA runs, every observation outside the grid fails its `Domain Check`,
+and the cycle completes with an analysis that assimilated nothing. The only
+symptom is an increment of zero. `obs-archive-osse.py` generates from the
+domain's own gridspec; a real archive goes through the offline culling stage,
+keyed on domain like the gridspec beside it:
 
-`ackbar validate` step 3 stats every one of those paths, so a stage that has not
-been run is a message naming the directory rather than a job that fails an hour
-later.
+```bash
+tools/obs-cull-domain.py gom_12km \
+    --in  $ACKBAR_STATIC_ROOT/obs/<archive> \
+    --out $ACKBAR_STATIC_ROOT/obs/<archive>-gom_12km
+```
+
+It keeps what falls inside the grid's extent, and deliberately keeps land
+observations too, so that a domain's archive is not invalidated by a change to
+its mask or its topography and so that SOCA's own `Domain Check` is what
+reports a land rejection. A window with nothing in it gets an empty file rather
+than none, which says "considered, saw nothing" where an absent file would mean
+a gap in the archive. See Domains in [`design.md`](design.md) and the tool's own
+header.
+
+It is no longer quiet when it is skipped. `ackbar validate` step 3 stats every
+one of those paths, so a stage that has not been run is a message naming the
+directory rather than a job that fails an hour later, and it now also reads one
+file per observer and refuses an experiment whose *every* observer has nothing
+inside the domain. During the run, `post.obs` fails a cycle that read
+observations and assimilated none of them.
