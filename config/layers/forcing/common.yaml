@@ -3,21 +3,39 @@
 #
 # Not a source: this sets no input, so an experiment that inherited it alone
 # would run with `INPUT/atm.nc` missing and fail inside `data_override` rather
-# than at validate time. Inherit a source layer, which today is
-# `forcing/gefs-ensemble` and nothing else. Deterministic single-source layers
-# (one shared ERA5 or GEFS atmosphere for every member) are a template with no
-# `{{member_dir}}` in it and have not been written.
+# than at validate time. Inherit a source layer: `forcing/gefs-ensemble` for a
+# member per member, `forcing/era5` for one atmosphere shared by every member.
 #
 # The archive every one of them reads is built by `tools/forcing-era5.py` and
 # `tools/forcing-gefs.py` into
-# `$(static_root)/forcing/<domain>/<source>/mem###.nc`, all sources normalized
+# `$(static_root)/forcing/<purpose>/<source>/mem###.nc`, all sources normalized
 # into one file shape. That normalization is what lets a single data table serve
 # every source: swapping ERA5 for GEFS is swapping which file a symlink points
 # at, not editing a table. `docs/forcing.md` has the shape and the reasoning.
 
 vars:
-  # Where a source's files live, so the three source layers differ by one word.
-  forcing_archive: $(static_root)/forcing/$(domain_slug)
+  # **The archive is keyed by what the files are for, not by which domain runs
+  # them.** `gom_exp` is the atmosphere every experiment reads and `gom_truth`
+  # is the nature run's, and the two exist so that an OSSE's truth and its
+  # experiments see different weather, which is the point of the fraternal twin.
+  # Keying by domain could not say that: truth and experiments share a domain
+  # family and want different archives, while every resolution of one family can
+  # share an archive, because both sources sit on the product's own quarter
+  # degree grid and FMS interpolates onto the model grid at run time. Nothing in
+  # a forcing file is a function of the model's resolution.
+  #
+  # What is a function of the domain is the box, and that is handled where it
+  # belongs: a fetch covers every staged domain in the family (`--family gom`),
+  # and `forcing.assert_covers` refuses at stage time an archive that does not
+  # reach the domain being run. So a finer domain added later fails in the job
+  # that stages it rather than reading its outermost row from nothing.
+  #
+  # The default is the experiment archive, because that is what most experiments
+  # want and the truth run is the one that has to say otherwise. An experiment
+  # overrides it in its own `vars`.
+  forcing_purpose: gom_exp
+  # Where a source's files live, so the source layers differ by one word.
+  forcing_archive: $(static_root)/forcing/$(forcing_purpose)
 
 model:
   # Seven variables out of one `INPUT/atm.nc`. Nothing in the table is about the

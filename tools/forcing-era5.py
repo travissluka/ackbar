@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build the ERA5 half of the forcing archive: one `atm.nc` over a domain's box.
+"""Build the ERA5 half of the forcing archive: one `atm.nc` over a family's box.
 
-    tools/forcing-era5.py 2021-06-25 2021-09-05 --domain gom_25km \\
-        --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/era5
+    tools/forcing-era5.py 2021-06-25 2021-09-05 --family gom \\
+        --out $ACKBAR_STATIC_ROOT/forcing/gom_truth/era5
 
 ERA5 forces the *truth* run of the OSSE and nothing else. The experiments read a
 different source, which is the whole point of a fraternal twin: an OSSE whose
@@ -63,7 +63,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from ackbar.forcing import (  # noqa: E402
     FIELDS, PRODUCT_HEIGHT, REFERENCE_HEIGHT, assert_no_leap_day, box_slices,
-    domain_box, shift_to_10m, specific_humidity, write_atm)
+    family_box, family_domains, shift_to_10m, specific_humidity, write_atm)
 
 BUCKET = "s3://nsf-ncar-era5"
 
@@ -255,10 +255,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("start", help="first day to cover, YYYY-MM-DD")
     ap.add_argument("end", help="last day to cover, YYYY-MM-DD, inclusive")
-    ap.add_argument("--domain", required=True,
-                    help="clip to this domain's grid, plus a margin. Reads "
+    ap.add_argument("--family", required=True,
+                    help="clip to a box covering every staged domain named "
+                         "<family>_*, plus a margin. `gom` covers gom_4km "
+                         "through gom_25km. Each is read from "
                          "$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/"
-                         "ocean_hgrid.nc, so the domain must already have one")
+                         "ocean_hgrid.nc, so a domain must already have a grid "
+                         "to be covered, and one staged after this runs is "
+                         "caught at stage time by forcing.assert_covers rather "
+                         "than read past the edge of the file")
     ap.add_argument("--out", type=Path, required=True,
                     help="archive directory for this source")
     ap.add_argument("--member", default="mem000",
@@ -283,8 +288,10 @@ def main():
     if end <= start:
         raise SystemExit("forcing-era5: end is not after start")
     assert_no_leap_day(start, end)
-    box = domain_box(args.domain)
-    print(f"forcing-era5: {args.domain} box {box['west']:.3f} to "
+    covers = family_domains(args.family)
+    box = family_box(args.family)
+    print(f"forcing-era5: covering {', '.join(covers)}", flush=True)
+    print(f"forcing-era5: box {box['west']:.3f} to "
           f"{box['east']:.3f} east, {box['south']:.3f} to "
           f"{box['north']:.3f} north", flush=True)
 
@@ -345,7 +352,7 @@ def main():
     # directory is the stager's business, not the archive's.
     target = args.out / f"{args.member}.nc"
     write_atm(target, x, y, origin, series,
-              source="ERA5, NCAR mirror ds633.0", domain=args.domain,
+              source="ERA5, NCAR mirror ds633.0", covers=", ".join(covers),
               scalar_height=REFERENCE_HEIGHT if shift else PRODUCT_HEIGHT)
     if not any(cache.iterdir()):
         cache.rmdir()

@@ -40,6 +40,30 @@ keep their names because `--no-height-shift` can still build an archive that
 really does hold 2 m fields, and a file that says which it is can be checked
 where a file named `T10` could only be trusted.
 
+## The archive is keyed by purpose, and its box covers a family of domains
+
+An archive directory is `forcing/<purpose>/<source>/mem###.nc`, where a purpose
+is what the files are *for*: `gom_truth` is the nature run's atmosphere and
+`gom_exp` is the one every experiment reads. Keying it by domain instead says
+something false about the file: both archives sit on the source product's own
+grid, quarter degree for ERA5 and for the GEFS eras in use, and FMS interpolates
+onto the model grid when the model runs, so nothing in a forcing file is a
+function of the domain's resolution. It also leaves the fraternal twin
+unstateable, since truth and experiments on the same domain want *different*
+atmospheres and that is the whole design, while the same atmosphere serves every
+resolution of one domain family.
+
+What is a function of the domain is the **box**, and that is what `family_box`
+handles. A purpose serves a family of domains (`gom_4km` through `gom_25km`),
+so its box is the union of every one of their boxes rather than the box of the
+one it happened to be cut for. Over the Gulf that union costs at most one source
+cell on an edge, because the four grids differ by under a tenth of a degree, and
+it is what stops a finer domain added later from silently reading past the edge
+of an archive built for a coarser one. The domains it covered are written onto
+the file, and `assert_covers` checks at stage time that the domain being run is
+inside the file's box, so an archive that is too small says so in the job that
+stages it rather than in a flux field nobody plots.
+
 ## Surface pressure is fetched and not written
 
 MOM6 here applies no atmospheric pressure load. The data table sets `p_surf` and
@@ -93,6 +117,17 @@ import numpy as np
 #: floor. `fetch-glorys.py` makes the same argument for the same reason and calls
 #: it `MARGIN` too.
 MARGIN = 4.0
+
+#: How many source cells a stage-time coverage check keeps outside the domain.
+#:
+#: The same two cells `MARGIN` exists for, restated where the check can measure
+#: them: FMS's bicubic stencil reaches two source cells past the point it fills.
+#: `MARGIN` is what a *fetch* asks for, in degrees, before any source grid is
+#: known; this is what a *file* has to have kept, in cells of its own axes. They
+#: are deliberately not the same number: a fetch that asked for four degrees and
+#: got three and a half because the source grid ends there is still fine, and a
+#: check written in degrees would refuse it.
+EDGE_CELLS = 2
 
 #: Output name -> (units, long name). The order is the order they are written.
 #:
@@ -507,19 +542,17 @@ def domain_box(domain, margin=MARGIN):
     builds its GLORYS request the same way), and a domain whose grid moves gets a
     forcing box that moves with it.
 
-    The corollary is that **the box belongs to a domain, not to a family**, so the
-    archive is keyed by domain: the four Gulf resolutions do not have quite the
-    same footprint (`gom_25km` starts at 17.995N, `gom_12km` at 18.058N) and
-    pretending one fetch serves all four means one of them silently reads a box
-    that stops inside it.
+    **One domain's box, which is not what a fetch asks for.** The four Gulf
+    resolutions do not have quite the same footprint (`gom_25km` starts at
+    17.995N, `gom_12km` at 18.058N), and an archive keyed by purpose serves all
+    of them, so cutting to any one of them leaves another reading a box that
+    stops inside it. `family_box` takes the union and is what the fetchers call;
+    this is its per-domain half.
 
     Returns the box in the source's own coordinates: degrees east on [0, 360) and
     degrees north.
     """
-    root = os.environ.get("ACKBAR_STATIC_ROOT")
-    if not root:
-        raise SystemExit("forcing: run `source site/activate.sh` first")
-    path = Path(root, "domain", domain, "INPUT", "ocean_hgrid.nc")
+    path = Path(_static_root(), "domain", domain, "INPUT", "ocean_hgrid.nc")
     if not path.exists():
         raise SystemExit(
             f"forcing: {path} does not exist, so {domain}'s extent is unknown. "
@@ -527,6 +560,113 @@ def domain_box(domain, margin=MARGIN):
             f"exist before forcing can be clipped to it.")
     with netCDF4.Dataset(path) as f:
         return box_around(np.asarray(f["x"][:]), np.asarray(f["y"][:]), margin)
+
+
+def _static_root():
+    """Where staged domains live, or the message that says to activate a site."""
+    root = os.environ.get("ACKBAR_STATIC_ROOT")
+    if not root:
+        raise SystemExit("forcing: run `source site/activate.sh` first")
+    return root
+
+
+def family_domains(family):
+    """Every staged domain in *family*, which is the `gom` of `gom_25km`.
+
+    Discovered from the static root rather than listed here, because a list is a
+    second statement of which domains exist and the two drift. A domain staged
+    later widens the next fetch by construction, and the domains a file actually
+    covered are written onto it, so an archive built before that domain existed
+    is caught by `assert_covers` rather than believed.
+    """
+    root = _static_root()
+    found = sorted(path.name for path in Path(root, "domain").glob(f"{family}_*")
+                   if (path / "INPUT" / "ocean_hgrid.nc").exists())
+    if not found:
+        raise SystemExit(
+            f"forcing: no domain under {root}/domain is named {family}_* and "
+            f"has a grid, so the family's box is unknown. The family is the "
+            f"part of a domain name before the resolution, `gom` for "
+            f"`gom_25km`.")
+    return found
+
+
+def family_box(family, margin=MARGIN):
+    """The clip box covering every domain in *family*.
+
+    The union, not one domain's box, because the archive is keyed by purpose and
+    a purpose serves the family: `gom_exp` forces `gom_25km` today and
+    `gom_12km`, `gom_8km` or `gom_4km` on the day one of them is run. Cutting to
+    the domain that happened to be first is how a later domain reads past the
+    edge of the file, which is invisible in every field except the outermost row.
+
+    Cheap over the Gulf, where the four grids differ by under a tenth of a
+    degree, so the union costs at most one source cell on an edge.
+    """
+    boxes = [domain_box(domain, margin) for domain in family_domains(family)]
+    return {
+        "west": min(box["west"] for box in boxes),
+        "east": max(box["east"] for box in boxes),
+        "south": min(box["south"] for box in boxes),
+        "north": max(box["north"] for box in boxes),
+    }
+
+
+def assert_covers(path, grid):
+    """Refuse a staged `atm.nc` whose box does not contain the domain it forces.
+
+    The check the purpose-keyed archive needs. Keying by domain made this
+    question unnecessary and answered it wrongly: the archive matched the domain
+    by construction, and by construction served only that one. Keyed by purpose,
+    one file serves a family, and the failure it can newly have is a box cut for
+    a coarser member of that family which a finer one reaches past.
+
+    Silent otherwise: FMS's `time_interp_external` fills from the nearest source
+    cell rather than refusing, so a domain reading past the edge gets a plausible
+    field along its outermost row and nothing anywhere says so.
+
+    *grid* is the domain's staged `ocean_hgrid.nc`, so this asks about the run
+    that is happening rather than about the config that described it.
+    """
+    with netCDF4.Dataset(grid) as f:
+        west, east = lon_extent(np.asarray(f["x"][:]))
+        lat = np.asarray(f["y"][:])
+        south, north = float(lat.min()), float(lat.max())
+    with netCDF4.Dataset(path) as f:
+        x = np.asarray(f["LON"][:]) % 360.0
+        y = np.asarray(f["LAT"][:])
+    if x.size < 2 or y.size < 2:
+        raise ValueError(f"{path} has a degenerate axis and covers nothing")
+    pad_x = EDGE_CELLS * abs(float(x[1] - x[0]))
+    pad_y = EDGE_CELLS * abs(float(y[1] - y[0]))
+    whole_globe = float(x[-1] - x[0]) >= 360.0 - abs(float(x[1] - x[0]))
+    short = []
+    if west > east or whole_globe:
+        # A domain that wraps the seam, or a file that spans the globe: in both
+        # cases longitude cannot be compared as one interval, and in the second
+        # it cannot fall short. `box_around` refuses to fetch the first, so the
+        # only way here is a domain staged after the archive, which is what the
+        # message says.
+        if west > east:
+            short.append(f"the domain wraps the longitude seam ({west:.3f} to "
+                         f"{east:.3f}), which a single-slice archive cannot "
+                         f"cover")
+    elif float(x[0]) + pad_x > west or float(x[-1]) - pad_x < east:
+        short.append(f"longitude {x[0]:.3f} to {x[-1]:.3f} against a domain "
+                     f"reaching {west:.3f} to {east:.3f}")
+    if float(y[0]) + pad_y > south:
+        short.append(f"south edge {y[0]:.3f} against a domain reaching {south:.3f}")
+    if float(y[-1]) - pad_y < north:
+        short.append(f"north edge {y[-1]:.3f} against a domain reaching {north:.3f}")
+    if short:
+        raise ValueError(
+            f"{path} does not cover this domain with {EDGE_CELLS} source cells "
+            f"to spare: " + "; ".join(short) + ". The archive is keyed by "
+            f"purpose and its box is the union over a family of domains, so a "
+            f"domain staged after the archive was built can fall outside it. "
+            f"Rebuild the archive with tools/forcing-era5.py or "
+            f"tools/forcing-gefs.py, which read the family's domains from the "
+            f"static root each time.")
 
 
 def lon_extent(lon):
@@ -629,7 +769,7 @@ def clip(lons, lats, cube, box):
     return x, y, out
 
 
-def write_atm(path, x, y, origin, series, source, domain, *, scalar_height):
+def write_atm(path, x, y, origin, series, source, covers, *, scalar_height):
     """Write one member's `atm.nc`.
 
     *series* maps a name in `FIELDS` to `(hours, cube)`, where *hours* are hours
@@ -644,9 +784,12 @@ def write_atm(path, x, y, origin, series, source, domain, *, scalar_height):
     about the height cannot accidentally claim a shift it did not perform, which
     is the failure this whole attribute exists to prevent.
 
-    *source* and *domain* are recorded as global attributes, because the archive
-    path says which source and domain a file came from and a file that has been
-    moved does not. The box is recorded from the axes actually written rather
+    *source* and *covers* are recorded as global attributes. *covers* is the
+    domains the box was built to serve, which is what a purpose-keyed archive
+    can no longer say from its path: `forcing/gom_exp/gefs` says what the files
+    are for and not which grids they reach, and the difference is the whole
+    reason `assert_covers` exists. The box is recorded from the axes actually
+    written rather
     than from the request, so the attribute says what is in the file and not what
     was asked for; the two differ by up to one source cell on every edge.
     """
@@ -706,7 +849,7 @@ def write_atm(path, x, y, origin, series, source, domain, *, scalar_height):
             f[:] = cube
 
         out.source = source
-        out.domain = domain
+        out.covers = covers
         out.box = (f"{x[0]:.3f} to {x[-1]:.3f} east, "
                    f"{y[0]:.3f} to {y[-1]:.3f} north")
         # What the file is, not what it should be. `assert_reference_height`

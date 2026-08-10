@@ -1123,7 +1123,7 @@ Each produces versioned, read-only inputs. Experiments are pure consumers.
 | static | domain | `soca_gridspec.nc`, horizontal correlation scales, localization scales |
 | initial condition | domain, source, date | a spun-up restart set |
 | observations | period (and domain, if culled) | archive of ioda files, real or OSSE-generated |
-| forcing | domain, source, period | atmospheric forcing archive (`docs/forcing.md`) |
+| forcing | purpose, source, period | atmospheric forcing archive (`docs/forcing.md`) |
 | boundary forcing | domain, period | open boundary conditions from a parent solution (regional only) |
 
 Static is keyed on **domain, not experiment**, so one `static/om_1deg/` is shared read-only

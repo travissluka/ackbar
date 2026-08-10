@@ -238,6 +238,107 @@ def test_an_unactivated_site_is_named_as_such(monkeypatch):
     assert "activate.sh" in str(error.value)
 
 
+# --- the family box, and what it exists to stop --------------------------
+#
+# The archive is keyed by purpose (`gom_exp`, `gom_truth`) rather than by
+# domain, so one file serves every resolution of a family. That is only true if
+# its box covers all of them: a box cut for the coarsest domain is a box a finer
+# one reaches past, and FMS fills from the nearest source cell rather than
+# failing, so the model runs and its outermost row is wrong.
+
+
+def _grid(path, west, east, south, north):
+    """A supergrid covering a rectangle, which is all `domain_box` reads."""
+    lon, lat = np.meshgrid(np.linspace(west, east, 5),
+                           np.linspace(south, north, 5))
+    with netCDF4.Dataset(path, "w") as f:
+        f.createDimension("ny", lat.shape[0])
+        f.createDimension("nx", lat.shape[1])
+        f.createVariable("x", "f8", ("ny", "nx"))[:] = lon
+        f.createVariable("y", "f8", ("ny", "nx"))[:] = lat
+
+
+def _staged(root, domain, west, east, south, north):
+    directory = Path(root, "domain", domain, "INPUT")
+    directory.mkdir(parents=True, exist_ok=True)
+    _grid(directory / "ocean_hgrid.nc", west, east, south, north)
+
+
+def test_the_family_box_is_the_union_over_its_domains(monkeypatch, tmp_path):
+    """Not the first domain's box, and not the last one fetched for. The Gulf
+    grids differ by under a tenth of a degree, so the union is nearly free, and
+    the day it is not is the day a domain would otherwise be outside it."""
+    monkeypatch.setenv("ACKBAR_STATIC_ROOT", str(tmp_path))
+    _staged(tmp_path, "gom_25km", 262.0, 283.0, 18.0, 31.0)
+    _staged(tmp_path, "gom_4km", 261.5, 283.5, 18.5, 31.5)
+    assert forcing.family_domains("gom") == ["gom_25km", "gom_4km"]
+    assert forcing.family_box("gom", margin=1.0) == pytest.approx(
+        {"west": 260.5, "east": 284.5, "south": 17.0, "north": 32.5})
+
+
+def test_a_domain_with_no_grid_is_not_counted_in_its_family(monkeypatch,
+                                                            tmp_path):
+    """A directory is not a domain. The box has to come from grids that exist,
+    or a half-staged domain widens every fetch and nothing says why."""
+    monkeypatch.setenv("ACKBAR_STATIC_ROOT", str(tmp_path))
+    _staged(tmp_path, "gom_25km", 262.0, 283.0, 18.0, 31.0)
+    Path(tmp_path, "domain", "gom_4km", "INPUT").mkdir(parents=True)
+    assert forcing.family_domains("gom") == ["gom_25km"]
+
+
+def test_a_family_with_no_staged_domain_says_what_a_family_is(monkeypatch,
+                                                              tmp_path):
+    monkeypatch.setenv("ACKBAR_STATIC_ROOT", str(tmp_path))
+    with pytest.raises(SystemExit) as error:
+        forcing.family_domains("gom")
+    assert "gom_25km" in str(error.value)
+
+
+def _atm(path, west, east, south, north, step=0.25):
+    x = np.arange(west, east + step / 2.0, step)
+    y = np.arange(south, north + step / 2.0, step)
+    series = {name: (np.array([0.0, 3.0]),
+                     np.ones((2, y.size, x.size), dtype="f8"))
+              for name in forcing.FIELDS}
+    forcing.write_atm(path, x, y, ORIGIN, series, "gefs", "gom_25km",
+                      scalar_height=forcing.REFERENCE_HEIGHT)
+
+
+def test_an_archive_covering_the_domain_is_accepted(tmp_path):
+    _grid(tmp_path / "ocean_hgrid.nc", 262.0, 283.0, 18.0, 31.0)
+    _atm(tmp_path / "atm.nc", 258.0, 287.0, 14.0, 35.0)
+    forcing.assert_covers(tmp_path / "atm.nc", tmp_path / "ocean_hgrid.nc")
+
+
+def test_an_archive_that_stops_inside_the_domain_is_refused(tmp_path):
+    """The failure the rename could introduce: an archive cut for one domain and
+    read by a wider one."""
+    _grid(tmp_path / "ocean_hgrid.nc", 262.0, 285.0, 18.0, 31.0)
+    _atm(tmp_path / "atm.nc", 258.0, 284.0, 14.0, 35.0)
+    with pytest.raises(ValueError) as error:
+        forcing.assert_covers(tmp_path / "atm.nc", tmp_path / "ocean_hgrid.nc")
+    assert "longitude" in str(error.value)
+
+
+def test_an_archive_reaching_the_domain_edge_exactly_is_refused(tmp_path):
+    """Reaching it is not covering it. The bicubic stencil reads two source
+    cells past the point it fills, so an archive that merely touches the edge
+    fills the outermost row from cells that are not there."""
+    _grid(tmp_path / "ocean_hgrid.nc", 262.0, 283.0, 18.0, 31.0)
+    _atm(tmp_path / "atm.nc", 262.0, 283.0, 18.0, 31.0)
+    with pytest.raises(ValueError) as error:
+        forcing.assert_covers(tmp_path / "atm.nc", tmp_path / "ocean_hgrid.nc")
+    assert f"{forcing.EDGE_CELLS} source cells" in str(error.value)
+
+
+def test_a_short_north_edge_is_named_rather_than_the_whole_box(tmp_path):
+    _grid(tmp_path / "ocean_hgrid.nc", 262.0, 283.0, 18.0, 34.9)
+    _atm(tmp_path / "atm.nc", 258.0, 287.0, 14.0, 35.0)
+    with pytest.raises(ValueError) as error:
+        forcing.assert_covers(tmp_path / "atm.nc", tmp_path / "ocean_hgrid.nc")
+    assert "north edge" in str(error.value)
+
+
 # --- the slices, and the latitude direction ------------------------------
 #
 # The direction is the dangerous one. Reading a descending axis as ascending
@@ -394,11 +495,13 @@ def test_the_box_attribute_describes_the_axes_and_not_the_request(tmp_path):
     path = tmp_path / "atm.nc"
     forcing.write_atm(path, np.array([257.875, 287.625]),
                       np.array([13.995, 35.995]),
-                      ORIGIN, series_for(), "era5", "gom_25km",
+                      ORIGIN, series_for(), "era5", "gom_12km, gom_25km",
                       scalar_height=forcing.REFERENCE_HEIGHT)
     with netCDF4.Dataset(path) as f:
         assert f.box == "257.875 to 287.625 east, 13.995 to 35.995 north"
-        assert f.source == "era5" and f.domain == "gom_25km"
+        # `covers`, not `domain`: the archive is keyed by purpose, so the path
+        # no longer says which grids the file reaches and the file has to.
+        assert f.source == "era5" and f.covers == "gom_12km, gom_25km"
 
 
 def test_a_missing_field_is_refused_before_anything_is_written(tmp_path):

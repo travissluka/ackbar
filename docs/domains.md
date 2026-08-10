@@ -268,11 +268,15 @@ ncdump -h $ACKBAR_STATIC_ROOT/obc/<domain>/<archive>/mem000.nc \
 `:source` carries through, so an archive records which pull it was built from
 without depending on its directory name.
 
-**The atmosphere is a climatology.** NCAR/CORE, staged once under
-`$ACKBAR_STATIC_ROOT/forcing/ncar-clim` and shared by every resolution. It has no
-synoptic variability at all, so forecast error on these domains is dominated by
-missing weather rather than by anything an analysis can correct. Replacing it
-with ERA5, JRA-55 or GEFS lands beside it under a new source name.
+**The atmosphere is a climatology for anything that inherits no forcing layer.**
+NCAR/CORE, staged once under `$ACKBAR_STATIC_ROOT/forcing/ncar-clim` and shared
+by every resolution. It has no synoptic variability at all, so forecast error on
+such a run is dominated by missing weather rather than by anything an analysis
+can correct. The real sources sit beside it keyed by purpose rather than by
+domain, `forcing/gom_truth/era5` and `forcing/gom_exp/gefs`, because a forcing
+file is on the source product's own grid and is not a function of the model's
+resolution; what the domain decides is the box, which covers the whole family.
+See [`forcing.md`](forcing.md).
 
 **SOCA cannot configure their open boundaries.** SOCA links a MOM6 built without
 symmetric memory, and MOM6 refuses Flather OBCs in such a build:

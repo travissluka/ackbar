@@ -361,17 +361,23 @@ fields) and `model.override.SIS_forcing` (a fourth SIS parameter file holding
 shortwave read with that flag left on is the one misconfiguration here that runs to completion
 and reports success.
 
-`$(forcing_archive)` resolves to `$(static_root)/forcing/$(domain_slug)`, so the archive is keyed
-by domain. A template with no `{{member_dir}}` in it is how an ensemble would read one shared
-atmosphere; no such layer is written.
+`$(forcing_archive)` resolves to `$(static_root)/forcing/$(forcing_purpose)`, so the archive is
+keyed by what the files are for, `gom_exp` here and `gom_truth` for the nature run, rather than
+by which domain reads them. A template with no `{{member_dir}}` in it is how an ensemble would
+read one shared atmosphere; no such layer is written.
 
 ### What has to exist offline
 
 ```bash
-tools/forcing-gefs.py 2015-07-10 2015-07-28 --leads 12,36,60,84,108 \
-    --members 21 --domain gom_25km \
-    --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+tools/forcing-gefs.py 2015-07-10 2015-09-01 --leads 12,36,60,84,108 \
+    --members 21 --family gom \
+    --out $ACKBAR_STATIC_ROOT/forcing/gom_exp/gefs
 ```
+
+`--family gom` rather than one domain: the box is the union over every staged `gom_*` domain, so
+the same archive serves `gom_12km` or `gom_4km` if one of them runs this experiment later.
+`forcing.assert_covers` refuses at stage time an archive that does not reach the domain being
+run, which is what makes the union a check rather than a hope.
 
 **Count the runs, not the members.** `ensemble.size: 20` with `control: true` is twenty-one runs
 and therefore twenty-one atmospheres. Five members on a five rung lead ladder is twenty-one

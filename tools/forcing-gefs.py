@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build the GEFS half of the forcing archive: one `atm.nc` per member.
 
-    tools/forcing-gefs.py 2015-07-11 2015-07-28 --leads 12,36,60,84,108 \\
+    tools/forcing-gefs.py 2015-07-10 2015-09-01 --leads 12,36,60,84,108 \\
         --members 21 \\
-        --domain gom_25km \\
-        --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+        --family gom \\
+        --out $ACKBAR_STATIC_ROOT/forcing/gom_exp/gefs
 
 **Ask for a wider span than the experiment.** `time_interp_external` refuses to
 extrapolate, so a run whose first step lands before the first record dies with
@@ -181,7 +181,8 @@ sys.path.insert(0, str(REPO / "src"))
 
 from ackbar.forcing import (  # noqa: E402
     FIELDS, PRODUCT_HEIGHT, REFERENCE_HEIGHT, assert_no_leap_day, clip,
-    domain_box, regrid_linear, shift_to_10m, specific_humidity, write_atm)
+    family_box, family_domains, regrid_linear, shift_to_10m, specific_humidity,
+    write_atm)
 
 
 class Era(NamedTuple):
@@ -853,7 +854,7 @@ def deaverage(era, found, spans, ends, lead, where=""):
     return records, worst
 
 
-def build(era, index, start, end, leads, cache, out, box, domain, shift=True):
+def build(era, index, start, end, leads, cache, out, box, covers, shift=True):
     """One member's whole `atm.nc`.
 
     *index* is the ensemble member, which the ladder resolves into a GEFS
@@ -922,7 +923,7 @@ def build(era, index, start, end, leads, cache, out, box, domain, shift=True):
     target = out / f"mem{index:03d}.nc"
     write_atm(target, x, y, origin, packed,
               source=f"GEFS {era.name} {member} at {lead} h lead, "
-                     f"{era.bucket}", domain=domain,
+                     f"{era.bucket}", covers=covers,
               scalar_height=REFERENCE_HEIGHT if shift else PRODUCT_HEIGHT)
     return target, packed, worst, undetermined
 
@@ -947,10 +948,15 @@ def main():
     ap.add_argument("--members", type=int, default=20,
                     help="how many members, counting the control as the first. "
                          "Bounded by what the era has")
-    ap.add_argument("--domain", required=True,
-                    help="clip to this domain's grid, plus a margin. Reads "
+    ap.add_argument("--family", required=True,
+                    help="clip to a box covering every staged domain named "
+                         "<family>_*, plus a margin. `gom` covers gom_4km "
+                         "through gom_25km. Each is read from "
                          "$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/"
-                         "ocean_hgrid.nc, so the domain must already have one")
+                         "ocean_hgrid.nc, so a domain must already have a grid "
+                         "to be covered, and one staged after this runs is "
+                         "caught at stage time by forcing.assert_covers rather "
+                         "than read past the edge of the file")
     ap.add_argument("--era", help="which GEFS product, when the dates alone do "
                                   "not decide it")
     ap.add_argument("--cache", type=Path,
@@ -1016,7 +1022,8 @@ def main():
               f"mixture of {len(leads)} lead distributions and is not "
               f"exchangeable. See this tool's docstring.")
 
-    box = domain_box(args.domain)
+    covers = family_domains(args.family)
+    box = family_box(args.family)
     args.out.mkdir(parents=True, exist_ok=True)
     cache = args.cache or (args.out / ".cache")
     cache.mkdir(parents=True, exist_ok=True)
@@ -1026,7 +1033,8 @@ def main():
 
     print(f"forcing-gefs: {era.name}, {era.members} members, "
           f"{len(era.inits)} init/day, {era.step} h output, {era.grid}")
-    print(f"forcing-gefs: {args.domain} box {box['west']:.3f} to "
+    print(f"forcing-gefs: covering {', '.join(covers)}")
+    print(f"forcing-gefs: box {box['west']:.3f} to "
           f"{box['east']:.3f} east, {box['south']:.3f} to "
           f"{box['north']:.3f} north")
     shift = not args.no_height_shift
@@ -1038,8 +1046,8 @@ def main():
              f"table's z_bot does not agree with"))
     for index in range(args.members):
         target, packed, worst, undetermined = build(
-            era, index, start, end, leads, cache, args.out, box, args.domain,
-            shift)
+            era, index, start, end, leads, cache, args.out, box,
+            ", ".join(covers), shift)
         hours, cube = packed["DSWRF"]
         residue = " ".join(f"{name} {low:.3g}" for name, low in worst.items()
                            if low < 0.0)

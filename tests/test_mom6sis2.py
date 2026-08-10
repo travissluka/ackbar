@@ -86,6 +86,17 @@ a title nobody reads
 """
 
 
+def _hgrid(path, west, east, south, north):
+    """A supergrid covering a rectangle, which is all the coverage check reads."""
+    lon, lat = np.meshgrid(np.linspace(west, east, 5),
+                           np.linspace(south, north, 5))
+    with netCDF4.Dataset(path, "w") as f:
+        f.createDimension("ny", lat.shape[0])
+        f.createDimension("nx", lat.shape[1])
+        f.createVariable("x", "f8", ("ny", "nx"))[:] = lon
+        f.createVariable("y", "f8", ("ny", "nx"))[:] = lat
+
+
 @pytest.fixture
 def base(tmp_path):
     """A stand-in for a case's text half."""
@@ -110,8 +121,11 @@ def data(tmp_path):
     """A stand-in for a case's data half, which is a separate directory."""
     target = tmp_path / "data" / "INPUT"
     target.mkdir(parents=True)
-    for name in ("grid_spec.nc", "ocean_hgrid.nc", "JRA_tas.nc"):
+    for name in ("grid_spec.nc", "JRA_tas.nc"):
         (target / name).write_bytes(b"netcdf\n")
+    # A real one, not a placeholder: staging reads it to check that the forcing
+    # archive reaches this domain, which it can only do against a grid.
+    _hgrid(target / "ocean_hgrid.nc", 262.0, 283.0, 18.0, 31.0)
     return target
 
 
@@ -1232,12 +1246,19 @@ def test_the_diurnal_flag_without_a_data_table_is_refused(env, forcing_files):
 # declaration, runs to completion with about ten per cent too little turbulent
 # cooling, and reports success, so the file has to say which it is.
 
-def _archive(directory, height):
-    """A minimal `atm.nc` of the shape the fetchers write."""
+def _archive(directory, height, west=258.0, east=287.0, south=14.0, north=35.0):
+    """A minimal `atm.nc` of the shape the fetchers write.
+
+    Its box covers the `data` fixture's grid by default, because a staged file
+    is checked for coverage as well as for its height and a box that stops
+    inside the domain is refused.
+    """
+    x = np.arange(west, east + 0.125, 0.25)
+    y = np.arange(south, north + 0.125, 0.25)
     hours = np.array([0.0, 3.0])
-    series = {name: (hours, np.ones((2, 2, 2))) for name in forcing.FIELDS}
-    forcing.write_atm(directory / "atm.nc", np.array([260.0, 261.0]),
-                      np.array([10.0, 11.0]), datetime(2015, 7, 12),
+    series = {name: (hours, np.ones((2, y.size, x.size)))
+              for name in forcing.FIELDS}
+    forcing.write_atm(directory / "atm.nc", x, y, datetime(2015, 7, 12),
                       series, "gefs", "gom_25km", scalar_height=height)
 
 
@@ -1271,6 +1292,19 @@ def test_an_archive_that_will_not_say_its_height_is_refused(env, forcing_files,
     with netCDF4.Dataset(data / "atm.nc", "a") as f:
         f.delncattr(forcing.HEIGHT_ATTRIBUTE)
     with pytest.raises(mom6sis2.ModelError, match="no-height-shift"):
+        staged(env)
+
+
+def test_an_archive_that_stops_inside_this_domain_is_refused(env, forcing_files,
+                                                             data):
+    """The failure keying the archive by purpose could introduce: one archive
+    serves a family of domains, so its box is only as wide as the domains that
+    were staged when it was built. A domain reaching past it is not an error in
+    FMS, which fills from the nearest source cell and runs."""
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    _archive(data, forcing.REFERENCE_HEIGHT, east=280.0)
+    with pytest.raises(mom6sis2.ModelError, match="does not cover"):
         staged(env)
 
 

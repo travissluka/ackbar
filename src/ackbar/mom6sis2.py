@@ -51,7 +51,7 @@ from pathlib import Path
 from . import stochastic
 # Not `from . import forcing`: `stage` binds a local named `forcing` for the
 # SIS_forcing half of a source, which would shadow the module.
-from .forcing import assert_reference_height, table_files
+from .forcing import assert_covers, assert_reference_height, table_files
 from .config.jobtime import cycle_time, member_dir, render, symbols
 
 #: A fourth MOM6 parameter file, written per member and read only by the
@@ -300,13 +300,22 @@ def stage(config, run, cycle, task, *, source, member=None):
     # `validate._forcing_table_files`'s question, asked before anything is
     # submitted, and asking it twice here would report the same problem in a
     # worse place.
+    #
+    # And it has to reach this domain. The archive is keyed by purpose rather
+    # than by domain, so one file serves a family of resolutions and the box it
+    # was cut with is a property of which domains were staged when it was built.
+    # A domain the box does not reach reads its outermost row from the nearest
+    # source cell, which is a plausible field and no error at all.
     if data_table:
+        grid = run / "INPUT" / "ocean_hgrid.nc"
         for name in table_files(data_table):
             supplied = run / "INPUT" / name
             if not supplied.exists():
                 continue
             try:
                 assert_reference_height(supplied)
+                if grid.exists():
+                    assert_covers(supplied, grid)
             except ValueError as error:
                 raise ModelError(str(error)) from error
 

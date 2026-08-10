@@ -12,9 +12,9 @@
 # forecast was looking. Real forecast uncertainty about the actual verifying
 # date, in physically calibrated units, with no amplitude to tune.
 #
-#     tools/forcing-gefs.py 2015-07-10 2015-07-28 --leads 12,36,60,84,108 \
-#         --members 21 --domain gom_25km \
-#         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+#     tools/forcing-gefs.py 2015-07-10 2015-09-01 --leads 12,36,60,84,108 \
+#         --members 21 --family gom \
+#         --out $ACKBAR_STATIC_ROOT/forcing/gom_exp/gefs
 #
 # **Count the runs, not the members.** `ensemble.size: N` with `control: true`
 # is N+1 runs, `mem000` through `memN`, and each needs its own atmosphere. A

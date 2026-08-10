@@ -14,12 +14,12 @@ surface temperature analysis error of about 0.15.
 ## The archive
 
 ```
-$ACKBAR_STATIC_ROOT/forcing/<domain>/<source>/mem000.nc
-                                              mem001.nc
-                                              ...
+$ACKBAR_STATIC_ROOT/forcing/<purpose>/<source>/mem000.nc
+                                               mem001.nc
+                                               ...
 ```
 
-One file per member per source per domain, all sources normalized into one shape.
+One file per member per source per purpose, all sources normalized into one shape.
 What a file is called inside a run directory is the stager's business, not the
 archive's; the boundary archive uses the same layout so that one per-member
 overlay mechanism serves both.
@@ -29,13 +29,44 @@ file**, rather than the stager falling back when a member is missing. Fallback
 logic is how "which forcing did member 7 read" stops being answerable; with
 symlinks it is one `readlink`.
 
-## The box comes from the domain's grid
+## The key is the purpose, not the domain
+
+A purpose is what the files are *for*: `gom_truth` is the nature run's
+atmosphere, `gom_exp` is the one every experiment reads, and the two exist
+because the OSSE's whole design is that truth and experiments see different
+weather. **Keying by domain instead is the tempting mistake, and it has the
+relationship exactly backwards.** Both archives sit on the source product's own
+quarter degree grid and FMS interpolates onto the model grid when the model
+runs, so nothing in a forcing file is a function of the model's resolution:
+`gom_12km` and `gom_25km` reading one atmosphere is correct, and truth and
+experiment sharing one is the thing the twin exists to prevent.
+
+An experiment states its purpose (`forcing_purpose` in its `vars`) and the
+default is `gom_exp`, so the truth run is the one that has to say otherwise.
+
+## The box comes from a family of grids
 
 `domain_box` reads `$ACKBAR_STATIC_ROOT/domain/<domain>/INPUT/ocean_hgrid.nc`,
 takes the extent of the supergrid rather than its corners, and pads it by
 `MARGIN`, four degrees. `fetch-glorys.py` builds its GLORYS request the same way
 for the same reason, so the two offline stages agree on where a domain is by
 construction rather than by two constants staying in step.
+
+**A purpose serves a family, so the box is a union.** `family_box("gom")` is the
+union of every staged `gom_*` domain's box, because `gom_exp` forces `gom_25km`
+today and could force `gom_12km`, `gom_8km` or `gom_4km` tomorrow. Over the Gulf
+the four grids differ by under a tenth of a degree, so the union costs at most
+one source cell on an edge; the point is not the size but that the archive
+cannot be cut for whichever domain happened to run first.
+
+The family is discovered from the static root each time rather than listed, so a
+domain staged later widens the next fetch by itself. For an archive already on
+disk that is not enough, so the two ends are joined: the domains a file covered
+are written onto it, and `forcing.assert_covers` checks at stage time that the
+domain being run sits inside the file's axes with `EDGE_CELLS` to spare. A
+domain outside it fails in the job that stages it. Without that check it would
+not fail at all: FMS fills from the nearest source cell, so the model runs and
+its outermost row is quietly wrong.
 
 **Four degrees is not decoration.** FMS interpolates forcing onto the model grid
 with `bilinear` and `bicubic`, and a bicubic stencil reaches two source cells
@@ -45,19 +76,21 @@ four cells of the coarsest GEFS era, which is the one that sets the floor.
 
 Two consequences, both deliberate:
 
-- **The archive is keyed by domain**, because the four Gulf resolutions do not
-  quite share a footprint (`gom_25km` starts at 17.995N, `gom_12km` at 18.058N).
-  One fetch serving the family would mean one of them reading a box that stops
-  inside it, and the failure would be at the grid edge where it is least visible.
+- **One fetch serves the family, and the union is why that is safe.** The four
+  Gulf resolutions do not quite share a footprint (`gom_25km` starts at 17.995N,
+  `gom_12km` at 18.058N), and cutting to one of them would leave another reading
+  a box that stops inside it, at the grid edge where it is least visible. Taking
+  the union costs one source cell and removes the question.
 - **A global domain takes the whole globe**, and a regional domain straddling the
   source's longitude seam is refused by name rather than half-handled: that box
   is two slices and every reader here takes one. Nothing in the repository needs
   it, so it is a message and not a code path.
 
 The box written into each file's `box` attribute is the axes actually written,
-not the request, so it says what is in the file. `domain` is an attribute too:
-the path says which domain a file was cut for, and a file that has been moved
-does not.
+not the request, so it says what is in the file. `covers` is an attribute too,
+naming the domains the box was built for, because a purpose-keyed path cannot
+say it: `forcing/gom_exp/gefs` says what the files are for and not which grids
+they reach.
 
 ## The file
 
@@ -289,9 +322,11 @@ with per-member boundaries.
 
 ## Not built yet
 
-- The ERA5 and deterministic-GEFS source layers. `forcing/gefs-ensemble` is the
-  only source layer in the tree; `tools/forcing-era5.py` builds an archive that
-  no layer yet reads.
-- The ERA5-forced truth run, without which there is no skill number.
+- The deterministic-GEFS source layer. `forcing/gefs-ensemble` and
+  `forcing/era5` are the two in the tree.
+- The ERA5-forced truth run, without which there is no skill number. The archive
+  and the layer both exist now; `experiments/osse-truth.yaml` still inherits no
+  forcing source, so it runs on the CORE climatology until it inherits
+  `forcing/era5` and sets `forcing_purpose: gom_truth`.
 - The lagged-difference scheme, for member counts above what a ladder holds.
 - The two middle GEFS eras.

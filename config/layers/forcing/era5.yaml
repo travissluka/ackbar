@@ -1,0 +1,32 @@
+# ERA5, one atmosphere for every member: the deterministic source.
+#
+# This is the truth run's half of the fraternal twin. ERA5 is a reanalysis, so
+# it is the weather that actually happened, and the experiments read a GEFS
+# forecast of it through `forcing/gefs-ensemble`. An OSSE whose truth and whose
+# experiments share an atmosphere is scoring the analysis against a nature run
+# that had no weather the analysis did not already know, which is why these are
+# two layers and not one.
+#
+# Set `forcing_purpose: gom_truth` in the experiment that inherits this. The
+# default is `gom_exp`, because most experiments want the experiment archive,
+# and the truth is the one run that has to say otherwise. The purpose is not
+# implied by the source: `gom_exp` could hold ERA5 the day someone wants an
+# experiment forced by the truth's own atmosphere, and that is a real
+# configuration rather than a mistake to prevent.
+#
+#     tools/forcing-era5.py 2015-06-01 2015-09-03 --family gom \
+#         --out $ACKBAR_STATIC_ROOT/forcing/gom_truth/era5
+#
+# **One realization, and every member still resolves to a path.** The template
+# carries `{{member_dir}}` like the ensemble layer's, so a run records which
+# file it read rather than falling back to a shared copy when a member has
+# nothing of its own. A single member run needs only `mem000.nc`; an ensemble on
+# a deterministic source needs the rest materialized as symlinks to it, which is
+# the archive's job and not the stager's. See docs/forcing.md.
+
+inherit:
+  - forcing/common
+
+ensemble:
+  inputs:
+    atm.nc: $(forcing_archive)/era5/{{member_dir}}.nc

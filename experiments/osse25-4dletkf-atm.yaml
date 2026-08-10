@@ -33,9 +33,9 @@
 # single lead's and a rank histogram will not be flat even with a perfect filter.
 # `tools/forcing-gefs.py` carries the argument.
 #
-#     tools/forcing-gefs.py 2015-07-10 2015-07-28 --leads 12,36,60,84,108 \
-#         --members 21 --domain gom_25km \
-#         --out $ACKBAR_STATIC_ROOT/forcing/gom_25km/gefs
+#     tools/forcing-gefs.py 2015-07-10 2015-09-01 --leads 12,36,60,84,108 \
+#         --members 21 --family gom \
+#         --out $ACKBAR_STATIC_ROOT/forcing/gom_exp/gefs
 #
 # Ten cycles, against the first ten of `osse25-4dletkf`.
 
