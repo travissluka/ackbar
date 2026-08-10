@@ -189,14 +189,30 @@ larger questions.
   mechanisms. With no perturbed forcing and a time-lagged ensemble, relaxation
   to the prior spread is the only thing holding the spread up at all.
 
-## The mass field is never written back, and whether that is wrong depends on the solver
+## The mass field, and why writing it back does not deliver the analysed sea level
 
-`sea_water_cell_thickness` is a *background* variable and not an *analysis*
-variable in every DA layer, and `ackbar.writeback` writes exactly the analysis
-list. Measured across `osse25-4dletkf`, `osse25-3dfgat` and `osse25-hybrid`, the
-control member's analysed restart minus its own background gives `max|dh| = 0`
-in all three, while `ave_ssh` moves by up to 0.18 m. `ave_ssh` is a diagnostic
-MOM6 recomputes, so that write is discarded at the first step.
+`sea_water_cell_thickness` is a *background* variable in every DA layer and an
+*analysis* variable only where an experiment names it, and `ackbar.writeback`
+writes exactly the analysis list. `writeback.place_thickness` is what writes it
+when named, by scaling each column rather than writing the analysis cell by
+cell; that function carries the recipe and the argument for it.
+
+**Three fields in the restart claim to be the free surface, and only one is the
+state.** `h` is the state. `sfc` is `CS%eta`, the split-RK2 dynamics' free
+surface (`MOM_dynamics_split_RK2.F90`). `ave_ssh` is the coupler-facing sea
+level, averaged over the coupling step and inverse-barometer adjusted
+(`MOM.F90`). Both `sfc` and `ave_ssh` are read back from the restart when
+present and recomputed from `h` only when absent, so the claim this section used
+to make, that `ave_ssh` is "a diagnostic MOM6 recomputes, so that write is
+discarded at the first step", was too strong. It is read. It is simply not
+dynamical, and it is refilled from the model's own diagnosis at the first
+coupling step.
+
+A writeback that moves `h` and leaves `sfc` therefore hands the barotropic
+solver a free surface disagreeing with `sum(h)` by exactly the increment. MOM6
+closes that gap itself, through `bt_mass_source` (`MOM_barotropic.F90`), which
+forms `d_eta = eta_h - eta` and applies it as a mass source, so `h` wins;
+`BOUND_BT_CORRECTION = True` caps the rate at which it does.
 
 **Whether that loses anything is a different question for each solver, and the
 answer turns on `BOUSSINESQ = True`.** The model conserves volume, not mass, so
@@ -210,12 +226,20 @@ until the free surface matches. Steric sea level here is something the model
   `unbalanced ssh` at zero its whole SSH increment is steric by construction, so
   the temperature and salinity increment *is* the sea level increment, written
   in the field that carries it, and the model realizes the height over the
-  following hours. Writing `h` as well would apply the same information twice:
-  once as the density anomaly and again as the volume that anomaly implies.
-  Skipping it is correct rather than merely harmless.
+  following hours.
 
-- **An ensemble filter loses the barotropic part, and that needs stating
-  carefully, because the obvious version of the claim is wrong.** The ensemble
+  The reason given here used to be that writing `h` too "would apply the same
+  information twice, once as the density anomaly and again as the volume that
+  anomaly implies". **That reasoning is wrong and the conclusion survives it.**
+  The model relaxes towards hydrostatic and barotropic balance rather than
+  adding a steric response on top of whatever surface it was handed, so a
+  pre-balanced state is reached sooner, not twice over. What makes skipping `h`
+  correct here is that the variational SSH increment is a deterministic function
+  of the T and S increment the model already receives, so nothing is lost by
+  omitting it, only a few hours of adjustment.
+
+- **An ensemble filter has no balance operator, and its increment is coherent
+  anyway.** The ensemble
   component carries no balance operator, only `covariance model`, `members` and
   `localization`. It does not need one: localization here is horizontal and
   there is no cross-variable localization, so the covariance is fully
@@ -228,43 +252,116 @@ until the free surface matches. Steric sea level here is something the model
   So the filter's increment is coherent, and `h` is part of it: `h` is in
   `background variables`, and `oops::LocalEnsembleDA` sets the increment
   variables to the state variables when no `increment variables` key is given,
-  which ACKBAR's template does not give. Read `ocn.incr.incr.*.nc` rather than
-  differencing two states, and `osse25-4dletkf`'s control increment at
-  2015-08-01 is `Temp` 0.2546 rms, `Salt` 0.0628, **`h` 0.0660**, `ave_ssh`
-  0.0095. Summed over levels the thickness increment is **2.1 cm rms of sea
-  level against a 0.95 cm `ave_ssh` increment**, so the mass field carries more
-  than twice the sea level signal and it is the part discarded.
+  which ACKBAR's template does not give.
 
-  What that costs is *not* the whole sea level constraint, because the
-  temperature and salinity increment is written and the model regenerates the
-  steric response from it. It is the **barotropic residual**: the volume
-  redistribution the ensemble inferred, with no density anomaly behind it, which
-  nothing else reconstructs. The same omission also means RTPS never reaches the
-  mass field, whose spread decays from 0.233 to 0.116 over twenty cycles with no
-  inflation applied to it at all.
+- **A hybrid is a mixture**, and the ensemble half is where the question below
+  applies.
 
-- **A hybrid is a mixture**, and the ensemble half's barotropic contribution is
-  the part that is lost.
+### The premise this section used to rest on does not reproduce
 
-The tempting next step is to blame this for the observation-space ranking, which
-over three shared cycles is monotone in how much of the covariance is static
-(`adt_hy2a` at +37.2%, +28.6% and +1.7% for 3D-FGAT, the hybrid and the EnVar,
-with the SST platforms retaining 65 to 72% of 3D-FGAT's skill where the
-altimeters retain 5 to 29%). **Do not.** Since the written temperature and
-salinity increment carries the steric response, altimetry does reach the ocean
-without `h`, and a twenty member ensemble that samples dense local SST covariance
-well and deep mass structure badly predicts the same ranking. The discriminating
-run is one short EnVar with `sea_water_cell_thickness` added to the analysis
-variables: if altimeter skill jumps it is the writeback, and if not it is the
-covariance.
+It claimed that the control increment gives "2.1 cm rms of sea level against a
+0.95 cm `ave_ssh` increment, so the mass field carries more than twice the sea
+level signal and it is the part discarded". **That sentence is what justified
+writing the mass field back at all, so it is recorded as withdrawn rather than
+quietly renumbered.** Read from `ocn.incr.incr.*.nc` directly, control member,
+on two cycles: `sum(dh)` 0.0227 m against `d(ave_ssh)` 0.0224 m, and 0.0251
+against 0.0248. Ratio 1.01 and 1.02, correlation 0.98 to 0.99, regression slope
+1.00. The two fields carry one signal, so there is no separable "barotropic
+residual" that `h` holds and `ave_ssh` lacks.
 
-So the fix is not "add `sea_water_cell_thickness` to every analysis variable
-list". It is to add it to the *ensemble* solvers, where the increment exists and
-is thrown away, and to leave the balanced variational path alone. And it needs
-the recipe `tools/ensemble-recenter.py` already derives: adding the offset per
-layer drives 0.8% of this domain's cells negative, which is the `implied h<0`
-crash, while scaling each column by `(total + delta)/total` moves exactly the
-column integral and preserves positivity by construction.
+Distrust anything here that differences `bkg/` records instead of reading the
+increment file. A `bkg/` record disagrees with the background restart in `rst/`
+by up to 7.8 m in `h`. That is an open question of its own and a more serious
+one, because `tools/spread-report.py` reads `bkg/` records exclusively.
+
+### Where the analysed sea level actually goes
+
+It is written twice already, and neither route is `h`.
+
+- **The steric part travels in temperature and salinity.** The steric height
+  implied by the increment's own T and S, `sum_k [alpha_k dT_k - beta_k dS_k]
+  h_k` with alpha and beta evaluated at the background state, correlates with
+  the analysed `ave_ssh` increment at **0.82** on both measured cycles, with
+  regression slopes of 0.78 and 0.91 and matching magnitudes. The model receives
+  that and regenerates the height over the following hours.
+- **The geostrophic part travels in the velocities.** The surface geostrophic
+  velocity implied by the analysed sea level increment correlates with the
+  increment's own surface `u` and `v` at **0.46 to 0.52**, amplitudes within
+  10%. The members are balanced states, so their velocity and sea level
+  perturbations are mutually geostrophic and the filter's increment inherits it.
+
+What is left over has neither a density signature nor a geostrophic one: a
+sub-deformation-scale mass anomaly. Handing one of those to a rotating fluid
+poses a Rossby adjustment problem whose answer is standard. The final state is
+set by the potential vorticity, the retained fraction of the height anomaly goes
+roughly as `L^2 / (L^2 + Ld^2)`, and below the deformation radius the mass
+anomaly radiates away as gravity waves while the velocity field survives. On
+`gom_25km`, where `Ld` is about 45 km and localization is 1.5 Rossby radii, a
+written thickness increment retains about 10% of its amplitude after a day and
+its residual correlates with what was applied at **+0.04**. What survives is
+unrelated adjustment, not a damped copy.
+
+So writing `h` for an ensemble solver is not wrong, and it is not a fix either.
+It sends a third copy of information the analysis already sent twice, plus a
+residual the model is obliged to radiate. It does let RTPS reach the mass field,
+whose spread otherwise decays from 0.233 to 0.116 over twenty cycles with no
+inflation applied to it at all, but a spread gain that radiates within the cycle
+is not a spread gain at the next analysis time.
+
+When it is written, it must be written as a column scaling. Writing the analysis
+cell by cell is a model crash rather than a bad answer: the analysis itself puts
+0.30% of this domain's cells at or below zero thickness, which MOM6 reports
+several steps downstream as `adjust_interface_motion: implied h<0`. Scaling each
+column by `(total + delta) / total` moves exactly the column integral and
+preserves positivity by construction, which is what `writeback.place_thickness`
+and `tools/ensemble-recenter.py` both do.
+
+### `sfc` is worth fixing, and fixing it changes nothing
+
+Moving `sfc` by the same column delta makes the restart internally consistent at
+time zero rather than after a few barotropic sub-steps, and it is worth doing on
+those grounds alone. It does not change the outcome. Retention rises from 10% to
+15% of the applied amplitude, but the projection of the residual onto the
+increment is 0.0042 without it and 0.0044 with it, so the extra is uncorrelated
+adjustment rather than better-preserved signal. It should not be described as
+harmful. Any claim that it is, resting on wall-clock run times, is measuring
+contention on a box that is also running an experiment.
+
+### The resolution dependence, which is the part that generalizes
+
+The controlling parameter is `L / Ld`, the increment's horizontal scale against
+the deformation radius, and it is not fixed across this project's domains.
+
+- On the regional GoM domains localization is 1.5 Rossby radii, so `L` tracks
+  `Ld` by construction and the ratio stays near one. Going from 25 km to 4 km
+  resolves finer structure and pushes more of the increment below `Ld`, so more
+  of the mass anomaly radiates and **the conclusion strengthens**. Sampling
+  error argues the same way: twenty members against far more degrees of freedom
+  makes the non-steric residual likelier to be noise, and writing it would put
+  that noise straight into the free surface.
+- On a coarse global domain the localization radius falls below the grid and is
+  floored at two grid cells, so `L` is set by the grid and exceeds `Ld` widely,
+  most of all at high latitude where `Ld` collapses. In that regime the mass
+  field is the retained quantity rather than the radiated one, and **this
+  section's conclusion may reverse**. `OM_1deg` and the high-latitude part of
+  `OM4_025` are places to re-measure rather than to assume.
+
+### The observation-space ranking
+
+The ranking over three shared cycles is monotone in how much of the covariance
+is static (`adt_hy2a` at +37.2%, +28.6% and +1.7% for 3D-FGAT, the hybrid and
+the EnVar, with the SST platforms retaining 65 to 72% of 3D-FGAT's skill where
+the altimeters retain 5 to 29%). This section used to propose one short EnVar
+with `sea_water_cell_thickness` added to the analysis variables as the
+discriminating run. **That run is no longer worth its cycles.** Sea level does
+reach the model, through T and S at correlation 0.82 and through the velocities
+at 0.5, so the writeback is not what costs the altimeters their skill. The
+remaining candidate is the covariance, which is what a twenty member ensemble
+sampling dense local SST well and deep mass structure badly would predict.
+
+That last step is an inference from the delivery routes above, not a measurement
+of altimeter skill, and it stays labelled as one until an experiment says
+otherwise.
 
 Two settings changed alongside them, neither a placeholder and both worth
 recording because they are departures from soca-science:
