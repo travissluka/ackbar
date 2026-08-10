@@ -248,6 +248,21 @@ OWNER = "tier2-owner"
 _ME = str(os.getpid())
 
 
+def _alive(pid):
+    """Whether a pid from a mark is still running. A stale mark is not a claim.
+
+    Signal 0 checks for existence without delivering anything. A pid this user
+    does not own raises PermissionError, which still means it exists.
+    """
+    try:
+        os.kill(int(pid), 0)
+    except (ValueError, ProcessLookupError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _claim(name):
     """Mark an experiment as this process's, as soon as it exists."""
     site = load_site()
@@ -274,11 +289,24 @@ def _refuse_if_not_ours(name, live):
     A live job in this experiment's ledger that this process did not submit is
     somebody else's run, and there is no repair for having deleted it.
     """
-    if not live:
-        return
     mark = Path(load_site()["output_root"]) / name / OWNER
-    owner = mark.read_text().strip() if mark.exists() else "unknown"
+    owner = mark.read_text().strip() if mark.exists() else ""
     if owner == _ME:
+        return
+    # The mark is checked before the ledger, not after. Between another run's
+    # `create` and its first ledger write there is a window where the mark is
+    # there and `live` is still empty, and deciding on `live` alone deletes the
+    # experiment inside it. Short, but the mark is the cheaper evidence and it
+    # exists first.
+    if owner and owner != _ME and _alive(owner):
+        raise pytest.UsageError(
+            f"experiment {name!r} was created by process {owner}, which is "
+            f"still running, so another tier 2 run owns it. These tests share "
+            f"fixed experiment names in one output root and cannot run twice "
+            f"at once. Refusing to delete it: wait for the other run to "
+            f"finish, or give this one its own ACKBAR_OUTPUT_ROOT."
+        )
+    if not live:
         return
     raise pytest.UsageError(
         f"experiment {name!r} has live job(s) {sorted(live)} and belongs to "
@@ -393,6 +421,61 @@ def _outcomes_now(paths):
 # One experiment, several questions. Cycling, cleanup and the ledger are all
 # properties of the same clean run, and asking each of them its own 40 second
 # run would triple the wall clock to learn nothing extra.
+
+# --- refusing a second run ---------------------------------------------------
+#
+# These do not submit anything. They are here rather than in a tier 0 module
+# because `_purge` and the mark are this file's machinery, and a copy of them
+# elsewhere would keep passing while this file changed.
+
+
+def test_a_live_mark_from_another_process_stops_the_purge():
+    """The refusal that turns a 420 second mystery into a message.
+
+    Pid 1 stands in for another pytest: it exists, and it is not us.
+    """
+    site = load_site()
+    name = "t2_not_ours"
+    mark = Path(site["output_root"]) / name / OWNER
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mark.write_text("1\n")
+        with pytest.raises(pytest.UsageError, match="another tier 2 run"):
+            _refuse_if_not_ours(name, set())
+    finally:
+        shutil.rmtree(mark.parent, ignore_errors=True)
+
+
+def test_a_stale_mark_does_not_block_anything():
+    """A crashed run leaves its mark behind, and the next run has to proceed.
+
+    A refusal that outlives the process it protects is a suite nobody can run.
+    """
+    site = load_site()
+    name = "t2_stale"
+    mark = Path(site["output_root"]) / name / OWNER
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        # A pid that cannot be running: the kernel's maximum plus one.
+        mark.write_text("4194305\n")
+        _refuse_if_not_ours(name, set())
+    finally:
+        shutil.rmtree(mark.parent, ignore_errors=True)
+
+
+def test_our_own_mark_is_not_an_obstacle():
+    """Re-running `_purge` on this process's own leftovers is the normal path,
+    and it happens at the top of every experiment fixture."""
+    site = load_site()
+    name = "t2_ours"
+    mark = Path(site["output_root"]) / name / OWNER
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mark.write_text(_ME + "\n")
+        _refuse_if_not_ours(name, {"12345"})
+    finally:
+        shutil.rmtree(mark.parent, ignore_errors=True)
+
 
 @pytest.fixture(scope="module")
 def clean(runs):

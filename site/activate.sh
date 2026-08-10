@@ -66,13 +66,27 @@ esac
 # other checkout, which is the exact failure the block above exists to prevent
 # and the one that is invisible from inside a job.
 #
-# Probed through the venv's interpreter, not `python3` from PATH. A job runs
-# `sys.executable` baked in at create time, which is this venv, and the strict
-# editable finder this guards against would be installed in that venv rather
-# than in whatever `python3` resolves to. Probing the wrong interpreter is a
-# guard that cannot fire for its own case.
+# Probed through the interpreter a *job* will use, which is the venv's rather
+# than `python3` from PATH: `emit.py` bakes `sys.executable` into every job
+# script at create time, and the strict editable finder this guards against
+# would be installed in that venv rather than in whatever PATH resolves to.
+#
+# A worktree has no `.venv` of its own, and that is the case this whole block
+# exists for, so fall back to the checkout the worktree hangs off. Probing
+# `$ACKBAR_ROOT/.venv` alone was a guard that ran zero checks in exactly the
+# scenario it was written for, which is worse than the wrong interpreter it
+# replaced: that one at least said something.
 ackbar_python="$ACKBAR_ROOT/.venv/bin/python"
-if [ -x "$ackbar_python" ]; then
+if [ ! -x "$ackbar_python" ]; then
+  ackbar_main=$(git -C "$ACKBAR_ROOT" rev-parse --path-format=absolute \
+                    --git-common-dir 2>/dev/null)
+  [ -n "$ackbar_main" ] && ackbar_python="${ackbar_main%/.git}/.venv/bin/python"
+  unset ackbar_main
+fi
+if [ ! -x "$ackbar_python" ]; then
+  ackbar_python=$(command -v python3 2>/dev/null)
+fi
+if [ -n "$ackbar_python" ] && [ -x "$ackbar_python" ]; then
   ackbar_where=$("$ackbar_python" -c 'import ackbar,os;print(os.path.realpath(ackbar.__file__))' 2>/dev/null)
   case "$ackbar_where" in
     "$(cd "$ACKBAR_ROOT" && pwd -P)"/*) ;;
