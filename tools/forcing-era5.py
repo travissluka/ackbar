@@ -319,8 +319,15 @@ def main():
                 raise SystemExit(
                     f"forcing-era5: {name} and T2 disagree on time, so the "
                     f"height shift would combine two different hours")
-        t2, q2 = shift_to_10m(t2, q2, np.hypot(raw["U10"][1], raw["V10"][1]),
-                              raw["_TS"][1])
+        t2, q2, undetermined = shift_to_10m(
+            t2, q2, np.hypot(raw["U10"][1], raw["V10"][1]), raw["_TS"][1])
+        if undetermined:
+            # Reported rather than logged quietly: a column left at 2 m carries
+            # the bias the shift exists to remove. Stable air over a colder
+            # surface with almost no wind is where the inversion has no
+            # solution, so how many there are is a property of the weather.
+            print(f"forcing-era5: {undetermined} of {t2.size} columns left at "
+                  f"{PRODUCT_HEIGHT:.0f} m, unsolved by the shift", flush=True)
     series["T2"] = (raw["T2"][0], t2)
     series["Q2"] = (raw["_2d"][0], q2)
     for name in ("U10", "V10"):

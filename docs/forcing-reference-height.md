@@ -210,6 +210,16 @@ Where it comes from, per era in `tools/forcing-gefs.py`, and ERA5's own `skt` in
   It is in **`pgrb2bp5`**, the b-set, on a 0.5 degree grid: one message per lead file, with
   a `.idx`, so it is one range request rather than a 98 MB download.
 
+Both paths have been run against the real archives. A two member, one day
+`operational-quarter` build over `gom_25km` pulls 438.6 MB (435.4 MB of whole s-set files,
+2.6 MB of b-set ranges, 0.6 MB of indices) in about a minute and writes 119x88x8 files
+carrying `scalar_reference_height = 10.0`. Against an otherwise identical `--no-height-shift`
+build, the winds are bit identical, the scalars move in 94 per cent of columns, and over deep
+water the correction runs -0.32 to +0.12 K. `--no-height-shift` fetches no b-set data at all,
+so it does not download a field it will not use. The ERA5 side needs no credentials, reads
+`skt` from the same `e5.oper.an.sfc` family, and pulls 8.79 GB for one day because that
+mirror's files are whole months.
+
 **The byte range is load bearing and is not free.** `message_ranges` selects by forecast
 hour, and *every message in a per-lead file is at that lead*, so the hour alone keeps the
 whole file: measured at 102 MB pulled to read one 165 kB field. The b-set fetch passes a
@@ -248,6 +258,54 @@ One optimization was considered and declined: surface temperature is a prescribe
 condition, so it varies little with lead and probably little between members, and it could be
 fetched once per initialization. The byte range already makes it cheap, and the saving rests
 on an assumption about member variation that nothing has checked.
+
+### The inversion does not always have an answer
+
+**The fixed point iteration is not globally convergent, and real fields reach the corner where
+it is not.** Where the surface is colder than the air the 2 m to 10 m profile is steep enough
+that the under-relaxed step overshoots and grows: a measured GEFS column went 305 K, 402,
+1152, 6942, NaN in six passes, and `write_atm`'s non-finite check refused the whole file. That
+refusal is the system working, but it meant the archive could not be built at all.
+
+Three things were measured before choosing what to do:
+
+- **Stability is the discriminator, not wind.** The first columns found were also nearly calm,
+  which made light wind look like the cause. Over the whole box, unsolved columns run to
+  8 m s-1 while solved ones go down to 0.03 m s-1. What they share is `TS < T2`.
+- **More iterations do not help.** 12, 40 and 120 passes leave 656, 656 and 657 unsolved
+  columns of the same field. This is non-convergence, not an iteration budget.
+- **It does not touch open water.** A deep central Gulf window is 0 of 325 columns at every
+  iteration count, and 4 of 2600 column-times across the whole test archive. The six to nine
+  per cent figure is over the *padded* box, which reaches four degrees past the domain and is
+  largely land, at night, in January.
+
+So a column the inversion cannot solve is **left at its 2 m value**, and both fetchers print
+how many. Monin-Obukhov similarity is unreliable in that regime anyway, the turbulent fluxes
+there are near zero, and MOM6 takes forcing only over ocean, so declining to shift costs
+almost nothing and is the honest answer where the correction is not determined. The count is
+printed rather than logged quietly because each such column carries the bias the shift exists
+to remove, and how many there are is a property of the weather in the span.
+
+A column is accepted if it ends inside an envelope around its own 2 m values and has stopped
+moving. Both fields are tested, and the lower humidity bound is never below zero: the case
+that shows why is very dry air over a much colder surface, where the temperature settles to a
+perfectly plausible +4.09 K while the humidity walks to **-0.38 g/kg**, which would reach the
+model as real.
+
+Two things were tried and dropped, both because measurement said they earned nothing:
+
+- **Clamping each iterate as it went.** Judged by the same final rule, free and clamped
+  iteration accept 154036 and 154035 of 200000 sampled columns, differ on nine, and agree to
+  1.2e-3 K wherever both accept. One test of the envelope, at the end, is the whole of it.
+- **Rejecting any column the clamp had ever touched.** This looked like it was discarding
+  thousands of good answers; on inspection almost all of them were columns whose humidity had
+  gone negative and which *should* be discarded.
+
+The temperature envelope is 5 K against a largest real correction of 1.28 K, so it is
+comfortably outside. The humidity one is deliberately far looser than any physical specific
+humidity: at 5 g/kg it was binding on real corrections rather than catching runaways.
+Divergence in humidity always arrives with divergence in temperature, so the temperature bound
+is what catches it. Over open water the choice makes no measurable difference either way.
 
 ### Consequences
 

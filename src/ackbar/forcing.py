@@ -128,6 +128,45 @@ REFERENCE_HEIGHT = 10.0
 #: one, so the mismatch is forced by the products rather than by a fetch choice.
 PRODUCT_HEIGHT = 2.0
 
+#: How far the shift may move a column and still be believed.
+#:
+#: An acceptance envelope, not a bound applied during the solve. The inversion
+#: is a fixed point iteration that is **not** globally convergent: over a
+#: surface colder than the air the 2 m to 10 m profile is steep enough that the
+#: under-relaxed step overshoots and grows, and a real GEFS column walks 305 K
+#: to 402 to 1152 to 6942 to a NaN in six passes. A correction that ends outside
+#: this envelope was not determined, and the column keeps its 2 m values.
+#:
+#: **The two are not the same distance out, and that was measured rather than
+#: assumed.** Temperature moves 0.16 to 0.97 K in the documented cases and 1.28
+#: K at the extreme of a measured field, so 5 K is comfortably outside it.
+#: Humidity is not: at a 5 g/kg bound the largest correction admitted was
+#: 4.82 g/kg, meaning the bound had become binding and was deciding answers
+#: rather than catching runaways. It is set above any physical specific humidity
+#: instead, which lets those columns through at up to 9.7 g/kg. Divergence in
+#: humidity always arrives with divergence in temperature, so the temperature
+#: bound is what catches it and the humidity one only has to stay out of the
+#: way.
+#:
+#: **Over open water the choice makes no difference at all**: a deep central
+#: Gulf window is identical under both, dT -0.3189 to +0.1239 K either way. The
+#: columns the loosening admits are stable land points, where the correction is
+#: large, unreliable, and read by nothing, since MOM6 takes forcing only over
+#: ocean.
+MAX_TEMPERATURE_SHIFT = 5.0
+MAX_HUMIDITY_SHIFT = 2.0e-2
+
+#: How still the last iterate has to be for a column to count as solved.
+#:
+#: Measured, not guessed, and the first value tried was wrong. Across a swept
+#: grid of 236 physical states the median final step is 2e-8 K and the largest
+#: on a column that genuinely solves is 2.6e-4 K, so 1e-4 rejected a good
+#: column. This is forty times looser than that worst case and still two orders
+#: of magnitude below the smallest correction the shift makes anywhere (0.16 K),
+#: so it cannot reject a real correction and it still catches a column that is
+#: still moving. It is a backstop: the clamp is what identifies divergence.
+SETTLED = 1.0e-2
+
 #: Global attribute naming the height `T2` and `Q2` actually sit at.
 #:
 #: Recorded rather than assumed, and checked for presence rather than for a
@@ -316,19 +355,72 @@ def shift_to_10m(t2, q2, wind, ts, iterations=12, relaxation=0.8):
     it live in the archive rather than in a patched `surface_flux.F90`: one
     kelvin of error in *ts* leaves 2 to 7 W m-2 against the 38 to 105 W m-2 the
     shift removes.
+
+    Returns `(t10, q10, undetermined)`, where *undetermined* counts the columns
+    the inversion could not solve and which were therefore **left at their 2 m
+    values**. That count is returned rather than logged because a silent
+    fallback is the thing worth refusing: it is a small reintroduction of the
+    bias this function exists to remove, and it has to be visible to whoever
+    builds the archive.
+
+    **The iteration is not globally convergent, and real fields reach the
+    corner where it is not.** Air over a surface colder than itself makes the
+    2 m to 10 m profile steep enough that the step overshoots and grows without
+    bound. More iterations do not rescue it: 12, 40 and 120 passes leave 656,
+    656 and 657 unsolved columns of the same measured field.
+
+    Measured over the Gulf box in January, six to nine per cent of columns land
+    there, and **none of them are open water**: a deep central Gulf window is
+    0 of 325 at every iteration count. The box is padded four degrees past the
+    domain and the stable columns in it are land at night, which MOM6 does not
+    read. Monin-Obukhov similarity is unreliable in that regime anyway and the
+    fluxes there are near zero, so declining to shift is the honest answer where
+    the correction is not determined, and it is strictly better than the NaN
+    that reaches the archive otherwise.
     """
+    t2 = np.asarray(t2, dtype="f8")
+    q2 = np.asarray(q2, dtype="f8")
     qs = 0.98 * _qsat(ts)
-    t10 = np.array(t2, dtype="f8", copy=True)
-    q10 = np.array(q2, dtype="f8", copy=True)
-    for _ in range(iterations):
-        guess_t, guess_q = _profile_down(wind, t10, q10, ts, qs, PRODUCT_HEIGHT)
-        t10 += relaxation * (t2 - guess_t)
-        q10 += relaxation * (q2 - guess_q)
+    t10, q10 = t2.copy(), q2.copy()
+    low_t, high_t = t2 - MAX_TEMPERATURE_SHIFT, t2 + MAX_TEMPERATURE_SHIFT
     # A negative specific humidity is unphysical and would reach the model as
-    # one. The floor is a no-op in every regime these products produce, and it
-    # is here so that an outlier cannot put a negative humidity in an archive
-    # rather than because one has been seen.
-    return t10, np.maximum(q10, 0.0)
+    # one, so the lower bound is a floor as well as a clamp.
+    low_q = np.maximum(q2 - MAX_HUMIDITY_SHIFT, 0.0)
+    high_q = q2 + MAX_HUMIDITY_SHIFT
+    moved = np.full(np.shape(t2), np.inf)
+
+    # The iteration runs free. A diverging column overflows and then takes the
+    # square root of a negative drag coefficient; that is caught below, and the
+    # warnings it prints on the way are noise because the answer is discarded.
+    #
+    # Clamping each iterate into the envelope as it went was tried and dropped
+    # because it earns nothing: judged by the same final rule, free and clamped
+    # iteration accept 154036 and 154035 of 200000 sampled columns, differ on
+    # nine of them, and agree to 1.2e-3 K everywhere both accept. One test of
+    # the envelope, at the end, is the whole of it.
+    with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+        for _ in range(iterations):
+            guess_t, guess_q = _profile_down(wind, t10, q10, ts, qs,
+                                             PRODUCT_HEIGHT)
+            new_t = t10 + relaxation * (t2 - guess_t)
+            new_q = q10 + relaxation * (q2 - guess_q)
+            moved = np.abs(new_t - t10)
+            t10, q10 = new_t, new_q
+
+    # Judged on where the column ended. The envelope is the acceptance test and
+    # nothing else: a correction outside it was not determined, whatever the
+    # arithmetic did to arrive at it. The lower humidity bound is never below
+    # zero, so a column driven negative is rejected here rather than needing a
+    # floor of its own.
+    #
+    # NaN and inf fail every comparison, so they land in `~settled` without
+    # their own test. The step size is a backstop for a column drifting too
+    # slowly to leave the envelope inside the iteration count.
+    inside = ((t10 > low_t) & (t10 < high_t)
+              & (q10 > low_q) & (q10 < high_q))
+    settled = inside & (moved <= SETTLED)
+    return (np.where(settled, t10, t2), np.where(settled, q10, q2),
+            int(np.count_nonzero(~settled)))
 
 
 def regrid_linear(lon, lat, plane, to_lon, to_lat):

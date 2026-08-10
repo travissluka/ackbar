@@ -727,8 +727,9 @@ def floor_at_zero(name, plane, scale, where):
 def segment(era, init, member, lead, cache, box, shift=True):
     """One initialization's contribution: `era.inits` spacing of forcing.
 
-    Returns `{name: [(hours after init, plane)]}`, the grid, and the worst
-    negative excursion the de-averaging produced.
+    Returns `{name: [(hours after init, plane)]}`, the grid, the worst negative
+    excursion the de-averaging produced, and how many columns the height shift
+    could not solve and therefore left at 2 m.
     """
     span = 24 // len(era.inits)
     instants = list(range(lead, lead + span, era.step))
@@ -760,6 +761,7 @@ def segment(era, init, member, lead, cache, box, shift=True):
         found[key] = cube[0]
 
     series = {name: [] for name in FIELDS}
+    undetermined = 0
     for step in instants:
         if era.humidity == "spfh":
             q2 = found[("Q2", step)]
@@ -771,8 +773,9 @@ def segment(era, init, member, lead, cache, box, shift=True):
             # The bulk formula wants wind speed, not a component. The winds are
             # already at 10 m, so only the scalars move, and after this the
             # `z_bot = 10` in `data_table.atm` is true of all four.
-            t2, q2 = shift_to_10m(t2, q2, np.hypot(u10, v10),
-                                  found[(SURFACE, step)])
+            t2, q2, stuck = shift_to_10m(t2, q2, np.hypot(u10, v10),
+                                         found[(SURFACE, step)])
+            undetermined += stuck
         series["T2"].append((step, t2))
         series["Q2"].append((step, q2))
         series["U10"].append((step, u10))
@@ -783,7 +786,7 @@ def segment(era, init, member, lead, cache, box, shift=True):
     for name, entries in records.items():
         series[name].extend(entries)
 
-    return series, x, y, worst
+    return series, x, y, worst, undetermined
 
 
 def deaverage(era, found, spans, ends, lead, where=""):
@@ -863,6 +866,7 @@ def build(era, index, start, end, leads, cache, out, box, domain, shift=True):
     gathered = {name: ([], []) for name in FIELDS}
     grid = None
     worst = {name: 0.0 for name in WINDOWED}
+    undetermined = 0
 
     # The initializations are evenly spaced through the day from midnight, so
     # walking by the segment length from a midnight visits exactly them, for one
@@ -884,8 +888,9 @@ def build(era, index, start, end, leads, cache, out, box, domain, shift=True):
               - datetime.timedelta(hours=((lead + span) // 24 + 1) * 24))
     while cursor + datetime.timedelta(hours=lead) <= end:
         if cursor + datetime.timedelta(hours=lead + span) > start:
-            series, x, y, low = segment(era, cursor, member, lead, cache,
-                                        box, shift)
+            series, x, y, low, stuck = segment(era, cursor, member, lead,
+                                               cache, box, shift)
+            undetermined += stuck
             for name, value in low.items():
                 worst[name] = min(worst[name], value)
             if grid is None:
@@ -919,7 +924,7 @@ def build(era, index, start, end, leads, cache, out, box, domain, shift=True):
               source=f"GEFS {era.name} {member} at {lead} h lead, "
                      f"{era.bucket}", domain=domain,
               scalar_height=REFERENCE_HEIGHT if shift else PRODUCT_HEIGHT)
-    return target, packed, worst
+    return target, packed, worst, undetermined
 
 
 def main():
@@ -1032,15 +1037,24 @@ def main():
              f"{PRODUCT_HEIGHT:.0f} m as published, unshifted, which the data "
              f"table's z_bot does not agree with"))
     for index in range(args.members):
-        target, packed, worst = build(era, index, start, end, leads, cache,
-                                      args.out, box, args.domain, shift)
+        target, packed, worst, undetermined = build(
+            era, index, start, end, leads, cache, args.out, box, args.domain,
+            shift)
         hours, cube = packed["DSWRF"]
         residue = " ".join(f"{name} {low:.3g}" for name, low in worst.items()
                            if low < 0.0)
+        # Reported rather than logged quietly: a column left at 2 m is a column
+        # carrying the bias the shift exists to remove, and how many there are
+        # is a property of the weather in the span rather than a constant.
+        held = ""
+        if undetermined:
+            total = cube.shape[0] * cube.shape[1] * cube.shape[2]
+            held = (f", {undetermined} of {total} columns left at "
+                    f"{PRODUCT_HEIGHT:.0f} m, unsolved by the shift")
         print(f"forcing-gefs: {target}  {cube.shape[0]} records, "
               f"{hours[0]:+.1f} to {hours[-1]:+.1f} h"
-              + (f", floored at zero from {residue}" if residue else ""),
-              flush=True)
+              + (f", floored at zero from {residue}" if residue else "")
+              + held, flush=True)
 
     # The indices are kept for the whole run because every rung of the ladder
     # reads the same member's files again, and are the only thing left in the

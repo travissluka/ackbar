@@ -74,7 +74,7 @@ def test_the_vector_shift_matches_the_scalar_reference_on_the_documented_cases()
         state = _two_metre_state(sst, tair, rh, wind)
         want_t, want_q = REF.shift_up(
             state["wind"], state["t2"], state["q2"], state["ts"])
-        got_t, got_q = forcing.shift_to_10m(
+        got_t, got_q, _ = forcing.shift_to_10m(
             np.array([state["t2"]]), np.array([state["q2"]]),
             np.array([state["wind"]]), np.array([state["ts"]]))
         assert got_t[0] == pytest.approx(want_t, abs=1e-10), name
@@ -95,7 +95,7 @@ def test_the_vector_shift_matches_the_scalar_reference_across_a_swept_grid():
     the humidity floor, which is tested on its own and deliberately differs from
     the unfloored reference.
     """
-    wants, gots = [], []
+    compared, unsolved = 0, 0
     for sst in (12.0, 20.0, 28.0, 31.0):
         for offset in (-12.0, -4.0, 0.0, 3.0, 6.0):
             for rh in (0.4, 0.7, 0.95):
@@ -103,19 +103,28 @@ def test_the_vector_shift_matches_the_scalar_reference_across_a_swept_grid():
                     state = _two_metre_state(sst, sst + offset, rh, wind)
                     if not (state["q2"] > 0.0 and 230.0 < state["t2"] < 330.0):
                         continue
-                    wants.append(REF.shift_up(state["wind"], state["t2"],
-                                              state["q2"], state["ts"]))
-                    gots.append((state["t2"], state["q2"], state["wind"],
-                                 state["ts"]))
-    t2, q2, wind, ts = (np.array(column) for column in zip(*gots))
-    got_t, got_q = forcing.shift_to_10m(t2, q2, wind, ts)
-    want_t = np.array([w[0] for w in wants])
-    want_q = np.array([w[1] for w in wants])
+                    got_t, got_q, undetermined = forcing.shift_to_10m(
+                        np.array([state["t2"]]), np.array([state["q2"]]),
+                        np.array([state["wind"]]), np.array([state["ts"]]))
+                    if undetermined:
+                        # Divergent, so there is nothing to compare: the
+                        # reference has no answer here either, it simply does
+                        # not notice. `test_the_calm_stable_corner_...` covers
+                        # what happens instead.
+                        unsolved += 1
+                        continue
+                    want_t, want_q = REF.shift_up(
+                        state["wind"], state["t2"], state["q2"], state["ts"])
+                    assert got_t[0] == pytest.approx(want_t, abs=1e-10)
+                    assert got_q[0] == pytest.approx(want_q, abs=1e-15)
+                    compared += 1
+
     # Most of the grid survives the physicality filter; if a change to the
     # reference ever drops it to a handful this stops being a sweep.
-    assert len(wants) > 200
-    np.testing.assert_allclose(got_t, want_t, atol=1e-10, rtol=0)
-    np.testing.assert_allclose(got_q, want_q, atol=1e-15, rtol=0)
+    assert compared > 200
+    # Divergence is a corner, not the common case. If this grows, the fallback
+    # is doing more work than it should and the iteration needs looking at.
+    assert unsolved <= 3
 
 
 def test_the_shift_is_elementwise_over_a_plane():
@@ -129,10 +138,10 @@ def test_the_shift_is_elementwise_over_a_plane():
     wind = np.array([s["wind"] for s in states]).reshape(2, 4)
     ts = np.array([s["ts"] for s in states]).reshape(2, 4)
 
-    plane_t, plane_q = forcing.shift_to_10m(t2, q2, wind, ts)
+    plane_t, plane_q, _ = forcing.shift_to_10m(t2, q2, wind, ts)
     assert plane_t.shape == (2, 4)
     for index, state in enumerate(states):
-        one_t, one_q = forcing.shift_to_10m(
+        one_t, one_q, _ = forcing.shift_to_10m(
             np.array([state["t2"]]), np.array([state["q2"]]),
             np.array([state["wind"]]), np.array([state["ts"]]))
         assert plane_t.ravel()[index] == pytest.approx(one_t[0], abs=1e-12)
@@ -149,7 +158,7 @@ def test_the_shift_recovers_the_state_the_profile_came_from():
     """
     for name, sst, tair, rh, wind in CASES:
         state = _two_metre_state(sst, tair, rh, wind)
-        got_t, got_q = forcing.shift_to_10m(
+        got_t, got_q, _ = forcing.shift_to_10m(
             np.array([state["t2"]]), np.array([state["q2"]]),
             np.array([state["wind"]]), np.array([state["ts"]]))
         assert got_t[0] == pytest.approx(state["t10"], abs=1e-6), name
@@ -165,7 +174,7 @@ def test_the_shift_moves_the_air_away_from_the_sea_when_it_is_unstable():
     too little heat.
     """
     state = _two_metre_state(28.0, 24.0, 0.70, 8.0)
-    got_t, got_q = forcing.shift_to_10m(
+    got_t, got_q, _ = forcing.shift_to_10m(
         np.array([state["t2"]]), np.array([state["q2"]]),
         np.array([state["wind"]]), np.array([state["ts"]]))
     assert got_t[0] < state["t2"]
@@ -174,7 +183,7 @@ def test_the_shift_moves_the_air_away_from_the_sea_when_it_is_unstable():
 
 def test_the_shift_moves_the_air_toward_the_sea_when_it_is_stable():
     state = _two_metre_state(15.0, 18.0, 0.85, 6.0)
-    got_t, _got_q = forcing.shift_to_10m(
+    got_t, _got_q, _ = forcing.shift_to_10m(
         np.array([state["t2"]]), np.array([state["q2"]]),
         np.array([state["wind"]]), np.array([state["ts"]]))
     assert got_t[0] > state["t2"]
@@ -199,9 +208,128 @@ def test_a_surface_temperature_in_error_by_a_kelvin_still_lands_close():
         state = _two_metre_state(sst, tair, rh, wind)
         args = (np.array([state["t2"]]), np.array([state["q2"]]),
                 np.array([state["wind"]]))
-        exact_t, _ = forcing.shift_to_10m(*args, np.array([state["ts"]]))
-        off_t, _ = forcing.shift_to_10m(*args, np.array([state["ts"] + 1.0]))
+        exact_t, _, _ = forcing.shift_to_10m(*args, np.array([state["ts"]]))
+        off_t, _, _ = forcing.shift_to_10m(*args, np.array([state["ts"] + 1.0]))
         assert abs(off_t[0] - exact_t[0]) < 0.35, name
+
+
+def test_the_stable_corner_is_left_unshifted_rather_than_diverging():
+    """The regime that broke a real fetch, and the reason the fallback exists.
+
+    Air over a surface colder than itself. Found in operational GEFS over the
+    Gulf box in January, where the inversion walked 305 K to 402 to 1152 to 6942
+    to a NaN in six passes and `write_atm` refused the whole file.
+
+    **Stability is the discriminator, not wind.** The first columns found were
+    also nearly calm, which made light wind look like the cause; measured over
+    the box, unsolved columns run to 8 m/s while solved ones go down to
+    0.03 m/s. What they have in common is `TS < T2`.
+
+    More iterations do not help: 12, 40 and 120 give 656, 656 and 657 unsolved
+    on the same field, so this is non-convergence rather than an iteration
+    budget. The scalar reference diverges here identically, so it is a property
+    of the algorithm on real fields and not of the port. The swept-grid test
+    filtered this corner out as unphysical, which was true of the *synthetic*
+    states the reference builds there and false of the atmosphere.
+    """
+    # The measured sample: wind 0.78, T2 293.3, Q2 0.0115, TS 291.6.
+    t2 = np.array([293.316])
+    q2 = np.array([0.011497])
+    got_t, got_q, undetermined = forcing.shift_to_10m(
+        t2, q2, np.array([0.7826]), np.array([291.566]))
+
+    assert undetermined == 1
+    assert np.isfinite(got_t).all() and np.isfinite(got_q).all()
+    # Left where it was, rather than moved to a number nothing determined.
+    assert got_t[0] == t2[0]
+    assert got_q[0] == q2[0]
+
+
+def test_a_column_driven_to_a_negative_humidity_is_rejected_on_that_alone():
+    """Temperature can look perfectly reasonable while humidity has gone absurd.
+
+    A measured case: very dry air, 0.65 g/kg, over a surface twelve degrees
+    colder. The temperature settles to +4.09 K, which is large but inside the
+    envelope and would pass on its own. The humidity walks to -0.38 g/kg, and a
+    negative specific humidity would reach the model as real.
+
+    This is why the envelope is tested on both fields and why the lower humidity
+    bound is never allowed below zero. It also corrects an earlier reading of
+    this column as a good answer being discarded: it is not, and the count of
+    columns supposedly thrown away by an over-strict rule was mostly this.
+    """
+    got_t, got_q, undetermined = forcing.shift_to_10m(
+        np.array([280.1431]), np.array([0.000653]),
+        np.array([7.8780]), np.array([268.2612]))
+
+    assert undetermined == 1
+    assert got_t[0] == 280.1431      # left alone, despite a plausible dT
+    assert got_q[0] == 0.000653
+    assert got_q[0] > 0.0
+
+
+def test_no_accepted_correction_escapes_the_envelope():
+    """The guarantee the envelope buys, over a wide random sweep.
+
+    Sampled hard on the stable side, which is the misbehaving branch. Anything
+    the function hands back other than the input itself has to sit inside the
+    envelope, so a wild correction cannot reach an archive by being briefly
+    slow-moving on the last pass.
+    """
+    rng = np.random.default_rng(0)
+    base = rng.uniform(255.0, 305.0, 20000)
+    t2 = base
+    ts = base - rng.uniform(-6.0, 12.0, base.size)
+    q2 = np.maximum(rng.uniform(0.0002, 0.020, base.size), 1e-6)
+    wind = rng.uniform(0.02, 20.0, base.size)
+
+    got_t, got_q, _undetermined = forcing.shift_to_10m(t2, q2, wind, ts)
+    assert np.isfinite(got_t).all() and np.isfinite(got_q).all()
+    assert (np.abs(got_t - t2) <= forcing.MAX_TEMPERATURE_SHIFT).all()
+    assert (got_q >= 0.0).all()
+
+
+def test_a_column_that_solves_is_not_counted_as_undetermined():
+    """The fallback must not quietly swallow the cases that do work."""
+    for name, sst, tair, rh, wind in CASES:
+        state = _two_metre_state(sst, tair, rh, wind)
+        _t, _q, undetermined = forcing.shift_to_10m(
+            np.array([state["t2"]]), np.array([state["q2"]]),
+            np.array([state["wind"]]), np.array([state["ts"]]))
+        assert undetermined == 0, name
+
+
+def test_the_clamp_never_engages_on_a_column_that_solves():
+    """The envelope is a bound on divergence, not on the answer.
+
+    If it ever engaged on a real correction it would be silently changing one,
+    so the documented cases have to sit far inside it.
+    """
+    for name, sst, tair, rh, wind in CASES:
+        state = _two_metre_state(sst, tair, rh, wind)
+        got_t, _q, _u = forcing.shift_to_10m(
+            np.array([state["t2"]]), np.array([state["q2"]]),
+            np.array([state["wind"]]), np.array([state["ts"]]))
+        assert abs(got_t[0] - state["t2"]) < 0.2 * forcing.MAX_TEMPERATURE_SHIFT, name
+
+
+def test_the_undetermined_count_is_per_column_not_per_field():
+    """A bad column must not condemn the plane it is in.
+
+    The real field had thirty-five bad columns out of ten thousand, so a
+    fallback that gave up on the whole plane would throw away the correction
+    everywhere to protect a third of a per cent of it.
+    """
+    good = _two_metre_state(28.0, 24.0, 0.70, 8.0)
+    t2 = np.array([good["t2"], 293.316])
+    q2 = np.array([good["q2"], 0.011497])
+    wind = np.array([good["wind"], 0.7826])
+    ts = np.array([good["ts"], 291.566])
+
+    got_t, _q, undetermined = forcing.shift_to_10m(t2, q2, wind, ts)
+    assert undetermined == 1
+    assert got_t[0] == pytest.approx(good["t10"], abs=1e-6)   # still corrected
+    assert got_t[1] == t2[1]                                  # left alone
 
 
 def test_a_negative_humidity_cannot_reach_the_archive():
@@ -213,8 +341,8 @@ def test_a_negative_humidity_cannot_reach_the_archive():
     """
     t2 = np.array([250.0])
     q2 = np.array([1e-9])
-    got_t, got_q = forcing.shift_to_10m(t2, q2, np.array([20.0]),
-                                        np.array([248.0]))
+    got_t, got_q, _ = forcing.shift_to_10m(t2, q2, np.array([20.0]),
+                                           np.array([248.0]))
     assert np.isfinite(got_t).all()
     assert (got_q >= 0.0).all()
 
