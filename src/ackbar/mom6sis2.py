@@ -49,6 +49,9 @@ import subprocess
 from pathlib import Path
 
 from . import stochastic
+# Not `from . import forcing`: `stage` binds a local named `forcing` for the
+# SIS_forcing half of a source, which would shadow the module.
+from .forcing import assert_reference_height, table_files
 from .config.jobtime import cycle_time, member_dir, render, symbols
 
 #: A fourth MOM6 parameter file, written per member and read only by the
@@ -285,6 +288,27 @@ def stage(config, run, cycle, task, *, source, member=None):
 
     _input_dir(run, _path(model, "input"), source,
                overlay=member_inputs(config, cycle, member, task))
+
+    # Every forcing file the table reads has to say what height its scalars sit
+    # at, because the table declares one `z_bot` for the whole atmospheric state
+    # and an archive built before the height shift existed holds 2 m fields
+    # under a 10 m declaration. That runs to completion with about ten per cent
+    # too little turbulent cooling and reports success, so it is caught here
+    # rather than looked for afterwards in a sea surface temperature bias.
+    #
+    # Only files that are actually there: that something supplies each name is
+    # `validate._forcing_table_files`'s question, asked before anything is
+    # submitted, and asking it twice here would report the same problem in a
+    # worse place.
+    if data_table:
+        for name in table_files(data_table):
+            supplied = run / "INPUT" / name
+            if not supplied.exists():
+                continue
+            try:
+                assert_reference_height(supplied)
+            except ValueError as error:
+                raise ModelError(str(error)) from error
 
     # The stochastic physics, which is the one thing in a run directory that
     # differs between members. Both halves are written together or neither is:

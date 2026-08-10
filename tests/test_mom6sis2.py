@@ -17,9 +17,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import netCDF4
+import numpy as np
 import pytest
 
-from ackbar import mom6sis2, run
+from ackbar import forcing, mom6sis2, run
 from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
@@ -1221,3 +1223,64 @@ def test_the_diurnal_flag_without_a_data_table_is_refused(env, forcing_files):
     del config["model"]["data_table"]
     with pytest.raises(mom6sis2.ModelError, match="ADD_DIURNAL_SW"):
         staged(env)
+
+
+# --- the reference height of the forcing the table reads ---------------------
+#
+# The table declares one `z_bot` for the whole atmospheric state. An archive
+# built before the height shift existed holds 2 m scalars under that
+# declaration, runs to completion with about ten per cent too little turbulent
+# cooling, and reports success, so the file has to say which it is.
+
+def _archive(directory, height):
+    """A minimal `atm.nc` of the shape the fetchers write."""
+    hours = np.array([0.0, 3.0])
+    series = {name: (hours, np.ones((2, 2, 2))) for name in forcing.FIELDS}
+    forcing.write_atm(directory / "atm.nc", np.array([260.0, 261.0]),
+                      np.array([10.0, 11.0]), datetime(2015, 7, 12),
+                      series, "gefs", "gom_25km", scalar_height=height)
+
+
+def test_a_shifted_archive_stages(env, forcing_files, data):
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    _archive(data, forcing.REFERENCE_HEIGHT)
+    assert (staged(env) / "INPUT" / "atm.nc").exists()
+
+
+def test_an_archive_built_unshifted_on_purpose_still_stages(env, forcing_files,
+                                                            data):
+    """`--no-height-shift` is a stated choice about a known bias, not an error.
+
+    Asserting the shifted height at stage time would make the switch build an
+    archive that cannot be run, which would leave no way to reproduce the old
+    behaviour deliberately.
+    """
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    _archive(data, forcing.PRODUCT_HEIGHT)
+    assert (staged(env) / "INPUT" / "atm.nc").exists()
+
+
+def test_an_archive_that_will_not_say_its_height_is_refused(env, forcing_files,
+                                                            data):
+    """The case the check exists for: an archive built before the shift did."""
+    config, _, _ = env
+    with_forcing(config, forcing_files)
+    _archive(data, forcing.REFERENCE_HEIGHT)
+    with netCDF4.Dataset(data / "atm.nc", "a") as f:
+        f.delncattr(forcing.HEIGHT_ATTRIBUTE)
+    with pytest.raises(mom6sis2.ModelError, match="no-height-shift"):
+        staged(env)
+
+
+def test_a_case_with_no_forcing_source_is_not_asked_about_heights(env, data):
+    """The climatology path sets no `model.data_table`, so this never fires.
+
+    Its own table reads CORE, whose `T_10_MOD` and `Q_10_MOD` really are 10 m
+    fields, and those files carry no attribute of ours.
+    """
+    _archive(data, forcing.REFERENCE_HEIGHT)
+    with netCDF4.Dataset(data / "atm.nc", "a") as f:
+        f.delncattr(forcing.HEIGHT_ATTRIBUTE)
+    assert (staged(env) / "INPUT" / "atm.nc").exists()

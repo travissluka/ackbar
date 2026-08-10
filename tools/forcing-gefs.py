@@ -180,8 +180,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from ackbar.forcing import (  # noqa: E402
-    FIELDS, assert_no_leap_day, clip, domain_box, specific_humidity,
-    write_atm)
+    FIELDS, PRODUCT_HEIGHT, REFERENCE_HEIGHT, assert_no_leap_day, clip,
+    domain_box, regrid_linear, shift_to_10m, specific_humidity, write_atm)
 
 
 class Era(NamedTuple):
@@ -242,6 +242,35 @@ PER_LEAD = ("{bucket}/gefs.{day}/{hour}/atmos/pgrb2sp25/"
 PER_FIELD = ("{bucket}/GEFSv12/reforecast/{year}/{day}{hour}/{member}/"
              "Days:1-10/{stem}_{day}{hour}_{member}.grib2")
 
+#: Where the operational eras keep surface temperature, which is a third URL
+#: family and the only reason one exists.
+#:
+#: The height shift needs the surface the product's own 2 m profile was built
+#: over. `TMP:surface` is not in `pgrb2sp25`, which is what everything else here
+#: reads, and it is not in `pgrb2ap5` either: the a set carries `TMP` at ten
+#: pressure levels and at 2 m above ground and nothing at the surface. It is in
+#: the b set, one message per lead file, with a byte range index like the
+#: others, so the extra cost is one range request rather than a 98 MB download.
+#:
+#: **The b set is half degree against quarter degree forcing.** That is why
+#: `regrid_linear` exists, and it is the one place in this tool where a field
+#: reaches the archive through an interpolation. See the note in `collect`.
+PER_LEAD_BSET = ("{bucket}/gefs.{day}/{hour}/atmos/pgrb2bp5/"
+                 "{member}.t{hour}z.pgrb2b.0p50.f{lead:03d}")
+
+#: The surface temperature the height shift inverts the profile against. Read
+#: and dropped, like `_2d` and `_sp`: it is not one of the seven archived
+#: fields, it is an input to one of them.
+SURFACE = "_TS"
+
+#: How the b set's index names the one message wanted out of a per-lead file.
+#:
+#: Load bearing, and measured rather than assumed. Selecting on the forecast
+#: hour alone keeps every message in a per-lead file, because they are all at
+#: that lead, and the "byte range" then spans the whole 100 MB file to read one
+#: 200 kB field. See `message_ranges`.
+BSET_MESSAGE = re.compile(r":TMP:surface:")
+
 #: How to find a field in a GRIB message, as (typeOfLevel, level). Matched on the
 #: level rather than the parameter name because a reforecast field file holds one
 #: parameter at more than one height: `ugrd_hgt` carries 10 m and 100 m winds
@@ -257,6 +286,7 @@ LEVEL = {
     "PRATE": ("surface", 0),
     "_2d":   ("heightAboveGround", 2),
     "_sp":   ("surface", 0),
+    SURFACE: ("surface", 0),
 }
 
 #: The GRIB `shortName` each output field has, which the per-lead layout needs
@@ -264,14 +294,19 @@ LEVEL = {
 SHORT = {
     "T2": "2t", "Q2": "q", "U10": "10u", "V10": "10v",
     "DSWRF": "dswrf", "DLWRF": "dlwrf", "PRATE": "tp",
-    "_2d": "2d", "_sp": "sp",
+    "_2d": "2d", "_sp": "sp", SURFACE: "t",
 }
 
 #: The reforecast's file stem per output field. One parameter each, so the stem
 #: is the selector and `SHORT` is not consulted.
+#: The reforecast keeps surface temperature beside the rest, at the same three
+#: hourly cadence and on the same quarter degree grid, so this era needs no b
+#: set and no interpolation: every point gets its own surface, which is the
+#: correct one even over land.
 STEM = {
     "T2": "tmp_2m", "Q2": "spfh_2m", "U10": "ugrd_hgt", "V10": "vgrd_hgt",
     "DSWRF": "dswrf_sfc", "DLWRF": "dlwrf_sfc", "PRATE": "apcp_sfc",
+    SURFACE: "tmp_sfc",
 }
 
 #: Fields that arrive as a window since the last reset rather than as a value.
@@ -436,11 +471,18 @@ def get(url, span=None):
         time.sleep(2 ** attempt)
 
 
-def message_ranges(url, cache, steps):
+def message_ranges(url, cache, steps, match=None):
     """Byte ranges of the messages in *url* whose forecast hour is wanted.
 
     The index is cached because the leads of a ladder read the same member's
     files over and over, and an index is six kB against the tens of MB it saves.
+
+    *match* is a further test on the whole index line, and it is not optional
+    decoration: **the forecast hour alone selects nothing in a per-lead file**,
+    because every message in one is at that lead. Filtering a per-lead file by
+    hour keeps all of it, which is a hundred megabytes downloaded to read one
+    field. The per-field layout does not need it, since a reforecast file holds
+    one parameter and the hour is the only thing that varies.
     """
     index = cache / (url.rsplit("/", 1)[-1] + ".idx")
     if not index.exists():
@@ -453,7 +495,10 @@ def message_ranges(url, cache, steps):
             continue
         hour = IDX_HOUR.search(parts[5])
         offsets.append(int(parts[1]))
-        keep.append(int(hour.group(2)) in steps if hour else False)
+        wanted = int(hour.group(2)) in steps if hour else False
+        if match is not None and not match.search(line):
+            wanted = False
+        keep.append(wanted)
 
     ranges = []
     # The last message runs to the end of the file, which the index does not
@@ -469,17 +514,19 @@ def message_ranges(url, cache, steps):
     if not ranges:
         raise SystemExit(
             f"forcing-gefs: {index.name} has no message at any of "
-            f"{sorted(steps)} h, so the ranges to read cannot be worked out")
+            f"{sorted(steps)} h"
+            + (f" matching {match.pattern}" if match else "")
+            + ", so the ranges to read cannot be worked out")
     return ranges
 
 
-def fetch_messages(url, steps, local, cache):
+def fetch_messages(url, steps, local, cache, match=None):
     """Write just the wanted messages of *url* to *local*, as one GRIB file.
 
     Concatenated GRIB is GRIB: a reader walks message to message and neither
     knows nor cares that the ones between were never fetched.
     """
-    ranges = message_ranges(url, cache, steps)
+    ranges = message_ranges(url, cache, steps, match)
     target = https(url)
     spans = [f"{start}-" if end is None else f"{start}-{end - 1}"
              for start, end in ranges]
@@ -552,10 +599,15 @@ def harvest(path, specs, steps):
     return found, spans, lons, lats
 
 
-def collect(era, init, member, steps, cache):
+def collect(era, init, member, steps, cache, shift):
     """Every needed (field, step) for one initialization, whichever layout."""
+    wanted = instant_names(era, shift)
+    # The operational eras have no surface temperature in the set the rest of
+    # the fields come from, so it is fetched separately below rather than
+    # asked of a file that does not carry it.
+    from_bset = shift and era.layout == "per_lead"
     specs_instant = {name: (SHORT.get(name), *LEVEL[name])
-                     for name in instant_names(era)}
+                     for name in wanted if not (from_bset and name == SURFACE)}
     specs_window = {name: (SHORT.get(name), *LEVEL[name])
                     for name in WINDOWED}
 
@@ -596,14 +648,61 @@ def collect(era, init, member, steps, cache):
             lons = lons if lons is not None else x
             lats = lats if lats is not None else y
 
+    if from_bset:
+        # A second URL family, one message per lead, and the only field here
+        # that does not arrive on the grid it is used on. The b set is half
+        # degree, so it is interpolated onto the quarter degree grid the rest of
+        # the fields came in on, bilinearly, because that is what FMS does to
+        # every other forcing field and because nearest neighbour would stamp a
+        # half degree checkerboard onto a field that feeds the stability
+        # calculation.
+        #
+        # **`TMP:surface` is land skin temperature over land**, which on this
+        # path is a real limitation rather than the harmless thing it is on the
+        # reforecast: interpolating lets a coastal sea point take a share of a
+        # land neighbour, several kelvin hotter over the Gulf in summer. It is
+        # bounded by the land-sea contrast, gone within one source cell, and
+        # much smaller than the flux error the shift removes.
+        # `docs/forcing-reference-height.md` has it under the 2020-on era, and
+        # `tests/test_forcing_height.py` pins how far it reaches.
+        spec = {SURFACE: (SHORT[SURFACE], *LEVEL[SURFACE])}
+        for lead in sorted(steps["instant"]):
+            url = PER_LEAD_BSET.format(
+                bucket=era.bucket, day=f"{init:%Y%m%d}", hour=f"{init:%H}",
+                member=member, lead=lead)
+            local = fetch_messages(
+                url, {lead},
+                cache / f"{member}.{init:%Y%m%d%H}.b.f{lead:03d}", cache,
+                match=BSET_MESSAGE)
+            try:
+                part, _span, bx, by = harvest(local, spec, {lead})
+            finally:
+                local.unlink(missing_ok=True)
+            if not part:
+                raise SystemExit(
+                    f"forcing-gefs: {url} carries no TMP:surface at {lead} h, "
+                    f"which the height shift needs. Rerun with "
+                    f"--no-height-shift to build the archive without it, at "
+                    f"the cost of the flux bias in "
+                    f"docs/forcing-reference-height.md")
+            for key, plane in part.items():
+                found[key] = regrid_linear(bx, by, plane, lons, lats)
+
     return found, spans, lons, lats
 
 
-def instant_names(era):
-    """The fields read directly, which depends on how the era carries humidity."""
+def instant_names(era, shift=True):
+    """The fields read directly, which depends on how the era carries humidity.
+
+    The surface temperature joins them only when the height shift is on, so
+    `--no-height-shift` fetches exactly what this tool fetched before the shift
+    existed rather than downloading a field it will not use.
+    """
     if era.humidity == "spfh":
-        return ["T2", "Q2", "U10", "V10"]
-    return ["T2", "U10", "V10", "_2d", "_sp"]
+        names = ["T2", "Q2", "U10", "V10"]
+    else:
+        names = ["T2", "U10", "V10", "_2d", "_sp"]
+    return names + [SURFACE] if shift else names
 
 
 def floor_at_zero(name, plane, scale, where):
@@ -625,7 +724,7 @@ def floor_at_zero(name, plane, scale, where):
     return np.maximum(plane, 0.0), worst
 
 
-def segment(era, init, member, lead, cache, box):
+def segment(era, init, member, lead, cache, box, shift=True):
     """One initialization's contribution: `era.inits` spacing of forcing.
 
     Returns `{name: [(hours after init, plane)]}`, the grid, and the worst
@@ -638,9 +737,9 @@ def segment(era, init, member, lead, cache, box):
     steps = {"instant": set(instants), "window": set(ends)}
     steps["all"] = steps["instant"] | steps["window"]
 
-    found, spans, lons, lats = collect(era, init, member, steps, cache)
+    found, spans, lons, lats = collect(era, init, member, steps, cache, shift)
     missing = [key for key in
-               [(n, s) for n in instant_names(era) for s in instants]
+               [(n, s) for n in instant_names(era, shift) for s in instants]
                + [(n, s) for n in WINDOWED for s in ends]
                if key not in found]
     if missing:
@@ -663,12 +762,21 @@ def segment(era, init, member, lead, cache, box):
     series = {name: [] for name in FIELDS}
     for step in instants:
         if era.humidity == "spfh":
-            series["Q2"].append((step, found[("Q2", step)]))
+            q2 = found[("Q2", step)]
         else:
-            series["Q2"].append((step, specific_humidity(
-                found[("_2d", step)], found[("_sp", step)])))
-        for name in ("T2", "U10", "V10"):
-            series[name].append((step, found[(name, step)]))
+            q2 = specific_humidity(found[("_2d", step)], found[("_sp", step)])
+        t2 = found[("T2", step)]
+        u10, v10 = found[("U10", step)], found[("V10", step)]
+        if shift:
+            # The bulk formula wants wind speed, not a component. The winds are
+            # already at 10 m, so only the scalars move, and after this the
+            # `z_bot = 10` in `data_table.atm` is true of all four.
+            t2, q2 = shift_to_10m(t2, q2, np.hypot(u10, v10),
+                                  found[(SURFACE, step)])
+        series["T2"].append((step, t2))
+        series["Q2"].append((step, q2))
+        series["U10"].append((step, u10))
+        series["V10"].append((step, v10))
 
     records, worst = deaverage(era, found, spans, ends, lead,
                                f"{member} {init:%Y-%m-%d %H}")
@@ -742,7 +850,7 @@ def deaverage(era, found, spans, ends, lead, where=""):
     return records, worst
 
 
-def build(era, index, start, end, leads, cache, out, box, domain):
+def build(era, index, start, end, leads, cache, out, box, domain, shift=True):
     """One member's whole `atm.nc`.
 
     *index* is the ensemble member, which the ladder resolves into a GEFS
@@ -777,7 +885,7 @@ def build(era, index, start, end, leads, cache, out, box, domain):
     while cursor + datetime.timedelta(hours=lead) <= end:
         if cursor + datetime.timedelta(hours=lead + span) > start:
             series, x, y, low = segment(era, cursor, member, lead, cache,
-                                        box)
+                                        box, shift)
             for name, value in low.items():
                 worst[name] = min(worst[name], value)
             if grid is None:
@@ -809,7 +917,8 @@ def build(era, index, start, end, leads, cache, out, box, domain):
     target = out / f"mem{index:03d}.nc"
     write_atm(target, x, y, origin, packed,
               source=f"GEFS {era.name} {member} at {lead} h lead, "
-                     f"{era.bucket}", domain=domain)
+                     f"{era.bucket}", domain=domain,
+              scalar_height=REFERENCE_HEIGHT if shift else PRODUCT_HEIGHT)
     return target, packed, worst
 
 
@@ -845,6 +954,16 @@ def main():
     ap.add_argument("--jobs", type=int, default=JOBS,
                     help="byte ranges to request at once. Network concurrency, "
                          "not a rank count")
+    ap.add_argument("--no-height-shift", action="store_true",
+                    help="archive T2 and Q2 at the 2 m the product publishes "
+                         "them at, instead of shifting them to the 10 m the "
+                         "data table declares. The archive records which it "
+                         "is, so a run against it is refused only if the file "
+                         "will not say. This reproduces the behaviour every "
+                         "archive built before the shift existed has, and it "
+                         "carries a turbulent flux bias of about ten per cent "
+                         "in one direction: see "
+                         "docs/forcing-reference-height.md")
     args = ap.parse_args()
 
     start = datetime.datetime.strptime(args.start, "%Y-%m-%d")
@@ -905,9 +1024,16 @@ def main():
     print(f"forcing-gefs: {args.domain} box {box['west']:.3f} to "
           f"{box['east']:.3f} east, {box['south']:.3f} to "
           f"{box['north']:.3f} north")
+    shift = not args.no_height_shift
+    print(f"forcing-gefs: T2 and Q2 at "
+          + (f"{REFERENCE_HEIGHT:.0f} m, shifted from "
+             f"{PRODUCT_HEIGHT:.0f} m against the product's own surface "
+             f"temperature" if shift else
+             f"{PRODUCT_HEIGHT:.0f} m as published, unshifted, which the data "
+             f"table's z_bot does not agree with"))
     for index in range(args.members):
         target, packed, worst = build(era, index, start, end, leads, cache,
-                                      args.out, box, args.domain)
+                                      args.out, box, args.domain, shift)
         hours, cube = packed["DSWRF"]
         residue = " ".join(f"{name} {low:.3g}" for name, low in worst.items()
                            if low < 0.0)

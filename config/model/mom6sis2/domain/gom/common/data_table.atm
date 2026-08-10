@@ -5,13 +5,16 @@
 "ATM" , "u_bot"         , "U10"         , "INPUT/atm.nc"                 , "bicubic",    1.0
 "ATM" , "v_bot"         , "V10"         , "INPUT/atm.nc"                 , "bicubic",    1.0
 # z_bot is the one height the coupler believes the whole state above sits at,
-# and it is the reference level for the bulk fluxes. It is true of the winds
-# and false of t_bot and sphum_bot, which are GEFS T2 and Q2, 2 m fields. The
-# products publish scalars at 2 m and winds at 10 m and nothing at the other
-# height, so this is not a fetch choice. It biases turbulent cooling low by
-# about 10 per cent. Do not "fix" it by writing 2.0 here: that mislabels the
-# winds and costs 28 to 56 per cent on the stress instead. The fix belongs in
-# the forcing archive. See docs/forcing-reference-height.md.
+# and it is the reference level for the bulk fluxes. It is true of all four
+# fields: the winds are published at 10 m, and T2 and Q2 are published at 2 m
+# and shifted to 10 m when the forcing archive is built, so that this number is
+# a fact about the file rather than a claim about it. Each atm.nc records the
+# height it holds and the model refuses one that will not say.
+#
+# Do not "fix" this by writing 2.0 here. It was true once and is not now, and
+# it would mislabel the winds and cost 28 to 56 per cent on the stress to save
+# about 10 per cent on the turbulent fluxes.
+# See docs/forcing-reference-height.md.
 "ATM" , "z_bot"         , ""            , ""                             , "bilinear" , 10.0
 "ATM" , "gust"          , ""            , ""                             , "bilinear" ,  1.0e-4
 "ICE" , "lw_flux_dn"    , "DLWRF"       , "INPUT/atm.nc"                 , "bilinear" ,  1.0

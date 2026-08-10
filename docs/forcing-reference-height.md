@@ -21,6 +21,12 @@ FMS takes one `z_bot` for the whole atmospheric state, so the table cannot say 1
 winds and 2 m for the scalars. This page records what the number does, what upstream does
 instead, how large the error is, and what the fix is.
 
+**The shift is built and is the default.** The archive now holds 10 m scalars and the
+declaration above is true. What follows is still written as the argument for it rather than
+rewritten as a description, because the argument is the part worth keeping: the measurement
+is what says the fix is worth its cost, and it is what a future reader needs in order to
+change it. `--no-height-shift` rebuilds the old behaviour deliberately.
+
 Every number below comes from `tools/flux-height.py`, which is a transcription of the
 model's own flux routine. Rerun it rather than trusting the tables here.
 
@@ -144,17 +150,42 @@ the model's own live SST is not required.
 This is what removes the one advantage a patched flux routine would have had, and it is why
 the fix belongs in the archive rather than in the model.
 
-## The fix
+## The fix, as built
 
-Shift T2 and Q2 to 10 m when the forcing archive is built, keeping `z_bot = 10`, so that the
-declaration in the data table becomes true. That is what CORE, JRA55-do and NWA12 all do, and
-the last result above says it can be done offline without the model's SST.
+T2 and Q2 are shifted to 10 m when the forcing archive is built, and `z_bot` stays at 10, so
+the declaration in the data table is now true of all four fields. That is what CORE, JRA55-do
+and NWA12 all do, and the last result above is why it can be done offline without the model's
+SST.
+
+`forcing.shift_to_10m` is the correction, a vectorized port of `shift_up` in
+`tools/flux-height.py`. The scalar original stays where it is and stays the reference:
+`tests/test_forcing_height.py` holds the port to it elementwise rather than to a table of
+expected numbers, so if the two ever disagree the question is which is wrong rather than
+whether the table was copied correctly. Both fetchers apply it, because ERA5 forces the truth
+and GEFS the experiments and shifting only one would put a systematic flux difference between
+them, which is worse than the shared bias.
 
 The alternative, patching `surface_flux.F90` to carry separate momentum and scalar heights,
 is more precise in principle because it uses the model's live SST, but the precision it buys
 is inside the 2 to 7 W m-2 that an approximate SST already costs, and it puts a local patch
 into a submodule (`pkg/mom6sis2/src/coupler`, which tracks NOAA-GFDL/coupler) that every
 update then has to survive.
+
+### The archive says which it is, rather than being assumed
+
+`--no-height-shift` on either fetcher builds the old, unshifted archive. It exists because
+reproducing the previous behaviour deliberately is a thing worth being able to do, and
+because a switch is the only honest way to keep `T2` and `Q2` under those names: with the
+switch, the height is a property of how a file was built, so it belongs on the file. Renaming
+them `T10`/`Q10` would be a lie in exactly the case the switch serves.
+
+Every `atm.nc` carries a `scalar_reference_height` global attribute and the two scalars carry
+a matching `height`. `mom6sis2.stage` calls `forcing.assert_reference_height` on every file
+the data table names, and **checks that the attribute is present, not that it has a
+particular value.** An archive built before any of this has no attribute at all and is
+refused by name; an archive built deliberately unshifted records 2.0 and runs. Asserting 10
+would make `--no-height-shift` produce an archive that cannot be used, which would defeat the
+switch.
 
 ### Which surface temperature to shift against
 
@@ -166,35 +197,66 @@ Substituting GLORYS puts a stability into the inversion that GEFS never saw. JRA
 same thing, taking the surface temperature for the shift from JRA-55's own fields rather than
 from an independent ocean analysis.
 
-Where it lives, per era in `tools/forcing-gefs.py`:
+Where it comes from, per era in `tools/forcing-gefs.py`, and ERA5's own `skt` in
+`tools/forcing-era5.py`:
 
 - **reforecast** (2000 to 2019, the era the Gulf OSSE reads): `tmp_sfc_<date>_<member>.grib2`
-  sits beside `tmp_2m` in the same per-field layout. One entry each in `STEM` and `LEVEL`.
+  sits beside `tmp_2m` in the same per-field layout, at the same three hourly cadence, on the
+  same quarter degree grid. One entry each in `STEM`, `LEVEL` and `SHORT`, and no
+  interpolation anywhere in it.
 - **operational-quarter** (2020 on, the era a real-observation experiment reads):
   `TMP:surface` is absent from `pgrb2sp25`, which is what the fetcher reads, and absent from
-  `pgrb2ap5`. It is in **`pgrb2bp5`**, the b-set, on a 0.5 degree grid. That is a third URL
-  family and a per-era spec, though not much bandwidth, since the fetcher already reads
-  `.idx` byte ranges.
+  `pgrb2ap5`, which carries TMP at ten pressure levels and at 2 m and nothing at the surface.
+  It is in **`pgrb2bp5`**, the b-set, on a 0.5 degree grid: one message per lead file, with
+  a `.idx`, so it is one range request rather than a 98 MB download.
 
-Three details that the implementation should get right and that are each cheap:
+**The byte range is load bearing and is not free.** `message_ranges` selects by forecast
+hour, and *every message in a per-lead file is at that lead*, so the hour alone keeps the
+whole file: measured at 102 MB pulled to read one 165 kB field. The b-set fetch passes a
+parameter and level pattern as well, which is what `BSET_MESSAGE` is for, and
+`tests/test_forcing_gefs_ranges.py` pins both halves. The reforecast is unaffected, because
+one of its files holds one parameter at every lead and the hour really is the whole
+selection.
 
-- The b-set SST is 0.5 degree against 0.25 degree forcing. Inside the tolerance measured
-  above, though it will look soft across the Loop Current front.
-- `TMP:surface` is land skin temperature over land. That is the correct surface for those
-  points and MOM6 ignores them, so it needs no masking. Worth a comment so that nobody
-  later "fixes" it.
-- It is a prescribed boundary condition, so it varies little with lead and probably little
-  between members. If both hold, fetch it once per initialization rather than once per lead
-  per member. Verify before relying on it.
+### The land contamination, which is the 2020-on era only
+
+`TMP:surface` is land skin temperature over land. On the **reforecast** that is harmless and
+the doc's original reasoning holds: the field is already quarter degree, no interpolation
+happens, every point gets its own surface, and MOM6 ignores the land ones.
+
+It does **not** carry over to the operational eras. There the field is half degree and has to
+be interpolated up to the quarter degree the rest of the forcing is on, and interpolation
+lets a coastal sea point take a share of a land neighbour's skin temperature, which over the
+Gulf in summer runs several kelvin hotter than the sea. That is a coupling the reforecast
+path does not have.
+
+It is left documented and tested rather than masked, on these grounds: the contamination is
+bounded by the land-sea contrast, it is gone within one source cell of the coast, and the
+shift is a small term whose residual is far below the 38 to 105 W m-2 it removes. A mask
+would need the b-set's own land field and a decision about what to put in the masked cells,
+which is more machinery than the error justifies.
+`tests/test_forcing_height.py::test_a_land_adjacent_column_pulls_land_temperature_into_the_sea`
+pins how far it reaches, so the day it stops being acceptable it is one test to change.
+
+The interpolation is bilinear rather than nearest neighbour, for the reason FMS itself
+interpolates the rest of the forcing bilinearly. On a half-to-quarter mapping every other
+target point coincides exactly with a source point, so nearest neighbour would stamp a half
+degree checkerboard onto a field that feeds the stability calculation, and a grid-scale
+artifact in a forcing term reads as a bug long afterwards. The cost is the same.
+
+One optimization was considered and declined: surface temperature is a prescribed boundary
+condition, so it varies little with lead and probably little between members, and it could be
+fetched once per initialization. The byte range already makes it cheap, and the saving rests
+on an assumption about member variation that nothing has checked.
 
 ### Consequences
 
-- The forcing archive is per domain and shared with truth, so making the change means
-  rebuilding forcing, rerunning truth and rerunning every experiment that reads it.
-- Once the archive holds 10 m scalars, `T2` and `Q2` are the wrong names for what it holds.
-- The archive should record its own reference height, as a global attribute checked at stage
-  time, so that an archive built before the shift fails loudly against a run that assumes it
-  rather than silently reintroducing the bias.
+**Every forcing archive built before this has to be rebuilt.** The archive is per domain and
+shared with truth, so that means rebuilding forcing and rerunning every experiment that reads
+it. Today that is `osse25-4dletkf-atm` and `osse25-4dletkf-all`; the truth run is still
+climatology-forced, so nothing else is affected yet, and the cost only grows from here. The
+existing archives have no `scalar_reference_height`, so they will be refused at stage time
+rather than silently reused, which is the intended way to find out.
 
 **In an OSSE the bias is largely common-mode**: truth and every experiment run the same model
 over the same archive, so a shared flux bias mostly cancels in the departures, and the
@@ -203,7 +265,7 @@ systematic half-degree Gulf warm bias exceeds the SST observation error, so the 
 spends its increments fighting a forcing error, which is how an analysis comes to verify well
 and forecast badly.
 
-Until the shift exists, the `10.0` in `data_table.atm` carries a comment saying what it
-asserts and that `t_bot` and `sphum_bot` do not yet satisfy it. A bare `10.0` reads as
-agreement with GFDL when it is the opposite, and the climatology table beside it, where the
-same number is true, is what makes that reading easy.
+The `10.0` in `data_table.atm` carries a comment saying what it asserts, and that comment is
+now a statement rather than a warning: `t_bot` and `sphum_bot` satisfy it. A bare `10.0`
+reads as agreement with GFDL, which it finally is, and the climatology table beside it, where
+the same number was always true, no longer differs in meaning.
