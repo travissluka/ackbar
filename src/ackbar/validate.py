@@ -31,6 +31,7 @@ from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
 from .duration import DurationError, parse_duration, parse_instant
 from .graph import GraphError, build_graph, job_time_context, member_set
+from .graph.build import extended_cycles
 from .observations import REQUIRED as OBS_REQUIRED
 
 #: The steps, in the order they run. Reported individually so that "what was
@@ -85,12 +86,13 @@ def validate_experiment(config, schema, site, root, offline=False):
     findings += _graph_step(config, graph)
     findings += _template_step(root)
 
-    jobtime_findings, paths, observations = _jobtime_step(config, graph)
+    jobtime_findings, paths, observations, timed = _jobtime_step(config, graph)
     findings += jobtime_findings
 
     if not offline:
         ran |= {3, 4, 5}
         findings += _path_step(paths, site)
+        findings += _coverage_step(timed, config, graph)
         findings += _observation_step(observations)
         findings += _executable_step(graph, root)
         findings += _limit_step(graph, site)
@@ -190,6 +192,7 @@ def _jobtime_step(config, graph):
     findings = []
     paths = set()
     observations = {}
+    timed = set()
     for cycle, member in job_time_context(config, graph):
         try:
             rendered = render(config, symbols(config, cycle, member))
@@ -198,6 +201,7 @@ def _jobtime_step(config, graph):
                 2, error.path, f"cycle {cycle} member {member}: {error.message}"
             ))
             continue
+        timed.update(((rendered.get("ensemble") or {}).get("inputs") or {}).values())
         for where, value in unresolved_jobtime(rendered):
             findings.append(Finding(
                 2, where, f"cycle {cycle}: token survived substitution: {value!r}"
@@ -207,7 +211,7 @@ def _jobtime_step(config, graph):
 
     # One finding per distinct problem, not one per cycle: a bad symbol in a
     # shared config would otherwise be reported hundreds of times.
-    return _dedupe(findings), paths, observations
+    return _dedupe(findings), paths, observations, timed
 
 
 def _take_observation_inputs(rendered, observations):
@@ -289,6 +293,123 @@ def _path_step(paths, site):
         elif not os.access(path, os.R_OK):
             findings.append(Finding(3, path, "input path is not readable"))
     return findings
+
+
+def _needed_span(config, graph):
+    """The first and last instant this experiment's forcing has to cover.
+
+    From `symbols`, rather than recomputed here, because the window's begin and
+    the forecast's end are exactly what a job reads and both already have edge
+    cases in them: a 4D window opens before its cycle, and a long forecast runs
+    past the next one. `extended_cycles` says which cycles run long, so a
+    cadenced long forecast does not make the whole experiment demand coverage
+    it never reaches.
+    """
+    cycles = sorted({cycle for cycle, _ in job_time_context(config, graph)})
+    if not cycles:
+        return None, None
+    long_ones = set(extended_cycles(config, max(cycles)))
+    begins, ends = [], []
+    for cycle in cycles:
+        table = symbols(config, cycle, 0)
+        begins.append(_fields(table["window_begin"]))
+        ends.append(_fields(table["forecast_end"]))
+        if cycle in long_ones:
+            ends.append(_fields(
+                symbols(config, cycle, 0, task="forecast.ext")["forecast_end"]))
+    return min(begins), max(ends)
+
+
+def _coverage_step(timed, config, graph):
+    """Per-member forcing has to span the run, and this is the only chance.
+
+    A member input that stops early is the one input failure healing cannot
+    recover. The run dies in `time_interp_external` at the cycle that walks off
+    the end, and the fix means rebuilding the archive, which changes the anomaly
+    mean for every member, so every earlier cycle integrated a boundary that no
+    longer exists. The experiment is discarded rather than healed.
+
+    **The time axis is read, not the `time_coverage_*` attributes.**
+    `tools/obc-lagged.py` writes those and they are worth having for a human
+    with `ncdump`, but a check that trusted them would only work on archives
+    built by that one tool, would silently pass on every archive built before it
+    started writing them, and would be checking an annotation rather than the
+    thing the model reads. The axis is what MOM6 opens.
+
+    A file with no `time` variable is not a time-varying input and is skipped:
+    `ensemble.inputs` is a general mechanism, and a per-member static field is a
+    legitimate use of it.
+    """
+    first, last = _needed_span(config, graph)
+    if first is None:
+        return []
+    findings = []
+    short = {}
+    for path in sorted(timed):
+        if not os.path.exists(path):
+            continue  # step 3 owns absence, and says it better than this would
+        try:
+            covered = _covered_span(path)
+        except OSError as error:
+            findings.append(Finding(3, path, f"cannot be opened to check its "
+                                             f"time coverage: {error}"))
+            continue
+        if covered is None:
+            continue
+        start, end = covered
+        if start > first or end < last:
+            short.setdefault(covered, []).append(path)
+
+    # One finding per distinct span, not one per member. An ensemble is built in
+    # one pass from one source, so every member is short in the same way, and
+    # twenty identical paragraphs is the noise `_dedupe` exists to prevent for
+    # the cycle loop. Grouping by span rather than deduping by message keeps the
+    # case where one member really does differ.
+    for (start, end), paths in sorted(short.items()):
+        common = os.path.commonpath(paths) if len(paths) > 1 else paths[0]
+        findings.append(Finding(3, common, (
+            f"{len(paths)} per-member input(s) cover {_stamp(start)} to "
+            f"{_stamp(end)}, but the experiment reaches {_stamp(first)} to "
+            f"{_stamp(last)}. The run would stop in time_interp_external at the "
+            f"cycle that leaves the file. Rebuilding the archive then does not "
+            f"heal it: a rebuild changes the anomaly mean, so every earlier "
+            f"cycle would have integrated a boundary that no longer exists."
+        )))
+    return findings
+
+
+def _covered_span(path):
+    """(first, last) on a file's own time axis, or None if it has no axis."""
+    import netCDF4
+
+    with netCDF4.Dataset(path) as data:
+        if "time" not in data.variables or not len(data["time"]):
+            return None
+        axis = data["time"]
+        units = getattr(axis, "units", "")
+        if not units:
+            return None
+        calendar = getattr(axis, "calendar", "standard")
+        edges = netCDF4.num2date([axis[0], axis[-1]], units, calendar)
+    return _fields(edges[0]), _fields(edges[-1])
+
+
+def _fields(when):
+    """Calendar fields, which is the only footing these dates share.
+
+    A boundary axis is usually NOLEAP, so `num2date` returns cftime, and a
+    cftime date will not compare against the Python datetimes `symbols` builds:
+    the operator raises rather than converting. Comparing the fields is also the
+    right meaning rather than a workaround, because the model reads the axis in
+    its own calendar and ACKBAR's dates are wall-clock stamps; converting either
+    one into the other's calendar would move a date that nothing else moves.
+    """
+    return (when.year, when.month, when.day,
+            when.hour, when.minute, when.second)
+
+
+def _stamp(fields):
+    return ("{0:04d}-{1:02d}-{2:02d}T{3:02d}:{4:02d}:{5:02d}Z").format(*fields)
 
 
 def _observation_step(observations):
