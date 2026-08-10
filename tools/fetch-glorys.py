@@ -173,7 +173,8 @@ def main():
         data = fetch(GLORYS_IC, box, source_date, source_date)
 
         # The time axis takes the source's own stamp, which for a GLORYS daily
-        # mean is 12Z and not midnight, unless this file is asserting a
+        # mean is 00Z, the start of the day it averages rather than the middle
+        # of it, unless this file is asserting a
         # different day, in which case it takes the day being asserted: the
         # assertion exists so a cycle starting at T00 can begin from another
         # day's ocean, and the hour of the day it was read from is not part of
@@ -183,7 +184,10 @@ def main():
         when = when if args.valid_at else stamp
 
         comment = valid_at = None
-        if source_date != when.replace(hour=0, minute=0, second=0):
+        midnight = when.replace(hour=0, minute=0, second=0)
+        if args.valid_at and source_date != midnight:
+            # The deliberate case: this file holds one day's ocean and claims to
+            # be an estimate of another.
             valid_at = when
             comment = (
                 f"Read from {source_date:%Y-%m-%d} and asserted to be an "
@@ -191,6 +195,16 @@ def main():
                 "oceans is the initial error an OSSE built on this exists to "
                 "correct. See tools/restamp-ic.sh, which makes the same "
                 "assertion about a restart set.")
+        elif source_date != midnight:
+            # The accidental case, and it used to be described as the deliberate
+            # one with the two dates the wrong way round: nothing was asserted
+            # here, the server simply answered with a day other than the one it
+            # was asked for. Said plainly, because a silent substitution is how
+            # an experiment ends up initialised a day off with no record of it.
+            comment = (
+                f"Requested {source_date:%Y-%m-%d}; the source returned "
+                f"{midnight:%Y-%m-%d}, and that is the ocean in this file. No "
+                "assertion was made about the date, and none is implied.")
 
         target = args.out or (out / "ic.nc")
         partial = target.with_suffix(target.suffix + ".partial")

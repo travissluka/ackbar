@@ -10,6 +10,7 @@ are about arithmetic and provenance, and both are easier to state when the input
 is `zeta = day` than when it is the Gulf of Mexico.
 """
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -77,6 +78,74 @@ def archive(tmp_path_factory, boundary):
 def read(path, name="u_segment_001"):
     with netCDF4.Dataset(path) as f:
         return np.asarray(f[name][:])
+
+
+@pytest.fixture(scope="module")
+def tool():
+    """The script as a module, so `ladder` can be asked directly.
+
+    Imported by path because the filename carries a dash and is not importable
+    the ordinary way, and asking `ladder` beats inferring the ladder from twenty
+    written files.
+    """
+    spec = importlib.util.spec_from_file_location("obc_lagged", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# --- the ladder --------------------------------------------------------------
+
+def test_an_even_ladder_is_centred_and_stays_centred(tool):
+    """Losing trailing members in pairs must not tilt the set."""
+    lags = tool.ladder(21, 6)
+    assert lags == [7, -7, 14, -14, 21, -21]
+    for keep in (6, 4, 2):
+        assert sum(lags[:keep]) == 0, lags[:keep]
+
+
+def test_an_odd_ladder_is_off_by_one_spacing_and_not_by_a_span(tool):
+    """The unpaired member sits at the smallest magnitude, not the largest.
+
+    Built by alternating and truncating, 7 members over span 21 dropped the
+    final negative and summed to +21: a whole span, which makes the member mean
+    a lagged smoothing that leads the truth and puts every anomaly about the
+    wrong base. Mean preservation holds either way, so no other test can see it.
+    """
+    lags = tool.ladder(21, 7)
+    assert lags[0] == 5, lags
+    assert abs(sum(lags)) == 5, lags
+    # And the imbalance does not grow as members are lost from the end.
+    for keep in (7, 5, 3):
+        assert abs(sum(lags[:keep])) == 5, lags[:keep]
+
+
+def test_the_live_twenty_member_ladder_did_not_move(tool):
+    """The archive on disk was built with this ladder; it must not change.
+
+    Rebuilding an archive changes the anomaly mean for every member, so a ladder
+    that quietly shifted would silently invalidate every experiment already run
+    against it.
+    """
+    assert tool.ladder(21, 20) == [
+        2, -2, 4, -4, 6, -6, 8, -8, 10, -10,
+        13, -13, 15, -15, 17, -17, 19, -19, 21, -21]
+
+
+def test_a_window_shorter_than_the_span_is_refused(boundary, tmp_path):
+    """A two-record boundary ensemble is the frozen boundary, shipped quietly.
+
+    The guard was `2 * span >= len(times)`, which only ever caught an empty
+    result: 60 records lagged 29 either way left two records and exited 0.
+    """
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "--source", str(boundary),
+         "--lags=18,-18", "--out", str(tmp_path / "out"), "synthetic"],
+        capture_output=True, text=True)
+    assert done.returncode != 0
+    assert "at least" in done.stderr, done.stderr
+    assert not (tmp_path / "out").exists() or not list(
+        (tmp_path / "out").glob("mem*.nc"))
 
 
 # --- provenance --------------------------------------------------------------

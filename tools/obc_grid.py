@@ -159,6 +159,14 @@ def segment_geometry(domain, sx, sy, who="obc"):
 
     A J segment is a line of constant j, so it runs along i and is one supergrid
     row: shape `(1, nxp)`. An I segment is one column: `(nyp, 1)`.
+
+    **Segments are always stored in increasing i or j order, whatever direction
+    the `OBC_SEGMENT_00N` string declares.** The Gulf's segment 001 is `I=N:0`,
+    reversed, and its data is still written low index first, the same as 003.
+    This matches MOM6's own swap in `setup_segment_data`, so a file written the
+    other way round reads as a boundary mirrored end to end. The sentence lived
+    in `fetch-glorys.py` before the geometry moved here and was lost with it;
+    the behaviour never changed.
     """
     parameters = mom6_parameters(domain, who)
     count = int(parameters.get("OBC_NUMBER_OF_SEGMENTS", 0))
@@ -209,9 +217,22 @@ def segment_geometry(domain, sx, sy, who="obc"):
         # mismatch that does not name the segment.
         span = re.fullmatch(r"([IJ])=(\w+):(\w+)", words[1]) if len(words) > 1 else None
         if span:
-            along = ni if span.group(1) == "I" else nj
-            ends = {span.group(2), span.group(3)}
-            if not ends <= {"0", "N", str(along)}:
+            ranged, low, high = span.group(1), span.group(2), span.group(3)
+            # The range has to run along the *other* axis. A segment on a line of
+            # constant I is a column, so it is indexed by J. Taking the range's
+            # own letter meant `I=N,I=0:N` was read as a full edge and built as
+            # one, which is a nonsense declaration accepted silently.
+            expected = "J" if axis == "I" else "I"
+            if ranged != expected:
+                die(who, f"OBC_SEGMENT_{name} of {domain} sits on a line of "
+                         f"constant {axis} but declares its range along "
+                         f"{ranged}. A segment at {axis}={position} runs along "
+                         f"{expected}, so this is not a description of an edge.")
+            along = str(nj if expected == "J" else ni)
+            ends = (low, high)
+            # Both ends named, and not the same one twice: `I=0:0` is a single
+            # point, and as a set it was indistinguishable from a full edge.
+            if low == high or not (set(ends) & {"0"} and set(ends) & {"N", along}):
                 die(who, f"OBC_SEGMENT_{name} of {domain} runs {words[1]}, "
                          f"which is part of an edge rather than all of it. "
                          f"Building the whole edge instead would write a file "

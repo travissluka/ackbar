@@ -55,13 +55,17 @@ GLORYS's `thetao` already is one. Handed in-situ temperature instead, the deep
 water arrives too warm by up to about 0.4 degC at 4000 m and 0.1 degC at 1000 m,
 which is the same size as the differences between DA methods this project
 measures. It is converted here with TEOS-10 (`gsw`), at each level's pressure and
-each point's latitude, and the conversion is not optional.
+each point's own latitude and longitude, and the conversion is not optional.
 
 **The output is three hourly snapshots, not daily means.** GLORYS `P1D-m` is a
-daily mean stamped at 12Z. The 12Z snapshot is taken from HYCOM so that the two
-products' records sit at the same instant, which is what makes a comparison
-between them a comparison of oceans rather than of sampling. GOFS 3.1 has no
-tides, so a snapshot carries no aliased signal a mean would have removed.
+daily mean **stamped at 00Z**, which labels the start of the day it averages
+rather than the middle of it, so the interval it represents is centred on 12Z.
+The 12Z snapshot is taken from HYCOM to sit at the centre of that interval,
+which is the closest a single instant gets to a daily mean. Note that this means
+the two products' *labels* are twelve hours apart while the water they describe
+is not; anything that pairs them by timestamp has to pair on the calendar day,
+which is what `ssh_offset` does. GOFS 3.1 has no tides, so a snapshot carries no
+aliased signal a mean would have removed.
 
 **Sea surface height is referenced to each model's own mean.** This is the one
 that will actually break a run rather than bias it. Two analyses disagree about
@@ -133,8 +137,9 @@ DATASET_HELP = (
     "a period after 2015 needs an analysis experiment instead, and after 2018 "
     "the GLBy0.08 grid. See the note on URL in the source.")
 
-#: Which of the eight daily snapshots to take, to sit where GLORYS's daily mean
-#: is stamped. See the module docstring.
+#: Which of the eight daily snapshots to take, to sit at the *centre* of the day
+#: GLORYS's daily mean covers. Not where that mean is stamped: it is labelled 00Z.
+#: See the module docstring.
 HOUR = 12
 
 #: The server drops connections under a large request. Each read is retried
@@ -247,24 +252,32 @@ def source_box(dataset, box):
             lon[xi[0]:xi[-1] + 1], lat[yi[0]:yi[-1] + 1])
 
 
-def to_potential(in_situ, salinity, depth, lat):
+def to_potential(in_situ, salinity, depth, lat, lon):
     """In-situ temperature to potential temperature, TEOS-10.
 
     *in_situ* and *salinity* are `(..., depth, lat, lon)`. Pressure is taken
     from depth and latitude, and absolute salinity from practical salinity, so
     both conversions see the geometry rather than a nominal column.
+
+    Longitude is passed because `SA_from_SP` looks the salinity anomaly ratio up
+    by position. It was 0.0 here, which is the Gulf of Guinea rather than the
+    Gulf of Mexico: worth up to 0.005 g/kg of absolute salinity at 25N and under
+    1e-5 K of potential temperature, immaterial on this basin but growing
+    wherever SAAR is large, and wrong for no reason when the array is in scope.
     """
     import gsw
 
     shape = in_situ.shape
     z = np.broadcast_to(np.asarray(depth)[:, None, None], shape[-3:])
     y = np.broadcast_to(np.asarray(lat)[None, :, None], shape[-3:])
+    x = np.broadcast_to(np.asarray(lon)[None, None, :], shape[-3:])
     # gsw wants height, negative downward, and returns pressure in dbar.
     pressure = gsw.p_from_z(-z, y)
 
     pressure = np.broadcast_to(pressure, shape)
     y = np.broadcast_to(y, shape)
-    absolute = gsw.SA_from_SP(salinity, pressure, 0.0, y)
+    x = np.broadcast_to(x, shape)
+    absolute = gsw.SA_from_SP(salinity, pressure, x, y)
     return gsw.pt0_from_t(absolute, in_situ, pressure)
 
 
@@ -294,7 +307,7 @@ def sample_segment(dataset, geo, when, depth):
             for index in indices])
 
     raw["water_temp"] = to_potential(raw["water_temp"], raw["salinity"],
-                                     depth, src_lat)
+                                     depth, src_lat, src_lon)
     fields = {HYCOM_OBC[name]: values for name, values in raw.items()}
     return obc_grid.sample_onto(geo, fields, src_lon, src_lat)
 
@@ -414,7 +427,7 @@ def main():
                 read(dataset, name, found[0][1], ybox, xbox).astype("f8")),
                 np.nan)
         raw["water_temp"] = to_potential(raw["water_temp"], raw["salinity"],
-                                         depth, src_lat)
+                                         depth, src_lat, src_lon)
 
         # As in `fetch-glorys.py`: the source's own stamp, which is the 12Z
         # snapshot this tool reads by choice, unless the file is asserting a

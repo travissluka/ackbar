@@ -174,6 +174,7 @@ def ladder(span, members):
     """Member lags: magnitudes evenly spaced over the span, signs alternating.
 
         span 21, 6 members  ->  +7, -7, +14, -14, +21, -21
+        span 21, 7 members  ->  +5, +10, -10, +16, -16, +21, -21
 
     **Alternating rather than ascending, so that a truncation is still centred.**
     `docs/design.md` states that a missing or diverged member is the normal case,
@@ -181,8 +182,18 @@ def ladder(span, members):
     the filter reads them. So the set the filter actually sees is the survivors,
     and an ascending ladder truncated anywhere is an ensemble systematically
     lagged one way. Alternating means losing any even number of trailing members
-    leaves the set exactly centred, and losing an odd number leaves it off by one
-    spacing rather than by half a span.
+    leaves an even ladder exactly centred, and losing an odd number leaves it off
+    by one spacing rather than by half a span.
+
+    **An odd member count cannot be centred, and the unpaired member goes at the
+    smallest magnitude** so that the imbalance is one spacing rather than a whole
+    span. Building the list by alternating and truncating put it at the largest
+    instead: 7 members over span 21 summed to +21 days. That is not cosmetic.
+    The mean subtracted when the files are written is the mean over members, so a
+    lopsided ladder makes that mean a lagged smoothing of the boundary which
+    leads the truth, and every member's anomaly is then taken about the wrong
+    base. Mean preservation still holds exactly, which is why nothing downstream
+    could see it.
 
     **The span is the knob, not the spacing**, because the span is what is
     physically bounded: a lag long enough to reach into another season stops
@@ -198,10 +209,19 @@ def ladder(span, members):
     `2 * span / decorrelation`, whatever the member count. On this basin the
     boundary decorrelates over 10 to 30 days, which is most of the span.
     """
-    magnitudes = [span * (k + 1) / ((members + 1) // 2)
-                  for k in range((members + 1) // 2)]
-    lags = [int(round(sign * value))
-            for value in magnitudes for sign in (1, -1)][:members]
+    count = (members + 1) // 2
+    magnitudes = [span * (k + 1) / count for k in range(count)]
+    lags = []
+    if members % 2:
+        # The unpaired member goes at the *smallest* magnitude. Truncating the
+        # alternating list instead dropped the last negative, so an odd ladder
+        # was off centre by a full span: 7 members over span 21 summed to +21,
+        # and the member mean this subtracts is then a lagged smoothing that
+        # leads the truth, which puts every anomaly about the wrong base.
+        lags.append(int(round(magnitudes.pop(0))))
+    for value in magnitudes:
+        whole = int(round(value))
+        lags += [whole, -whole]
 
     # Rounding to whole days collapses the ladder when the span cannot carry the
     # member count: span 5 with 12 members gives a repeated 2 and a repeated -2,
@@ -347,9 +367,19 @@ def main():
             die(f"{source} has a time axis that is not one day per record "
                 f"(steps {steps.min():g} to {steps.max():g}), so a lag in days "
                 f"is not a shift in records")
-        if 2 * span >= len(times):
-            die(f"a lag of {span} days either side leaves nothing of a "
-                f"{len(times)} record file")
+        # Not "leaves nothing", which only ever caught an empty result. A
+        # 60 record source lagged 29 days either way left two records and exited
+        # 0, and 43 records at span 21 left one: a single-record `obc.nc` is the
+        # frozen boundary this whole path exists to stop shipping, and it looks
+        # healthy from every other angle. The floor is the span itself, because
+        # an ensemble whose window is shorter than the lag it displaces by is
+        # sampling less ocean than it moves.
+        kept = len(times) - 2 * span
+        if kept < max(span, 2):
+            die(f"a lag of {span} days either side of a {len(times)} record "
+                f"file leaves {max(kept, 0)} record(s), and this needs at least "
+                f"{max(span, 2)}. Fetch a source covering the experiment plus "
+                f"twice the span.")
 
         keep = slice(span, len(times) - span)
         print(f"obc-lagged: {source}")

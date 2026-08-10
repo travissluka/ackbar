@@ -36,9 +36,12 @@ EXP = Path(os.environ.get("ACKBAR_OUTPUT_ROOT", ""))
 #: whose basin-wide component we know is unobservable.
 FIELDS = ("sea_surface_height", "temperature", "salinity")
 
-#: Grid spacing, km. gom_25km is nominal 25 km, which is close enough for an
-#: axis label; nothing downstream divides by it.
-DX = 25.0
+#: Nominal grid spacing in km, per domain. This is *not* cosmetic: `profile`
+#: bands on it at 0/50/100/200/400 km, so running a gom_12km experiment with
+#: gom_25km's value puts every band edge at twice its true distance and the
+#: answer is wrong without being visibly wrong. Keyed rather than defaulted, so
+#: a new domain fails loudly instead of inheriting the Gulf's number.
+SPACING = {"gom_25km": 25.0, "gom_12km": 12.5, "gom_8km": 8.0, "gom_4km": 4.0}
 
 
 def cycles(exp):
@@ -56,7 +59,7 @@ def analysis_times(stamps):
     return [s for s in stamps if s.endswith("T000000Z")]
 
 
-def spread(exp, stamp, field, members=range(1, 21)):
+def spread(exp, stamp, field, members):
     """Standard deviation across members at each point, land as NaN.
 
     Returns the surface plane: a 3D field is taken at its top level, because a
@@ -78,7 +81,7 @@ def spread(exp, stamp, field, members=range(1, 21)):
     return np.std(np.array(stack), axis=0, ddof=1)
 
 
-def column_spread(exp, stamp, field, members=range(1, 21)):
+def column_spread(exp, stamp, field, members):
     """Standard deviation across members, kept depth resolved."""
     root = EXP / exp / "bkg" / stamp
     stack = []
@@ -93,7 +96,7 @@ def column_spread(exp, stamp, field, members=range(1, 21)):
     return np.std(np.array(stack), axis=0, ddof=1)
 
 
-def geometry(exp, stamp):
+def geometry(exp, stamp, spacing):
     """lon, lat, ocean mask, and distance to the nearest open boundary in km.
 
     The GoM domain opens on three sides: north (J=N), east (I=N), and south
@@ -109,7 +112,7 @@ def geometry(exp, stamp):
     ny, nx = mask.shape
     j, i = np.mgrid[0:ny, 0:nx]
     edge = np.minimum.reduce([ny - 1 - j, nx - 1 - i, j]).astype("f8")
-    return lon, lat, mask, edge * DX
+    return lon, lat, mask, edge * spacing
 
 
 def rms(field, mask):
@@ -139,6 +142,10 @@ def main():
     p.add_argument("--test", default="osse25-4dletkf-obc")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--json", type=Path)
+    p.add_argument("--domain", default="gom_25km",
+                   help="which domain, for the distance bands' scale")
+    p.add_argument("--members", type=int, default=20,
+                   help="perturbed members, not counting the control")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -148,17 +155,34 @@ def main():
         raise SystemExit("the two experiments share no analysis time")
     print(f"{len(shared)} shared analysis times: {shared[0]} .. {shared[-1]}")
 
-    lon, lat, mask, distance = geometry(args.test, shared[-1])
+    if args.domain not in SPACING:
+        raise SystemExit(
+            f"no grid spacing known for {args.domain}; the distance bands are "
+            f"in km and would silently be wrong. Add it to SPACING. Known: "
+            f"{', '.join(sorted(SPACING))}")
+    members = range(1, args.members + 1)
+
+    lon, lat, mask, distance = geometry(args.test, shared[-1],
+                                        SPACING[args.domain])
     report = {"control": args.control, "test": args.test,
               "cycles": shared, "fields": {}}
 
     for field in FIELDS:
         maps, series = {}, []
         for exp in (args.control, args.test):
-            got = [spread(exp, s, field) for s in shared]
+            got = [spread(exp, s, field, members) for s in shared]
+            missing = sum(1 for g in got if g is None)
             got = [g for g in got if g is not None]
+            if missing:
+                # Silence here wrote an empty `fields` map, exited 0, and left
+                # the figure script to die on `subplots(1, 0)`. An absent member
+                # is the thing to say out loud: it is what `on_missing_member`
+                # is for and it changes what the spread means.
+                print(f"  {field}: {missing} of {len(shared)} cycle(s) in {exp} "
+                      f"are missing a member of 1..{args.members} or the field "
+                      f"itself")
             if not got:
-                print(f"  {field}: no data for {exp}, skipped")
+                print(f"  {field}: no usable cycle in {exp}, skipped")
                 break
             maps[exp] = np.nanmean(np.array(got), axis=0)
             series.append([rms(g, mask) for g in got])
@@ -183,7 +207,7 @@ def main():
     for field in ("temperature", "salinity"):
         out = {}
         for exp in (args.control, args.test):
-            col = column_spread(exp, shared[-1], field)
+            col = column_spread(exp, shared[-1], field, members)
             if col is None:
                 break
             out[exp] = [rms(level, mask) for level in col]
