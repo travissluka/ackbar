@@ -15,14 +15,18 @@ depends on them.
 
 It is **not** a benchmark. Four reasons, all structural:
 
-- **Truth is forced by a shared climatology.** NCAR/CORE, no synoptic
-  variability anywhere. An experiment can now give each member its own GEFS
-  atmosphere ([`forcing.md`](forcing.md)), which is the larger half of this and
-  is built, but truth still reads the climatology and so does any experiment
-  that inherits no forcing layer. Until an ERA5-forced truth exists, an
-  experiment that perturbs its forcing is measuring spread against a truth whose
-  atmosphere it does not share in kind, so the numbers here are spread numbers
-  rather than skill ones.
+- **The experiments do not all share a forcing source with each other.** Truth
+  inherits `forcing/era5` and reads `forcing/gom_truth/era5`, so the nature run
+  has the weather that actually happened, and an experiment inheriting
+  `forcing/gefs-ensemble` reads a GEFS forecast of that weather, wrong by the
+  amount a real forecast is wrong. That pairing is what makes a skill number
+  possible. What is not settled is the rest of the suite: an experiment that
+  inherits no forcing layer runs on the NCAR/CORE climatology, which has no
+  synoptic variability anywhere, and is therefore *further* from truth than one
+  on GEFS for a reason that has nothing to do with its solver. Comparing a
+  climatology-forced 3DVar against a GEFS-forced LETKF measures which of them
+  got an atmosphere. The fix is the deterministic GEFS source layer that
+  [`forcing.md`](forcing.md) lists as not built, plus a line in each experiment.
 - **The observation errors are iid and exactly correct.** The generator adds
   Gaussian noise at the stated error and the observer assimilates that same
   number, which is the easy case and the right one to prove plumbing with. A
@@ -394,7 +398,9 @@ Two more, from the same sweep, that bear on this run specifically:
 - **Cycle length.** `PT24H`. `PT12H` doubles the cycle count and the analysis
   cost for a domain whose signal barely evolves in a day.
 - **Spinup length.** Decided by the kinetic energy plot, not in advance.
-- **The ERA5-forced truth run.** Perturbed per-member forcing and a truth forced
-  differently from the experiments were the two halves of the caveat at the top
-  of this file. The first is built ([`forcing.md`](forcing.md)); the second is
-  not, and until it is, no ensemble number here is a skill number.
+- **One forcing source for every experiment.** Truth reads ERA5 and the two
+  ensemble-forcing experiments read GEFS, which is the pairing a skill number
+  needs ([`forcing.md`](forcing.md)). Every other experiment inherits no forcing
+  layer and runs on the climatology, so the suite is not yet internally
+  comparable: see the first caveat at the top of this file. It needs the
+  deterministic GEFS source layer and one line per experiment, not a decision.

@@ -52,7 +52,16 @@ def member_set(config):
         return (0,)
     size = ensemble["size"]
     if ensemble.get("control", True):
+        # `size: 0` with a control is one run, `mem000`, which is what a single
+        # member experiment says when it carries this block for `inputs` rather
+        # than for an ensemble.
         return tuple(range(0, size + 1))
+    if size < 1:
+        raise GraphError(
+            "ensemble.size is 0 and ensemble.control is false, so the member "
+            "set is empty and the experiment has nothing to run. Zero means "
+            "the control alone; drop `control: false` or give a size."
+        )
     return tuple(range(1, size + 1))
 
 

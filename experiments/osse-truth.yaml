@@ -19,14 +19,40 @@
 # makes it a poor thing to benchmark against. At 12 km the Loop Current
 # resolves and sheds rings, so altimetry has real mesoscale to work on. See
 # docs/domains.md.
+#
+# **Forced by ERA5, which is what makes a skill number possible.** A truth run
+# on the shared CORE climatology has no synoptic weather in it, so an experiment
+# cannot be wrong about weather and every number measured against such a truth
+# is a spread number rather than a skill one. ERA5 is the weather that actually
+# happened; the experiments read a GEFS forecast of it, wrong by the amount a
+# real forecast is wrong, and that difference is the forcing error the analysis
+# has to work against. The corollary is that an experiment inheriting no forcing
+# layer is now *further* from this truth than one on GEFS, so the comparison is
+# only fair between experiments that share a forcing source.
 inherit:
   - domain/gom_12km
   - model/mom6sis2
   - da/none
+  - forcing/era5
 
 experiment:
   name: osse-truth
   description: OSSE stage B, the gom_12km nature run
+
+ensemble:
+  # Not an ensemble: one run, `mem000`. The block is here because a forcing
+  # source stages its file through `ensemble.inputs`, which is the same
+  # mechanism every member of a real ensemble uses, and a single run is the
+  # control alone.
+  size: 0
+
+vars:
+  # The truth archive, not the experiment one. Both hold the same seven fields
+  # on the same grid and differ in what produced them, which is the whole of the
+  # fraternal twin: an OSSE whose truth and experiments share an atmosphere
+  # scores the analysis against a nature run that had no weather the analysis
+  # did not already know.
+  forcing_purpose: gom_truth
 
 cycle:
   # Where the spinup left off. Not chosen: it is the valid time of the last

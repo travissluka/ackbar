@@ -466,7 +466,14 @@ properties:
     required: [size]
     additionalProperties: false
     properties:
-      size: { type: integer, minimum: 1 }
+      # **Zero is a real size and means one run, the control.** It is what a
+      # single-member experiment says when it needs this block for something
+      # other than an ensemble: a deterministic forcing or boundary source
+      # stages its file through `ensemble.inputs`, which is the same mechanism
+      # every member uses, and an experiment with no members at all still has
+      # `mem000`. Zero without a control is an empty index set and
+      # `graph.build.member_set` refuses it.
+      size: { type: integer, minimum: 0 }
       # Whether a deterministic control runs alongside the ensemble. It is
       # mem000 and it is inside the same member array, not a parallel concept:
       # Splitting the control out into its own concept is what makes every

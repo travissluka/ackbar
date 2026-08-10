@@ -390,6 +390,24 @@ class TestMemberSets:
     def test_an_ensemble_includes_the_control_by_default(self, keys):
         assert member_set(load("letkf_om1deg", keys)) == tuple(range(21))
 
+    def test_a_size_of_zero_is_the_control_alone(self, keys):
+        """What a single-member experiment says when it carries an `ensemble`
+        block for `inputs` rather than for an ensemble: a deterministic forcing
+        source stages its file through the same mechanism every member uses, so
+        the truth run has the block and no members."""
+        config = load("letkf_om1deg", keys)
+        config["ensemble"]["size"] = 0
+        assert member_set(config) == (0,)
+
+    def test_a_size_of_zero_with_no_control_is_refused(self, keys):
+        """An empty member set is an experiment with nothing to run, and the
+        graph would be built out of zero-length arrays rather than fail."""
+        config = load("letkf_om1deg", keys)
+        config["ensemble"]["size"] = 0
+        config["ensemble"]["control"] = False
+        with pytest.raises(GraphError, match="nothing to run"):
+            member_set(config)
+
     def test_the_control_can_be_turned_off(self, keys):
         config = load("letkf_om1deg", keys)
         config["ensemble"]["control"] = False
