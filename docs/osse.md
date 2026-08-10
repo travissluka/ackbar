@@ -269,10 +269,15 @@ against 0.0248. Ratio 1.01 and 1.02, correlation 0.98 to 0.99, regression slope
 1.00. The two fields carry one signal, so there is no separable "barotropic
 residual" that `h` holds and `ave_ssh` lacks.
 
-Distrust anything here that differences `bkg/` records instead of reading the
-increment file. A `bkg/` record disagrees with the background restart in `rst/`
-by up to 7.8 m in `h`. That is an open question of its own and a more serious
-one, because `tools/spread-report.py` reads `bkg/` records exclusively.
+Read the increment file rather than differencing states, and if you do reach for
+a `bkg/` record, take the restart it names rather than the one whose directory
+shares its stamp. **`run/<cycle>/rst` holds what that cycle's forecast
+*produced*, so it is valid at the *next* cycle**, and a record carries a
+`source` attribute naming the set it came from. Comparing `bkg/<stamp>` against
+`run/<same stamp>/rst` compares two states twenty four hours apart and reports
+metre-scale disagreement in `h` that is entirely the time offset. Against the
+set it names, a record agrees to 3.7e-06 relative, which is the quantization its
+own `contents` attribute declares: five significant digits, not a restart.
 
 ### Where the analysed sea level actually goes
 
