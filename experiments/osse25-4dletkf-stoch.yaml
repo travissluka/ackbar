@@ -1,0 +1,135 @@
+# `osse25-4dletkf` with a spread source, and with the filter's own decay removed.
+#
+# Two changes from `osse25-4dletkf` and nothing else: same domain, same dates,
+# same control initial condition, same ensemble initial condition, same thirteen
+# observers, the same observation archive, the same 4D window and the same
+# extended forecast schedule. What differs is
+#
+# 1. every member but the control integrates a perturbed model (oSPPT), and
+# 2. `rtps` goes from 0.95 to 1.0.
+#
+# **They are one change, not two, and pairing them is the point.** `da/letkf`
+# records why no relaxation coefficient below one can hold an ensemble up on
+# these domains: RTPS relaxes the posterior spread back towards *the prior's*,
+# and with no external source the prior is itself the previous cycle's
+# posterior, so the relaxation chases a floor that moves down with it and the
+# sequence decays geometrically. Raising the coefficient alone does not fix
+# that; it only slows it. Adding a source alone leaves the filter still taking a
+# fixed fraction of the spread out every cycle. Together, the filter stops
+# removing spread and something outside it puts spread back, which is the first
+# configuration in this workflow where an equilibrium is even possible.
+#
+# **What 1.0 does, arithmetically.** `oops::ETKFLinearAlgebra` inflates by
+# `1 + rtps * (fsprd - asprd) / asprd`, so at 1.0 the posterior spread is set
+# exactly to the prior's. If the analysis removes 30% of the spread, 0.95 leaves
+# 98.5% of the prior and 1.0 leaves 100%: a 1.5% difference per cycle, which is
+# `0.985^30 = 0.63` over this run. That is what "a little higher" buys, and it
+# is deliberately the ceiling rather than a step towards it, because the
+# coefficient's job here is to stop *subtracting*, not to inflate.
+#
+# **Why more spread should also mean less error, and how that could go wrong.**
+# An under-dispersed filter under-weights its observations: the Kalman gain
+# grows with the prior spread, so an ensemble that claims more confidence than
+# it has leaves the analysis too near the background. `osse25-letkf` records
+# under-dispersion in sea surface height and velocity, exactly the fields the
+# altimeter constrains. The failure mode in the other direction is real too:
+# oSPPT is a *model error* term, and an ensemble given more spread than the
+# model's error justifies over-weights the observations and pulls noise into the
+# analysis. Which of the two happened is not a matter of opinion here, because
+# the truth is a run: read `tools/local/osse-state-error.py` before
+# `tools/local/letkf-spread.py`, and do not accept a spread result that costs
+# state space skill.
+#
+# **What the stochastic half is expected to reach, and what it is not.** Five
+# cycles of `osse25-letkf-stoch5` put back about 0.10 degC of surface
+# temperature spread per cycle, additively, along with mixed layer depth, and
+# moved sea surface height and salinity by nothing at all: oSPPT scales the
+# diabatic tendency and over a day the diabatic change in column mass and in
+# salt is small. So the altimetric half of the under-dispersion is *not* what
+# this experiment fixes, and `rtps: 1.0` is the only thing acting on it. If sea
+# surface height spread improves here, the relaxation is what improved it.
+#
+# The ensemble, its provenance, and why there is no `da/corr_vt_cycled` are in
+# `osse25-letkf.yaml`. What the 4D window changes, and why the forecast costs
+# 1.5x the model, is in `osse25-4dletkf.yaml`. Neither is restated here.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf-stoch
+  description: OSSE, gom_25km 4D LETKF with stochastic physics and full relaxation
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  count: 30
+
+solver:
+  window:
+    type: '4d'
+
+  local ensemble DA:
+    inflation:
+      # 1.0, against `da/letkf`'s 0.95. See the header: this stops the filter
+      # subtracting spread, and `ensemble.stochastic` below is what puts spread
+      # back. Neither alone is the experiment.
+      rtps: 1.0
+
+forecast:
+  # Identical to `osse25-4dletkf`'s, and for the reasons that file gives: the
+  # truth is six hourly and the archive samples the nearest state, so nothing
+  # finer removes representativeness error already in the observations.
+  slots: PT6H
+
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: replace_from_mean
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  stochastic:
+    # The same seed `osse25-letkf-stoch` uses, so the two draw identical
+    # patterns and their difference is the window and the relaxation rather
+    # than the noise.
+    seed: 20150712
+    sppt:
+      # All three are NOAA-PSL's, unchanged from `osse25-letkf-stoch`, so this
+      # is not also a tuning experiment. `src/ackbar/stochastic.py` says what
+      # each number means, including that the amplitude is the pattern's spread
+      # and the multiplier the model applies carries about half of it. The
+      # length scale is the one that does not obviously transfer from a global
+      # configuration to a basin three e-folding lengths wide, and sweeping it
+      # is a separate experiment from this one.
+      amplitude: 0.8
+      length_scale: 500000.0
+      timescale: PT6H
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00
