@@ -235,24 +235,27 @@ def stage(config, run, cycle, task, *, source, member=None):
     data_table = model.get(DATA_TABLE)
     forcing = (model.get("override") or {}).get(FORCING)
     if bool(data_table) != bool(forcing):
+        have, missing = ((f"model.{DATA_TABLE}", f"model.override.{FORCING}")
+                         if data_table else
+                         (f"model.override.{FORCING}", f"model.{DATA_TABLE}"))
         raise ModelError(
-            f"model.{DATA_TABLE} and model.override.{FORCING} are set "
-            f"{'without' if data_table else 'by'} each other. A forcing "
-            f"source is both: the table says which file the fluxes come "
-            f"from, and {FORCING} says what that file's cadence implies "
-            f"about the model. A sub-daily shortwave read with "
-            f"ADD_DIURNAL_SW left on runs to completion and applies the "
-            f"diurnal cycle twice."
+            f"{have} is set and {missing} is not. A forcing source is both: "
+            f"the table says which file the fluxes come from, and {FORCING} "
+            f"says what that file's cadence implies about the model. A "
+            f"sub-daily shortwave read with ADD_DIURNAL_SW left on runs to "
+            f"completion and applies the diurnal cycle twice."
         )
 
     run.mkdir(parents=True, exist_ok=True)
     for entry in sorted(os.scandir(base), key=lambda e: e.name):
         if entry.name in OWNED or entry.name in OVERRIDE:
             continue
-        if entry.name == DATA_TABLE and data_table:
+        if data_table and entry.name in (DATA_TABLE, Path(data_table).name):
             # The case ships one for its own forcing. Linked through, it
             # would be the table the model read and the source's would be
-            # the one nobody opened.
+            # the one nobody opened. The source's own file is skipped too:
+            # it usually lives in this same directory, and linked under its
+            # own name it sits in the run directory unread and unexplained.
             continue
         if entry.name == STOCHASTIC:
             # Never linked even when this run writes none of its own. A base

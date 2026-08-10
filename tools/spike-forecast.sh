@@ -84,6 +84,20 @@ for name in data_table field_table MOM_input SIS_input; do cp "$BASE/$name" .; d
 # the two arrive together or not at all. `SPIKE_LINK` is `name=path` pairs,
 # linked into `INPUT` after the restart set so a member's own forcing wins over
 # anything the domain staged under the same name.
+# Both or neither, which is the rule `mom6sis2.stage` enforces for the workflow.
+# A spike is where a forcing source is tried first, so a spike that can run the
+# one combination that completes, reports success and doubles the diurnal cycle
+# is the worst place to leave the hole.
+if { [[ -n ${SPIKE_DATA_TABLE:-} ]] && [[ -z ${SPIKE_SIS:-} ]]; } ||
+   { [[ -z ${SPIKE_DATA_TABLE:-} ]] && [[ -n ${SPIKE_SIS:-} ]]; }; then
+    echo "spike-forecast: SPIKE_DATA_TABLE and SPIKE_SIS are set without each" \
+         "other. A forcing source is both: the table says which file the fluxes" \
+         "come from, and SIS_forcing says what that file's cadence implies" \
+         "about the model. A sub-daily shortwave read with ADD_DIURNAL_SW left" \
+         "on runs to completion and applies the diurnal cycle twice." >&2
+    exit 1
+fi
+
 if [[ -n ${SPIKE_DATA_TABLE:-} ]]; then
     [[ -e $SPIKE_DATA_TABLE ]] || {
         echo "spike-forecast: $SPIKE_DATA_TABLE does not exist" >&2; exit 1; }

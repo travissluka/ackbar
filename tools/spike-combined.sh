@@ -23,7 +23,8 @@ GEFS=${GEFS:-/data/ackbar/spike/gefs}
 IC=${IC:-$ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00}
 DAYS=${DAYS:-5}
 EXE=${SPIKE_EXE:-$ACKBAR_ROOT/pkg/mom6sis2/ice_ocean_SIS2/build/coupler_main}
-TABLE=$ACKBAR_ROOT/config/model/mom6sis2/domain/gom/common/data_table.gefs
+TABLE=$ACKBAR_ROOT/config/model/mom6sis2/domain/gom/common/data_table.atm
+SIS_FORCING=$ACKBAR_ROOT/config/model/mom6sis2/SIS_forcing
 
 [[ -x $EXE ]] || { echo "spike-combined: $EXE does not exist; run ./build-model.sh" >&2; exit 1; }
 
@@ -59,6 +60,7 @@ for n in "${!MEMBERS[@]}"; do
 EOF
     SPIKE_EXE=$EXE \
     SPIKE_DATA_TABLE=$TABLE \
+    SPIKE_SIS=$SIS_FORCING \
     SPIKE_LINK="atm.nc=$GEFS/$member/atm.nc" \
     SPIKE_NAMELIST=$namelist \
     NTASKS=${NTASKS:-8} \

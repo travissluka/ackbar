@@ -22,7 +22,8 @@ OUT=${2:?usage: spike-gefs-run.sh <gefs-dir> <out-dir>}
 IC=${IC:-$ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00}
 DAYS=${DAYS:-5}
 
-TABLE=$ACKBAR_ROOT/config/model/mom6sis2/domain/gom/common/data_table.gefs
+TABLE=$ACKBAR_ROOT/config/model/mom6sis2/domain/gom/common/data_table.atm
+SIS_FORCING=$ACKBAR_ROOT/config/model/mom6sis2/SIS_forcing
 [[ -e $TABLE ]] || { echo "spike-gefs-run: $TABLE does not exist" >&2; exit 1; }
 
 for member in c00 p01 p02 p03 p04; do
@@ -35,7 +36,7 @@ for member in c00 p01 p02 p03 p04; do
         echo "have $member"
         continue
     fi
-    SPIKE_DATA_TABLE=$TABLE SPIKE_LINK="atm.nc=$atm" \
+    SPIKE_DATA_TABLE=$TABLE SPIKE_SIS=$SIS_FORCING SPIKE_LINK="atm.nc=$atm" \
         bash "$ACKBAR_ROOT/tools/spike-forecast.sh" gom_25km "$IC" "$DAYS" "$OUT/$member"
 done
 
