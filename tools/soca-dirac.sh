@@ -1,14 +1,18 @@
 #!/bin/bash
 # Check a domain's calibrated diffusion operator by applying it to a dirac.
 #
-#   tools/soca-dirac.sh <domain> [<lat>,<lon>]... [--full] [--keep <dir>]
+#   tools/soca-dirac.sh <domain> [<lat>,<lon>]... [<mode>] [--keep <dir>]
 #   tools/soca-dirac.sh gom_25km
 #   tools/soca-dirac.sh gom_8km 26.5,-90.0 28.9,-88.4
 #   tools/soca-dirac.sh gom_25km --full --keep ~/dirac
+#   tools/soca-dirac.sh gom_25km --ensemble <dir of mem*/MOM.res.nc>
+#   tools/soca-dirac.sh gom_25km --hybrid   <dir of mem*/MOM.res.nc>
 #
-# `--full` applies the whole background error rather than the correlation alone:
-# the standard deviations, the depth taper and the balance operator. See the
-# section below and the header of tools/dirac.py.
+# `--full` applies the whole static background error rather than the correlation
+# alone: the standard deviations, the depth taper and the balance operator.
+# `--ensemble` applies the localized ensemble covariance instead, and `--hybrid`
+# applies both weighted together and each of them separately. See the section
+# below and the header of tools/dirac.py.
 #
 # `--keep` copies the increment, the document that produced it and the placement
 # record into a directory instead of dropping them with the working directory.
@@ -43,10 +47,11 @@
 # ---------------------------------------------------------------------------
 # It reads the experiment's own B
 #
-# The saber blocks below are lifted out of `config/layers/da/variational.yaml`
-# rather than written here. A dirac test against a second description of the
-# background error would pass while the analysis used a different operator,
-# which is the failure it exists to catch.
+# The saber blocks below are lifted out of the `da/*` layers rather than written
+# here, and every mode but the default assembles them with the same
+# `ackbar.soca.background_error` an analysis job calls. A dirac test against a
+# second description of the background error would pass while the analysis used
+# a different operator, which is the failure it exists to catch.
 #
 # By default it drops everything outside the central block: the standard
 # deviations, the depth taper and the balance operator. Those turn a correlation
@@ -58,19 +63,32 @@
 # would produce, in every variable, including the ones the balance operator
 # reached rather than the dirac. It also writes the standard deviation fields
 # the parametric block built, which are otherwise never visible.
+#
+# `--ensemble <dir>` and `--hybrid <dir>` are the same test again over the other
+# two covariances an experiment can ask for, reading the member restarts in
+# `<dir>/mem*/MOM.res.nc`. The ensemble one has no balance operator in it, so a
+# response in a variable the dirac was not placed in is the sample covariance,
+# and the localization is what decides how far it reaches. `--hybrid` writes
+# three increments rather than one: the hybrid and each component alone.
 set -euo pipefail
 
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
-DOMAIN=${1:?usage: soca-dirac.sh <domain> [<lat>,<lon>]... [--full] [--keep <dir>]}
+DOMAIN=${1:?usage: soca-dirac.sh <domain> [<lat>,<lon>]... [<mode>] [--keep <dir>]}
 shift
 POINTS=()
 KEEP=
-FULL=()
+# The mode flag, whole, passed to both halves of dirac.py so that the document
+# and the report cannot disagree about which covariance was applied. Empty means
+# the correlation alone.
+MODE=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --full) FULL=(--full); shift ;;
+        --full) MODE=(--full); shift ;;
+        --ensemble|--hybrid)
+            MODE=("$1" "$(cd "${2:?$1 needs a directory of members}" && pwd)")
+            shift 2 ;;
         --keep) KEEP=${2:?--keep needs a directory}; shift 2 ;;
         -*) echo "soca-dirac: unknown option $1" >&2; exit 1 ;;
         *) POINTS+=("$1"); shift ;;
@@ -82,7 +100,10 @@ domain_paths "$DOMAIN"
 
 GRIDSPEC=$STATIC/soca_gridspec.nc
 TOOLBOX=$ACKBAR_ROOT/pkg/jedi/build/bin/soca_error_covariance_toolbox.x
-LAYER=$ACKBAR_ROOT/config/layers/da/variational.yaml
+# The layer *tree*, not one file: which layers a mode merges is dirac.py's, on
+# the same rule that says the covariance is assembled the way ackbar assembles
+# it. See `STACK` there.
+LAYERS=$ACKBAR_ROOT/config/layers
 NAMELIST=$ACKBAR_ROOT/config/model/mom6sis2/mom_input.nml
 METADATA=$ACKBAR_ROOT/config/model/mom6sis2/fields_metadata.yaml
 RESTART=${ACKBAR_DIRAC_RESTART:-}
@@ -103,12 +124,17 @@ if [[ -z $RESTART ]]; then
     RESTART=${candidates[0]}
 fi
 
-REQUIRED=("$TOOLBOX" "$LAYER" "$NAMELIST" "$METADATA" "$GRIDSPEC" "$RESTART"
+REQUIRED=("$TOOLBOX" "$LAYERS" "$NAMELIST" "$METADATA" "$GRIDSPEC" "$RESTART"
           "$STATIC/diffusion/corr_hz.nc" "$STATIC/diffusion/corr_hz_ssh.nc"
           "$STATIC/diffusion/corr_vt.nc")
-# Only `--full` reads the standard deviations, so only `--full` needs the file
-# they are floored by. See tools/sst-bgerr.py.
-[[ ${#FULL[@]} -gt 0 ]] && REQUIRED+=("$STATIC/sst_bgerr.nc")
+# The correlation alone reads none of these. Everything else reads the standard
+# deviations, so it needs the file they are floored by (tools/sst-bgerr.py), and
+# any mode with an ensemble in it reads the localization the same offline stage
+# calibrated.
+[[ ${#MODE[@]} -gt 0 ]] && REQUIRED+=("$STATIC/sst_bgerr.nc")
+case ${MODE[0]:-} in
+    --ensemble|--hybrid) REQUIRED+=("$STATIC/diffusion/loc_hz.nc" "${MODE[1]}") ;;
+esac
 
 for path in "${REQUIRED[@]}"; do
     [[ -e $path ]] || {
@@ -134,8 +160,8 @@ ln -s "$GRIDSPEC" soca_gridspec.nc
 mkdir -p out
 
 python3 "$ACKBAR_ROOT/tools/dirac.py" plan \
-    "$LAYER" "$STATIC" "$LEVELS" "$METADATA" "$GRIDSPEC" "$RESTART" \
-    dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"} ${FULL[@]+"${FULL[@]}"}
+    "$LAYERS" "$STATIC" "$LEVELS" "$METADATA" "$GRIDSPEC" "$RESTART" \
+    dirac.yaml points.json ${POINTS[@]+"${POINTS[@]}"} ${MODE[@]+"${MODE[@]}"}
 
 # How many ranks is a property of the machine, so the site file owns it and
 # nothing here may name a number. See site/rancor.sh.
@@ -176,7 +202,7 @@ grep "Diffusion: \(horizontal\|vertical\) iterations" toolbox.log |
 # fails, and `set -e` would take the script down with it before `--keep` ran.
 status=0
 python3 "$ACKBAR_ROOT/tools/dirac.py" report "$GRIDSPEC" "$STATIC" points.json out \
-    ${FULL[@]+"${FULL[@]}"} || status=$?
+    ${MODE[@]+"${MODE[@]}"} || status=$?
 
 # After the report, and unconditionally: a failing check is exactly when the
 # increment is worth opening.

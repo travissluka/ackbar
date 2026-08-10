@@ -123,6 +123,69 @@ ocean where the scale is the Rossby radius and shelf or high latitude where it
 is the grid floor, and a calibration that is wrong is usually wrong in one and
 not the other.
 
+## Checking the other two covariances
+
+`--full`, `--ensemble` and `--hybrid` apply a covariance rather than a
+correlation, so nothing passes or fails and what comes back is the increment one
+observation would produce. Every one of them is assembled by
+`ackbar.soca.background_error` over the merged layer stack, which is the same
+call an analysis job makes.
+
+```bash
+E=/data/ackbar/static/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+export ACKBAR_DIRAC_RESTART=${E%/*}/MOM.res.nc
+tools/soca-dirac.sh gom_25km 25.5,-90.0 --full     --keep /data/ackbar/test/dirac/static
+tools/soca-dirac.sh gom_25km 25.5,-90.0 --ensemble $E --keep /data/ackbar/test/dirac/ensemble
+tools/soca-dirac.sh gom_25km 25.5,-90.0 --hybrid   $E --keep /data/ackbar/test/dirac/hybrid
+tools/dirac-page.py $STATIC/soca_gridspec.nc $ACKBAR_DIRAC_RESTART \
+    /data/ackbar/test/dirac/ensemble/points.json site/monitor/dirac-localization \
+    "static B=/data/ackbar/test/dirac/static/<increment>.nc" \
+    "ensemble=/data/ackbar/test/dirac/ensemble/<increment>.nc" \
+    "hybrid=/data/ackbar/test/dirac/hybrid/<increment>.nc" --ensemble $E
+```
+
+An ensemble run writes two increments and a hybrid run writes four, because the
+toolbox applies each component of a hybrid separately and applies a
+localization by itself as well. So one hybrid run reports the hybrid, the static
+half, the ensemble half, and the localization, which is the only arrangement in
+which "the ensemble half is contributing" and "the weights are what was asked
+for" are separately visible.
+
+**What one temperature dirac in the Gulf thermocline says**, at 25.6 N, 90.0 W,
+138 m, against the twenty member `osse-control-25km` ensemble:
+
+| covariance | temperature | salinity | height | ocean area moved by 5% of the peak |
+|---|---|---|---|---|
+| static B | 1.396 degC | 0 psu | 0.040 m | 1.3% |
+| ensemble, localized | 3.213 degC | 0.178 psu | 0.188 m | 1.8% |
+| hybrid, 0.5 and 0.5 | 2.304 degC | 0.089 psu | 0.114 m | 1.6% |
+| ensemble, unlocalized | 3.207 degC | 0.178 psu | 0.188 m | 65.7% |
+| ensemble, localization group with no `variables:` | 3.207 degC | 0 psu | 0 m | 0% |
+
+The static B's salinity is exactly zero because `kst` is off, and its height is
+the balance operator. The ensemble has no balance operator, so both of its other
+columns are the sample covariance: at that point the ensemble's spread is 1.79
+degC and its correlation with salinity is 0.78 and with sea surface height 0.90,
+which is the subtropical underwater and a thermocline displacement, and is what
+the increment is a picture of.
+
+**The vertical is where the two covariances differ most**, and it is a
+consequence of a decision rather than a fault. The static B's vertical
+correlation is calibrated against the mixed layer, so the same dirac is down to
+0.38 of its peak by 195 m and to zero by 400 m. The localization has no vertical
+part at all (`vertical: strategy: duplicated` in `da/hybrid.yaml`, which is a
+localization of one at every separation in the vertical), so the ensemble
+component is at 0.66 of its peak at 371 m and still 0.09 at 1028 m: whatever
+vertical structure the members have, an observation sees all of it. That is the
+honest starting point recorded in the layer, and it is the first thing to
+measure if a hybrid analysis turns out to be moving the deep ocean.
+
+The last row is the configuration `8b71c18` fixed, and it is not "unlocalized":
+a localization over an empty variable list is the identity, which collapses
+`sum_m X_m . L(X_m . dx)` to the ensemble variance times the input. One cell, one
+level, one variable. Every EnVar and hybrid result produced before that commit
+had a diagonal ensemble component.
+
 ## Iteration count
 
 `normalization iterations` in `config/static/diffusion.yaml` is the number of

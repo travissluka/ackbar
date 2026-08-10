@@ -71,7 +71,10 @@ solver:
     # `ackbar/soca.py`: it is the analysis variables, which are stated once.
     # It has to sit inside the group, which is where `saber::DiffusionImpl`
     # reads it: a group without it localizes an empty variable list, saber
-    # constructs and runs, and the covariance is the raw sample one.
+    # constructs and runs, and the Schur-product form collapses to the ensemble
+    # variance times the input. One cell, one level, one variable, and no
+    # cross-variable term at all. `tools/soca-dirac.sh <domain> --ensemble` is
+    # what shows it, and `docs/background-error.md` has the picture.
     localization:
       localization method: SABER
       saber central block:

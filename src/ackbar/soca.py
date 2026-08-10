@@ -1513,9 +1513,20 @@ def _ensemble_error(solver, variables, ensemble):
     the localization method looks like the same statement and is not one: oops
     does not read it (`EnsembleCovariance.h` takes the localization's variables
     from the ensemble), so a group left without its own `variables:` localizes
-    an empty list, which is to say it localizes nothing and the covariance is
-    the raw sample one. That is what this wrote until it was caught, and it is
-    why `_localization` refuses a group list it cannot fill in.
+    an empty list. That is what this wrote until it was caught, and it is why
+    `_localization` refuses a group list it cannot fill in.
+
+    **What that produced is worse than an unlocalized covariance, and it was
+    measured rather than reasoned about.** `EnsembleCovariance::doMultiply` has
+    two branches: with no `localization:` at all it forms the sample covariance,
+    and with one it forms `sum_m X_m . L(X_m . dx)`. A localization over an empty
+    variable list is the identity, so that second branch collapses to
+    `sum_m X_m . X_m . dx`, which is the ensemble **variance** times the input,
+    pointwise. A dirac through it comes back as one cell at one level, in one
+    variable, with no spatial structure and no cross-variable term whatsoever.
+    Every EnVar and hybrid analysis on disk from before the fix had an ensemble
+    component that was diagonal. `site/monitor/dirac-localization/` is the
+    picture; `docs/background-error.md` says how to rebuild it.
     """
     section = dict(_require(solver, "ensemble error"))
     return {

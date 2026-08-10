@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Plan a dirac test of the background error, and read back what it did.
 
-    tools/dirac.py plan   <layer> <static> <levels> <metadata> <gridspec> \\
-                          <restart> <out.yaml> <points.json> [lat,lon]... [--full]
-    tools/dirac.py report <gridspec> <static> <points.json> <outdir> [--full]
+    tools/dirac.py plan   <layers> <static> <levels> <metadata> <gridspec> \\
+                          <restart> <out.yaml> <points.json> [lat,lon]... \\
+                          [--full | --ensemble <dir> | --hybrid <dir>]
+    tools/dirac.py report <gridspec> <static> <points.json> <outdir> \\
+                          [--full | --ensemble <dir> | --hybrid <dir>]
 
 Two verbs in one file because they have to agree about which dirac is which.
 The toolbox applies the operator to a single increment holding every dirac at
@@ -11,34 +13,58 @@ once, so `points.json` written by `plan` is the only record of what was placed
 where, and both halves read the node ordering of the calibration files the same
 way. `tools/soca-dirac.sh` is what calls them.
 
-## Two tests, and they answer different questions
+## Four tests, and they answer different questions
 
-Without `--full` this is a test of the **correlation** alone: the central
+Without a flag this is a test of the **correlation** alone: the central
 diffusion block and nothing else. The response at the dirac is then exactly 1
 by definition, so the peak measures the normalization's Monte Carlo error and
 the radius measures whether the operator built the scale the calibration
 ordered. It is a test of `tools/soca-diffusion.sh` and of nothing in
 `config/layers/da/variational.yaml` below the central block.
 
-With `--full` it is a test of the **covariance** the analysis actually uses:
-the standard deviations, the depth taper and the balance operator are all in.
-Nothing is normalized to anything, and there is nothing to pass or fail. What
-it shows is what one observation would do: the size of the increment in the
+With `--full` it is a test of the **static covariance** the analysis actually
+uses: the standard deviations, the depth taper and the balance operator are all
+in. Nothing is normalized to anything, and there is nothing to pass or fail.
+What it shows is what one observation would do: the size of the increment in the
 variable the dirac was placed in, and the size of the increment the balance
-operator puts into the other two. A `--full` run writes the standard deviation
-fields as well, which is the only way to see what the parametric block built
-before it was multiplied by anything.
+operator puts into the other two. It writes the standard deviation fields as
+well, which is the only way to see what the parametric block built before it was
+multiplied by anything.
+
+`--ensemble <dir>` replaces that covariance with the **ensemble** one built from
+the member restarts in `<dir>/mem*/MOM.res.nc`, localized exactly as
+`config/layers/da/hybrid.yaml` says. There is no balance operator in it: an
+increment in a variable the dirac was not placed in is the sample covariance and
+nothing else, which is what makes this the test of whether the ensemble
+component is cross-variable. `--hybrid <dir>` is both, weighted, and asks the
+toolbox to apply each component separately as well, so one run writes three
+increments: the hybrid and the two halves it is made of.
+
+## It builds the covariance the workflow builds
+
+Every mode but the first goes through `ackbar.soca.background_error`, over the
+same merged layer stack `ackbar create` merges. A dirac test against a second
+description of the background error would pass while the analysis used a
+different operator, which is the failure this exists to catch, and the
+localization variable list is exactly the sort of key that goes missing between
+two descriptions: `soca._localization` is what puts it in, so this has to be
+what put it in here too.
 """
 
+import copy
 import json
 import os
 import re
 import sys
+import tempfile
+from pathlib import Path
 
 import netCDF4
 import numpy as np
 import yaml
 
+from ackbar import soca
+from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.diffusion import THIN_LAYER
 
 #: Fixed by SOCA. `ifdir` indexes a hardcoded table in `soca_increment_mod`, not
@@ -58,6 +84,26 @@ IO_NAME = {"sea_water_potential_temperature": "Temp",
 DATADIR = "out"
 EXPERIMENT = "dirac_%id%"
 DATE = "2000-01-01T00:00:00Z"
+
+#: The layer stack each mode merges to get its solver. The same names an
+#: experiment writes under `inherit:`, so the covariance built here is the one
+#: `ackbar create` would freeze rather than a second spelling of it. `static`
+#: and `correlation` share a stack because they differ in how much of the same
+#: block is kept, not in which block it is.
+STACK = {"correlation": ["da/variational"],
+         "static": ["da/variational"],
+         "ensemble": ["da/envar"],
+         "hybrid": ["da/hybrid"]}
+
+#: Which modes read an ensemble. The two that do refuse to run without one, and
+#: the two that do not refuse to be given one, which is `background_error`'s own
+#: rule rather than a second one written here.
+ENSEMBLE_MODES = ("ensemble", "hybrid")
+
+#: How a member's restart is found under the directory `--ensemble` names. The
+#: layout `tools/ensemble-recenter.py` writes and `ackbar` reads.
+MEMBER_GLOB = "mem*"
+MEMBER_RESTART = "MOM.res.nc"
 
 #: Where `--full` asks `SOCAParametricOceanStdDev` to write the fields it built.
 #: A stem: `util::writeFieldSet` appends `.nc`. Beside `out/` rather than in it,
@@ -91,17 +137,43 @@ PEAK_TOLERANCE = 0.05
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("plan", "report"):
         sys.exit(__doc__.strip())
-    rest = [word for word in argv[2:] if word != "--full"]
-    full = "--full" in argv[2:]
-    return plan(rest, full) if argv[1] == "plan" else report(rest, full)
+    rest, mode, ensemble = options(argv[2:])
+    return (plan(rest, mode, ensemble) if argv[1] == "plan"
+            else report(rest, mode))
+
+
+def options(argv):
+    """Split the positional arguments from the one flag that picks a mode.
+
+    One flag and not several: the modes are alternatives, and a run that was
+    given two of them is a run whose author believes it applied a covariance it
+    did not. Refusing here is cheaper than reading a report of the wrong B.
+    """
+    rest, mode, ensemble = [], "correlation", None
+    words = list(argv)
+    while words:
+        word = words.pop(0)
+        if word in ("--full", "--ensemble", "--hybrid"):
+            if mode != "correlation":
+                sys.exit("dirac: --full, --ensemble and --hybrid are alternatives")
+            mode = "static" if word == "--full" else word[2:]
+            if mode in ENSEMBLE_MODES:
+                if not words:
+                    sys.exit(f"dirac: {word} needs a directory of members")
+                ensemble = words.pop(0)
+        elif word.startswith("-"):
+            sys.exit(f"dirac: unknown option {word}")
+        else:
+            rest.append(word)
+    return rest, mode, ensemble
 
 
 # ------------------------------------------------------------------------------
 # plan
 
 
-def plan(argv, full=False):
-    layer, static, levels, metadata, gridspec, restart = argv[0:6]
+def plan(argv, mode="correlation", ensemble=None):
+    layers, static, levels, metadata, gridspec, restart = argv[0:6]
     out_yaml, out_points = argv[6:8]
     requested = argv[8:]
 
@@ -113,14 +185,14 @@ def plan(argv, full=False):
     else:
         cells = default_cells(grid, depth, static)
 
-    points = place(grid, cells, deepest_level, full)
+    points = place(grid, cells, deepest_level, mode != "correlation")
     warn_if_crowded(grid, points, static)
 
     with open(out_points, "w") as stream:
         json.dump(points, stream, indent=2)
     with open(out_yaml, "w") as stream:
-        yaml.safe_dump(document(layer, static, levels, metadata, restart, points,
-                                full),
+        yaml.safe_dump(document(layers, static, levels, metadata, restart, points,
+                                mode, ensemble),
                        stream, sort_keys=False, default_flow_style=False)
 
     for point in points:
@@ -321,39 +393,88 @@ def warn_if_crowded(grid, points, static):
                 return
 
 
-def document(layer, static, levels, metadata, restart, points, full=False):
-    """The experiment's own background error, lifted out of the layer.
+def solver_of(layers, mode):
+    """The solver block of the layer stack *mode* names, merged as ackbar merges it.
+
+    Merged rather than read out of one file, because a hybrid's solver is
+    `da/variational` with `da/hybrid` on top of it and reading either alone
+    gives a covariance nothing would ever run. `resolve_layers` wants an
+    experiment file, so it gets one: two lines in a temporary directory,
+    holding nothing but the `inherit:` list.
+
+    Merged with no merge keys, which is not a shortcut: the schema declares
+    exactly one, `observations`, and no `da/*` layer carries an observer. Doing
+    it properly would mean importing `ackbar.config.schema` and therefore
+    jsonschema, which is in the project venv and not in the interpreter
+    `tools/soca-dirac.sh` runs under, to resolve a key that cannot appear in
+    what is being merged.
+    """
+    if mode not in STACK:
+        sys.exit(f"dirac: {mode!r} is not a covariance this builds")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "dirac.yaml"
+        with open(path, "w") as stream:
+            yaml.safe_dump({"inherit": STACK[mode]}, stream)
+        stack = resolve_layers(path, layers)
+    return merge_layers(stack)["solver"]
+
+
+def members_of(directory):
+    """One state description per member, in the order ackbar would read them."""
+    root = Path(directory)
+    names = sorted(entry.name for entry in root.glob(MEMBER_GLOB)
+                   if (entry / MEMBER_RESTART).exists())
+    if len(names) < 2:
+        sys.exit(f"dirac: {root} holds {len(names)} member restart(s); an "
+                 f"ensemble covariance needs at least two")
+    print(f"dirac: {len(names)} members from {root}")
+    return soca.member_states(lambda name: root / name / MEMBER_RESTART, names,
+                              date=DATE, variables=list(IFDIR))
+
+
+def document(layers, static, levels, metadata, restart, points, mode="correlation",
+             ensemble=None):
+    """The experiment's own background error, lifted out of the layer stack.
 
     Lifted rather than written here: a dirac test against a second description
     of the background error would pass while the analysis used a different
     operator, which is the failure this exists to catch.
 
-    Without *full*, everything outside the central block is dropped, because the
-    standard deviations and the balance operator turn a correlation into a
-    covariance and would leave the peak value meaning nothing. With *full* they
-    are all kept and the peak means something else instead; see the module
-    docstring.
+    In `correlation` everything outside the central block is dropped, because
+    the standard deviations and the balance operator turn a correlation into a
+    covariance and would leave the peak value meaning nothing. Every other mode
+    hands the whole solver to `ackbar.soca.background_error`, which is the same
+    call the analysis job makes, and the peak means something else instead; see
+    the module docstring.
     """
-    solver = yaml.safe_load(open(layer))["solver"]
-    background_error = solver["background error"]
-    wanted = {"covariance model": background_error["covariance model"],
-              "saber central block": background_error["saber central block"]}
+    solver = solver_of(layers, mode)
     analysis_variables = solver["analysis variables"]
     state_variables = list(IFDIR)
 
-    if full:
-        wanted["saber outer blocks"] = with_diagnostics(
-            background_error["saber outer blocks"])
-        # `input variables` and `output variables` are absent from the layer on
-        # purpose, because `ackbar/soca.py` fills them in from the analysis
-        # variables. Nothing here goes through that, so this is the second place
-        # that has to know it, and omitting them is not a configuration error
-        # that anything reports: oops holds a null pointer and dereferences it
-        # the first time it evaluates Jb.
-        change = dict(background_error["linear variable change"])
-        change["input variables"] = analysis_variables
-        change["output variables"] = analysis_variables
-        wanted["linear variable change"] = change
+    if mode == "correlation":
+        background_error = solver["background error"]
+        wanted = {"covariance model": background_error["covariance model"],
+                  "saber central block": background_error["saber central block"]}
+    else:
+        # `save diagnostics` goes into the layer's own block rather than the
+        # assembled document, because a hybrid's assembled document holds that
+        # block one level down inside a component and finding it again there
+        # would be a second piece of knowledge about the shape of a hybrid.
+        solver = copy.deepcopy(solver)
+        if "saber outer blocks" in solver["background error"]:
+            solver["background error"]["saber outer blocks"] = with_diagnostics(
+                solver["background error"]["saber outer blocks"])
+        if (mode in ENSEMBLE_MODES) != bool(ensemble):
+            sys.exit(f"dirac: {mode} reads an ensemble and none was given")
+        wanted = soca.background_error(
+            solver, analysis_variables,
+            ensemble=members_of(ensemble) if ensemble else None)
+        if mode == "hybrid":
+            # Apply the two components separately as well as together. The
+            # toolbox writes one increment per component, named by `%id%`, and
+            # a hybrid whose ensemble half is doing nothing is otherwise
+            # indistinguishable from one whose weights are wrong.
+            wanted["run components recursively"] = True
         # The outer blocks read fields the central block does not: thickness is
         # what makes anything addressable by depth, and the parametric standard
         # deviations are built out of the mixed layer and the depth.
@@ -380,12 +501,13 @@ def document(layer, static, levels, metadata, restart, points, full=False):
         },
         "background error": covariance,
         # What the dirac increment is built over. Without it the toolbox takes
-        # the background's own variable list, which in `--full` is six fields
-        # rather than three because the outer blocks read thickness, the mixed
-        # layer and the depth. The increment would then carry three fields the
-        # linear variable change does not, and SOCA fails an assertion on
+        # the background's own variable list, which outside `correlation` is six
+        # fields rather than three because the outer blocks read thickness, the
+        # mixed layer and the depth. The increment would then carry three fields
+        # the linear variable change does not, and SOCA fails an assertion on
         # `Increment::operator=` rather than saying so.
-        **({"increment variables": analysis_variables} if full else {}),
+        **({} if mode == "correlation"
+           else {"increment variables": analysis_variables}),
         # The toolbox prints the value at every dirac itself, before anything
         # here reads a file. Two independent readings of the peak are worth the
         # one line of output.
@@ -448,13 +570,24 @@ def substitute(node, values):
 # report
 
 
-def report(argv, full=False):
+def report(argv, mode="correlation"):
     gridspec, static, points_path, outdir = argv[0:4]
     grid = read_gridspec(gridspec)
     points = json.load(open(points_path))
-    increment = read_increment(outdir)
-    if full:
-        return report_full(grid, static, points, increment)
+    increments = read_increments(outdir)
+    if mode != "correlation":
+        for name, increment in increments.items():
+            report_full(grid, points, increment, name)
+        # Only the modes with a static component have a parametric block to
+        # have written any. Asking for them after a pure ensemble run would
+        # report their absence as though it were a misconfiguration.
+        if mode in ("static", "hybrid"):
+            diagnostics(static, grid)
+        return 0
+    if len(increments) != 1:
+        sys.exit(f"dirac: expected one increment in {outdir}, "
+                 f"found {len(increments)}")
+    increment = next(iter(increments.values()))
 
     requested = {
         "sea_water_potential_temperature":
@@ -511,7 +644,7 @@ def report(argv, full=False):
     return 0
 
 
-def report_full(grid, static, points, increment):
+def report_full(grid, points, increment, name):
     """What one observation would do, through the covariance as configured.
 
     Nothing here passes or fails. A correlation returns 1 at its own dirac and
@@ -522,12 +655,18 @@ def report_full(grid, static, points, increment):
 
     * the size of the increment in the variable the dirac went into, which is
       the standard deviation squared where the correlation is 1,
-    * the size of the increment the balance operator put into the other two,
-      which is the whole of the ssh response once unbalanced ssh error is zero,
+    * the size of the increment in the other two, which through the static B is
+      the balance operator's and through an ensemble is the sample covariance's,
     * the standard deviation fields themselves, which the parametric block
       wrote on the way past.
+
+    *name* is the toolbox's own id for the covariance that produced this
+    increment: `SABER`, `ensemble`, `hybrid`, or a hybrid's numbered component.
+    A hybrid run reports three of these, and which is which is the whole point
+    of running it that way.
     """
     print()
+    print(f"  covariance: {name}")
     print(f"  {'dirac':<26}{'variable':>13}{'value':>11} {'units':<6}"
           f"{'east':>8}{'west':>8}{'north':>8}{'south':>8}")
     print("  " + "-" * 90)
@@ -539,8 +678,8 @@ def report_full(grid, static, points, increment):
                 continue
             plane = field[k] if field.ndim == 3 else field
             value = float(plane[j, i])
-            # The response of a variable the dirac did not go into is the
-            # balance operator's, and it can be either sign. The radius is only
+            # The response of a variable the dirac did not go into is
+            # cross-variable and can be either sign. The radius is only
             # meaningful where there is something to measure a radius of.
             spread = ("      -       -       -       -" if abs(value) < 1e-12
                       else " ".join(
@@ -557,9 +696,9 @@ def report_full(grid, static, points, increment):
         print(f"  {'':<26}{point['lat']:.2f}, {point['lon']:.2f}   {point['why']}")
         print()
 
-    print("  * is the variable the dirac was placed in. The other rows are the")
-    print("    balance operator, which is the only thing that moves them.")
-    diagnostics(static, grid)
+    print("  * is the variable the dirac was placed in. Through the static B the")
+    print("    other rows are the balance operator; through an ensemble there is")
+    print("    no balance operator and they are the sample covariance.")
     return 0
 
 
@@ -602,14 +741,44 @@ def diagnostics(static, grid):
                   f"{np.percentile(values, 90):>10.4f}{values.max():>10.4f}")
 
 
-def read_increment(outdir):
-    """The one increment every dirac was applied in, whatever it got called."""
-    files = [name for name in sorted(os.listdir(outdir)) if name.endswith(".nc")]
-    if len(files) != 1:
-        sys.exit(f"dirac: expected one increment in {outdir}, found {len(files)}")
-    with netCDF4.Dataset(f"{outdir}/{files[0]}") as src:
-        return {name: np.asarray(src.variables[name][0])
-                for name in IO_NAME.values() if name in src.variables}
+def read_increments(outdir):
+    """Every increment the toolbox wrote, by the covariance that produced it.
+
+    One file in every mode but `--hybrid`, which asks for its components as
+    well and gets three. SOCA names them `ocn.ice.dirac_<id>.an.<date>.nc`,
+    where `<id>` is the toolbox's `%id%`: the covariance model, with a component
+    index appended for each half of a hybrid.
+    """
+    found = {}
+    for name in sorted(os.listdir(outdir)):
+        if not name.endswith(".nc"):
+            continue
+        with netCDF4.Dataset(f"{outdir}/{name}") as src:
+            found[increment_id(name)] = {
+                io: np.asarray(src.variables[io][0])
+                for io in IO_NAME.values() if io in src.variables}
+    if not found:
+        sys.exit(f"dirac: no increment in {outdir}; the toolbox wrote nothing")
+    return found
+
+
+def increment_id(filename):
+    """`hybrid1_SABER` out of `ocn.dirac_hybrid1_SABER.an.<date>.nc`.
+
+    The prefix and the two trailing fields are `soca_genfilename`'s, and what is
+    between them is what `dirac.py` asked to be there. The prefix is `ocn.` or
+    `ocn.ice.` depending on which domain type the increment was written for, so
+    both are accepted. Anything this does not recognise comes back whole rather
+    than being renamed into something tidier, because a filename it cannot parse
+    is a filename worth seeing.
+
+    One id is not a covariance at all: a localized ensemble covariance writes
+    `<id>_localization` beside its own increment, which is the localization
+    applied to the dirac by itself. It comes through with that name, and it is
+    the most direct picture there is of the taper the ensemble is multiplied by.
+    """
+    match = re.match(r"^ocn(?:\.ice)?\.dirac_(.+)\.an\..*\.nc$", filename)
+    return match.group(1) if match else filename
 
 
 def read_nodes(path, name, grid):

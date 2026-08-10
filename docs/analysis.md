@@ -443,8 +443,8 @@ experiments, not underneath one.
 Nothing else consumes the staggered masks, which is why moving them is
 self-contained. On ACKBAR's side the only readers of `mask2du` and `mask2dv` are
 `writeback.MASKS` and `post.GRIDS`; `tools/sst-bgerr.py`, `tools/dirac.py`,
-`tools/obs-archive-osse.py` and `ackbar.diffusion` read the tracer `mask2d`
-only. Inside SOCA they reach the `field%mask` pointer for a `u` or `v` field,
+`tools/dirac-page.py`, `tools/obs-archive-osse.py` and `ackbar.diffusion` read
+the tracer `mask2d` only. Inside SOCA they reach the `field%mask` pointer for a `u` or `v` field,
 which decides the fill value on read, and the atlas `mask_u`/`mask_v` fields,
 which the geometry's own comment marks as carried for `gpnorm` alone. The SABER
 diffusion calibration does not touch them: its background variable is
