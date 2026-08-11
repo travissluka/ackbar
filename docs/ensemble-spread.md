@@ -66,9 +66,9 @@ prior's*, and with no external source the prior is itself the previous cycle's p
 the relaxation chases a floor that moves down with it and the sequence decays geometrically for
 any coefficient below one. `oops::ETKFLinearAlgebra` inflates by
 `1 + rtps * (fsprd - asprd) / asprd`, so `rtps: 1.0` sets the posterior spread exactly to the
-prior's: the filter stops subtracting, and something outside it has to put spread back. The
-stochastic experiments pair `rtps: 1.0` with a source for exactly that reason
-(`osse25-4dletkf-stoch.yaml`).
+prior's: the filter stops subtracting, and something outside it has to put spread back. A
+stochastic experiment therefore pairs `rtps: 1.0` with a source, and pairing a relaxation
+coefficient below one with no source is the configuration that decays.
 
 **Perturbed parameters are deliberately not used.** A member given its own parameter values is
 a different model from every other member, so the ensemble covariance stops being the
@@ -157,8 +157,8 @@ Nothing downloaded. This is the only mechanism that needs no archive. Two condit
   (`src/ackbar/stochastic.py`).
 - **Does not reach, directly**: sea surface height and salinity. Over a day the diabatic change
   in column mass and in salt is too small for a multiplier to move
-  (`src/ackbar/stochastic.py`). `osse25-letkf-stoch5` moved them by 1.00 and 0.99, which is to
-  say by nothing (`osse25-4dletkf-stoch-a035.yaml`).
+  (`src/ackbar/stochastic.py`). Measured, the two moved by 1.00 and 0.99, which is to say by
+  nothing.
 
 So an experiment whose under-dispersion is altimetric is not fixed by this knob.
 
@@ -512,10 +512,10 @@ pulls noise into the analysis.
 
 In an OSSE the truth is a run, so this is measurable rather than arguable. Read
 `tools/local/osse-state-error.py` **before** `tools/local/letkf-spread.py`, and do not accept a
-spread result that costs state space skill (`osse25-4dletkf-stoch.yaml`).
+spread result that costs state space skill.
 
-The worked example, from `osse25-4dletkf-stoch-a035.yaml`'s header: `osse25-4dletkf-stoch` at
-oSPPT amplitude 0.8 with `rtps: 1.0`, against its baseline, over cycles 6 to 22.
+The worked example: oSPPT at amplitude 0.8 with `rtps: 1.0`, against its baseline, over cycles
+6 to 22.
 
 | field | spread x | error x | spread/error, base -> stoch |
 |---|---|---|---|

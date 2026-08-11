@@ -185,6 +185,26 @@ def test_the_covariance_had_no_static_component(run):
     assert "components" not in error
 
 
+def test_every_diffusion_group_names_what_it_localizes(run):
+    """The assertion `test_tier3_envar` and `test_tier3_hybrid` already carry.
+
+    A diffusion group with no `variables:` of its own localizes nothing, and a
+    localization over an empty variable list is the identity, so the ensemble
+    covariance collapses to its own variance times the input: one cell, one
+    level, one variable. It is a diagonal B that constructs, runs and reports
+    nothing wrong. This solver had no such check while the other two did, which
+    is the only reason it is a separate test rather than a line in the one
+    above.
+    """
+    error = emitted(run, LAST)["cost function"]["background error"]
+    assert error["localization"]["localization method"] == "SABER"
+    groups = error["localization"]["saber central block"]["read"]["groups"]
+    assert groups
+    for group in groups:
+        assert group["variables"] == \
+            emitted(run, LAST)["cost function"]["analysis variables"]
+
+
 def test_the_analysis_moved_the_state_towards_its_observations(run):
     """A rank three localized covariance is enough to fit something.
 
