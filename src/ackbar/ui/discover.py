@@ -1,0 +1,158 @@
+"""Finding the experiments, and holding what is frozen about each.
+
+The console is the first thing in ACKBAR that answers a question about *every*
+experiment rather than about a named one, so this is where "what experiments are
+there" gets defined: a directory under the site's output root with a frozen
+config in it. Nothing else counts. A half-created directory with no
+`cfg/experiment.yaml` is not an experiment, and neither is a stray tarball
+someone left in the output root.
+
+What lives here is only the part that cannot change while the console is open:
+the frozen config, the paths, the graph. State is `poll.py`'s job, refreshed on
+a tick. The split matters because the graph is a pure function of a frozen
+config, so building it once per experiment per session is correct, while caching
+anything Slurm said for that long would not be.
+"""
+
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+from ..graph import build_graph
+from ..paths import Paths
+
+
+@dataclass
+class Experiment:
+    """One experiment on disk, with the parts of it that are frozen."""
+
+    name: str
+    config: dict
+    paths: Paths
+    #: `run/ledger.jsonl`'s mtime, or the directory's. Recency is "when did
+    #: anything happen to this", and the ledger is appended to on every
+    #: submission, so it is the cheapest honest answer.
+    touched: float = 0.0
+    _graph: object = field(default=None, repr=False)
+
+    @property
+    def graph(self):
+        """Built once. A frozen config cannot produce two different graphs."""
+        if self._graph is None:
+            self._graph = build_graph(self.config)
+        return self._graph
+
+    @property
+    def cycles(self):
+        return self.config["cycle"]["count"]
+
+    @property
+    def halted(self):
+        """Whether the halt flag is down *right now*, so not cached.
+
+        `pause` and `cancel` both write it and only `resume` removes it, and
+        `cancel` leaves it deliberately. An interactive tool has to show this
+        continuously or the first thing it teaches you is that resume does
+        nothing for no reason.
+        """
+        return self.paths.halt_flag.exists()
+
+    @property
+    def domain(self):
+        return (self.config.get("domain") or {}).get("name", "?")
+
+    @property
+    def solver(self):
+        """`variational/3d`, `letkf`, and so on: what kind of DA this is.
+
+        The window type is appended only where it says something, which is why
+        this is a property and not a format string at the call site: `3dvar` and
+        `3dfgat` differ in nothing else, and the difference is the whole point of
+        running both.
+        """
+        solver = self.config.get("solver") or {}
+        name = solver.get("name", "noda")
+        window = (solver.get("window") or {}).get("type")
+        return f"{name}/{window}" if window else name
+
+    @property
+    def members(self):
+        return (self.config.get("ensemble") or {}).get("size", 0) or 0
+
+    @property
+    def model(self):
+        return (self.config.get("model") or {}).get("name", "?")
+
+    @property
+    def description(self):
+        return (self.config.get("experiment") or {}).get("description", "")
+
+    def age(self, now=None):
+        return max(0.0, (now if now is not None else time.time()) - self.touched)
+
+
+def discover(site, root=None):
+    """Every experiment under the output root, most recently touched first.
+
+    Sorted by recency rather than by name because the question a console is
+    opened to answer is almost always about the thing that ran last. An
+    experiment whose config will not load or whose graph is unbuildable is
+    skipped rather than fatal: one broken directory must not make the console
+    unable to show the other nine, and the argv commands will say what is wrong
+    with it in more detail than a sidebar row could.
+    """
+    root = Path(root or site["output_root"])
+    if not root.is_dir():
+        return []
+
+    out = []
+    for frozen in sorted(root.glob("*/cfg/experiment.yaml")):
+        experiment = load(frozen, site)
+        if experiment is not None:
+            out.append(experiment)
+    out.sort(key=lambda e: (-e.touched, e.name))
+    return out
+
+
+def load(frozen, site):
+    """One experiment from its frozen config, or None if it cannot be read."""
+    frozen = Path(frozen)
+    try:
+        with open(frozen) as handle:
+            config = yaml.safe_load(handle)
+        if not isinstance(config, dict) or "experiment" not in config:
+            return None
+        paths = Paths.of(config, site)
+    except (OSError, yaml.YAMLError, KeyError, ValueError):
+        return None
+
+    # The name in the config wins over the directory name. They are the same
+    # under `create`, and where they are not it is because somebody copied a
+    # directory: the config is what every job and every ledger record says.
+    return Experiment(
+        name=config["experiment"]["name"],
+        config=config,
+        paths=paths,
+        touched=_touched(paths, frozen),
+    )
+
+
+def _touched(paths, frozen):
+    for candidate in (paths.ledger_file, frozen.parent, frozen):
+        try:
+            return candidate.stat().st_mtime
+        except OSError:
+            continue
+    return 0.0
+
+
+#: How old a *finished* experiment has to be before the sidebar hides it behind
+#: `--all`. Anything unfinished is always shown however old it is, because an
+#: experiment that stopped in the middle three weeks ago is exactly the thing
+#: worth being reminded about.
+RECENT_SECONDS = 14 * 24 * 3600
+
+
+__all__ = ["Experiment", "RECENT_SECONDS", "discover", "load"]

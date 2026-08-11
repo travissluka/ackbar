@@ -1,0 +1,192 @@
+/* The console's look.
+ *
+ * Dark, flat, and quiet: the only saturated colour on the screen belongs to the
+ * status cells, so that the thing carrying the data is the thing that draws the
+ * eye. Chrome is greys and one teal accent. Where a colour here also appears in
+ * `theme.py`, that is because a widget draws it in markup and a rule draws it in
+ * CSS; theme.py is the copy to change.
+ */
+
+Screen {
+    background: #0d1117;
+    color: #c9d1d9;
+}
+
+#banner {
+    height: 1;
+    padding: 0 1;
+    background: #0d1117;
+}
+
+#body {
+    height: 1fr;
+}
+
+#sidebar {
+    width: 38;
+    min-width: 26;
+    border-right: solid #21262d;
+}
+
+.pane-title {
+    height: 1;
+    padding: 0 1;
+    color: #7d8590;
+    text-style: bold;
+}
+
+#fleet {
+    height: 1fr;
+    background: #0d1117;
+    border: none;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+/* Two lines per experiment: the name, and the colour stripe under it. The
+ * highlight has to read as a selected block rather than as an inverted line,
+ * because an inverted line would recolour the stripe and the stripe is data. */
+#fleet > .option-list--option {
+    padding: 0 1;
+    height: 2;
+}
+
+#fleet > .option-list--option-highlighted,
+#fleet > .option-list--option-hover-highlighted {
+    background: #1c2b33;
+    text-style: none;
+}
+
+#main {
+    width: 1fr;
+}
+
+#tabs {
+    height: 1fr;
+}
+
+Tabs {
+    height: 1;
+    background: #0d1117;
+}
+
+Tab {
+    color: #7d8590;
+}
+
+Tab.-active {
+    color: #2dd4bf;
+    text-style: bold;
+}
+
+TabPane {
+    padding: 0 1;
+}
+
+/* Sized to the grid, not to the pane: the detail line belongs directly under
+ * the cells it describes, and a `1fr` here would push it to the bottom of the
+ * screen with a field of empty background in between. */
+#grid-scroll {
+    height: auto;
+    max-height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+#statusgrid {
+    height: auto;
+    padding: 1 0 0 0;
+}
+
+/* The cell detail sits under the grid rather than beside it: the grid wants
+ * every column of width it can get, and the detail is three lines. */
+#detail {
+    height: auto;
+    max-height: 5;
+    padding: 1 1 0 1;
+    color: #c9d1d9;
+}
+
+#nodestable, #statstable {
+    height: 1fr;
+    background: #0d1117;
+}
+
+DataTable > .datatable--header {
+    background: #161b22;
+    color: #7d8590;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: #1c2b33;
+}
+
+#logview {
+    height: 1fr;
+    background: #0d1117;
+    scrollbar-size-vertical: 1;
+}
+
+#config-scroll {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+Footer {
+    background: #161b22;
+}
+
+FooterKey {
+    background: #161b22;
+}
+
+FooterKey .footer-key--key {
+    color: #2dd4bf;
+    background: #161b22;
+    text-style: bold;
+}
+
+FooterKey .footer-key--description {
+    color: #7d8590;
+    background: #161b22;
+}
+
+/* The confirmation and help modals. Centred, bounded, and scrollable, because a
+ * heal closure can be forty node ids long and a modal that grew past the screen
+ * would hide the very line saying what is about to be cancelled. */
+ModalScreen {
+    align: center middle;
+    background: #0d111799;
+}
+
+#confirm {
+    width: 88;
+    max-width: 92%;
+    height: auto;
+    max-height: 80%;
+    background: #161b22;
+    border: round #2dd4bf;
+    padding: 1 2;
+}
+
+#confirm-title {
+    height: 1;
+    margin-bottom: 1;
+}
+
+#confirm-body {
+    height: auto;
+    max-height: 20;
+    scrollbar-size-vertical: 1;
+}
+
+#confirm-warning {
+    margin-top: 1;
+}
+
+#confirm-keys {
+    height: auto;
+    margin-top: 1;
+    padding-top: 1;
+    border-top: solid #21262d;
+}

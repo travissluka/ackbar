@@ -252,6 +252,26 @@ def cmd_status(args):
     return 0 if overall in ("finished", "running") else 1
 
 
+def cmd_ui(args):
+    """The interactive console. Imported here, not at module scope.
+
+    `ackbar.ui` may import textual; nothing else in ACKBAR may, and this
+    function is the one place the two meet. At module scope the import would run
+    inside every job on every compute node, which is exactly what keeping the
+    console's dependencies optional is for.
+    """
+    from .ui.__main__ import main as ui_main
+
+    argv = []
+    if args.name:
+        argv.append(args.name)
+    if args.palette != "default":
+        argv += ["--palette", args.palette]
+    if args.list:
+        argv.append("--list")
+    return ui_main(argv)
+
+
 def cmd_heal(args):
     config, site, paths = _frozen(args.name)
     graph = build_graph(config)
@@ -438,7 +458,12 @@ def main(argv=None):
         "--schema", default=None, type=Path,
         help="schema to validate against (default: config/schema/experiment.yaml)",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    # Not required: a bare `ackbar` opens the console, which is the thing
+    # somebody typing the command with nothing after it wants far more often
+    # than a usage message. Every other spelling still has to name its verb, so
+    # a mistyped subcommand is an error rather than a surprise UI.
+    sub = parser.add_subparsers(dest="command", required=False)
+    parser.set_defaults(func=cmd_ui, name=None, palette="default", list=False)
 
     p = sub.add_parser("validate", help="check an experiment before anything is submitted",
         description="Check an experiment before anything is submitted. Six steps, each reported individually, so a partial check is visible rather than implied.")
@@ -502,6 +527,15 @@ def main(argv=None):
     p.add_argument("--verbose", "-v", action="store_true",
                    help="detail every broken node, not only when something is")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("ui", help="the interactive console: every experiment, one screen",
+        description="Open the interactive console. Read-only until you press a key that is not: it drives no part of the workflow, so closing it does nothing to any experiment. Needs the `ui` extra; `ackbar-ui` is the same thing.")
+    p.add_argument("name", nargs="?", help="experiment to open on; the default is the most recently touched")
+    p.add_argument("--palette", default="default", choices=("default", "safe"),
+                   help="`safe` avoids the red/green pair")
+    p.add_argument("--list", action="store_true",
+                   help="print the experiments it would show, and exit")
+    p.set_defaults(func=cmd_ui)
 
     p = sub.add_parser("heal", help="resubmit the subgraph affected by a failure",
         description="Cancel the transitive closure of a failure's dependents and resubmit it with fresh job ids. Does not fix the cause: a genuine nonzero exit resubmitted unchanged fails the same way.")

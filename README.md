@@ -247,6 +247,20 @@ so a failed cycle stops the chain rather than producing cycles of garbage off a 
 
 ## Watching it, and fixing it
 
+Interactively, which is how you will actually do it:
+
+```bash
+.venv/bin/pip install -e '.[ui]'   # once; textual is an optional dependency
+.venv/bin/ackbar-ui                # every experiment, one screen, arrow keys
+```
+
+The console shows each experiment's whole history as a colour grid of tasks by cycle, refreshed
+live, and puts heal, start, pause, resume, cancel and harvest behind single keys, each of which
+shows its plan before it touches the queue. It drives nothing: closing it does nothing to any
+experiment. [`docs/ui.md`](docs/ui.md) is the reference.
+
+The same verbs, one experiment at a time, for a script or an ssh session with nothing installed:
+
 ```bash
 .venv/bin/ackbar status  osse25-3dvar            # a grid of tasks by cycle, and what is broken
 .venv/bin/ackbar status  osse25-3dvar --verbose  # which job id was cycle 7's writeback
@@ -323,6 +337,8 @@ which is not in the repository (see the note at the end of this file).
 execution model, configuration layering, the task graph, healing, and the offline stages.
 [`docs/domains.md`](docs/domains.md) says what each domain is and what a day of it costs.
 [`docs/testing.md`](docs/testing.md) explains the test tiers.
+[`docs/ui.md`](docs/ui.md) covers the interactive console: its keys, why colour rather than
+symbols carries state, and why it is allowed to depend on textual when nothing else is.
 [`docs/ensemble-spread.md`](docs/ensemble-spread.md) covers the three ways an ensemble gets its
 spread, the YAML for each, and the offline archive each needs.
 [`docs/osse.md`](docs/osse.md) is a worked end-to-end study, and

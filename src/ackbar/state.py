@@ -26,23 +26,43 @@ from . import ledger, slurm
 #: thing anybody can act on.
 COMPLETE = "complete"
 RUNNING = "running"
+#: Eligible and waiting for the scheduler: Slurm could start it and has not.
 PENDING = "pending"
+#: Waiting for a dependency, which is the graph holding it rather than Slurm.
+#:
+#: Split out of PENDING because the two have opposite meanings for anyone
+#: watching. Most of an experiment sits blocked at any moment, which is the
+#: workflow working as designed and is not news. A job that is *queued* has had
+#: its dependencies satisfied and is waiting on the box, so a growing queued
+#: count is the one that says the machine is the bottleneck, and a queued count
+#: that never falls is the one that says something is wrong with the partition.
+#: Reported as one number, neither question can be asked.
+BLOCKED = "blocked"
 UNSUBMITTED = "unsubmitted"
 STRANDED = "stranded"
 FAILED = "failed"
 
-SEVERITY = (COMPLETE, UNSUBMITTED, PENDING, RUNNING, STRANDED, FAILED)
+#: Worst last. BLOCKED sits below PENDING so that a partly-released array
+#: summarizes as queued: "some of this is eligible" is the more informative half.
+SEVERITY = (COMPLETE, UNSUBMITTED, BLOCKED, PENDING, RUNNING, STRANDED, FAILED)
 
 #: Single characters for the status grid. A grid of words does not fit on a
-#: terminal at fifty cycles.
+#: terminal at fifty cycles. `+` is eligible and `-` is held back, which is the
+#: distinction BLOCKED exists to draw.
 GLYPH = {
     COMPLETE: ".",
     RUNNING: ">",
-    PENDING: "-",
+    PENDING: "+",
+    BLOCKED: "-",
     UNSUBMITTED: " ",
     STRANDED: "?",
     FAILED: "X",
 }
+
+#: Queue reasons that mean a dependency, not the scheduler. Matched by prefix
+#: because Slurm spells the unsatisfiable case as `DependencyNeverSatisfied`,
+#: which is recognized before this and is terminal rather than blocked.
+BLOCKED_REASON = "Dependency"
 
 #: States that mean the job is done for and will not become anything else.
 TERMINAL = (COMPLETE, FAILED, STRANDED)
@@ -85,15 +105,53 @@ class NodeStatus:
         return out
 
 
-def collect(paths, graph):
-    """A NodeStatus for every node in the graph, keyed by node id."""
+@dataclass
+class Snapshot:
+    """Everything the scheduler had to say, at one instant.
+
+    Split out of `collect` so that one caller watching several experiments can
+    ask Slurm once instead of once per experiment. Three `squeue`/`sacct`
+    invocations per experiment per refresh is what makes a live view expensive,
+    and the cost is entirely in the number of invocations rather than in the
+    number of job ids each one carries.
+
+    Held for the length of one refresh and thrown away. It is not a cache: a
+    Snapshot that outlived the tick that made it would be the second state
+    database this module's docstring exists to refuse.
+    """
+
+    #: (base job id, member) -> (state, reason), from `squeue`
+    live: dict = field(default_factory=dict)
+    #: base job id -> accounting record, from `sacct`
+    done: dict = field(default_factory=dict)
+    #: (base job id, member) -> {"state": ...}, from `sacct`
+    done_elements: dict = field(default_factory=dict)
+
+
+def snapshot(job_ids):
+    """Ask the scheduler about *job_ids*. Raises on an outage, as ever."""
+    job_ids = list(job_ids)
+    return Snapshot(
+        live=_queue_elements(job_ids),
+        done=slurm.accounting(job_ids) if job_ids else {},
+        done_elements=_accounting_elements(job_ids),
+    )
+
+
+def collect(paths, graph, snap=None):
+    """A NodeStatus for every node in the graph, keyed by node id.
+
+    *snap* is an optional pre-fetched `Snapshot`. It has to cover at least this
+    experiment's job ids; covering more is harmless, because every lookup in it
+    is by job id. Passing none queries the scheduler for exactly this
+    experiment, which is what every command line caller wants.
+    """
     records = ledger.latest(paths)
     attempts = _attempt_counts(paths)
-    job_ids = [r["job_id"] for r in records.values()]
 
-    live = _queue_elements(job_ids)
-    done = slurm.accounting(job_ids) if job_ids else {}
-    done_elements = _accounting_elements(job_ids)
+    if snap is None:
+        snap = snapshot([r["job_id"] for r in records.values()])
+    live, done, done_elements = snap.live, snap.done, snap.done_elements
 
     out = {}
     for node in graph.nodes:
@@ -127,6 +185,8 @@ def _element_state(paths, node, member, job_id, live, done, done_elements):
         if reason == slurm.NEVER_SATISFIED:
             return STRANDED, reason
         if state == "PENDING":
+            if reason.startswith(BLOCKED_REASON):
+                return BLOCKED, reason
             return PENDING, reason
         return RUNNING, reason
 
@@ -249,7 +309,7 @@ def finished(statuses, graph):
     indistinguishable from a completed experiment, because nothing is FAILED,
     the queue drains, and it looks done.
     """
-    if any(s.summary in (RUNNING, PENDING) for s in statuses.values()):
+    if any(s.summary in (RUNNING, PENDING, BLOCKED) for s in statuses.values()):
         return "running"
     terminal = max(graph.cycles) if graph.cycles else 0
     last = [s for s in statuses.values() if s.cycle == terminal]

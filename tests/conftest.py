@@ -18,6 +18,8 @@ not as an accident of someone's shell.
 site layer itself are unaffected by this.
 """
 
+import asyncio
+import inspect
 from datetime import timedelta
 from pathlib import Path
 
@@ -53,6 +55,30 @@ def pytest_configure(config):
         "markers",
         "tier3: needs the built model and ACKBAR_TIER3=1; takes a quarter hour",
     )
+    config.addinivalue_line(
+        "markers",
+        "ui: the console; needs the `ui` extra (textual), skipped without it",
+    )
+
+
+def pytest_pyfunc_call(pyfuncitem):
+    """Run a coroutine test function.
+
+    The console's tests drive the real app through textual's `run_test`, which is
+    async. This is here rather than as a dependency on pytest-asyncio because it
+    is the whole of what that plugin would be used for: no event loop fixtures,
+    no scopes, no mode to configure. Ten lines against a dependency in the
+    regression suite of a workflow that has to keep running on whatever python a
+    site provides.
+    """
+    if not inspect.iscoroutinefunction(pyfuncitem.obj):
+        return None
+    arguments = {
+        name: pyfuncitem.funcargs[name]
+        for name in pyfuncitem._fixtureinfo.argnames
+    }
+    asyncio.run(pyfuncitem.obj(**arguments))
+    return True
 
 
 @pytest.fixture(autouse=True)

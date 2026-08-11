@@ -98,16 +98,29 @@ def test_squeue_reasons_are_the_only_source_of_stranded(env):
     assert status.broken == (None,)
 
 
-def test_a_plain_dependency_reason_is_merely_pending(env):
+def test_a_plain_dependency_reason_is_merely_blocked(env):
     """The distinction the whole design rests on.
 
     Only the *direct* dependent of a failed job reads
     `DependencyNeverSatisfied`. Anything further down reads plain `Dependency`,
     which is indistinguishable from a job whose parent is simply still queued,
     so it must not be reported as broken.
+
+    Blocked rather than pending: the graph is holding this one, not the
+    scheduler, and those are different answers to "why is nothing happening".
     """
     record(env.paths, 1, "da", 500)
     env.slurm.queued["500"] = ("PENDING", "Dependency")
+
+    status = state.collect(env.paths, env.graph)["1.da"]
+    assert status.summary == state.BLOCKED
+    assert status.broken == ()
+
+
+def test_the_scheduler_holding_a_job_is_pending_not_blocked(env):
+    """The other half of the split: eligible, and waiting on the box."""
+    record(env.paths, 1, "da", 500)
+    env.slurm.queued["500"] = ("PENDING", "Resources")
 
     status = state.collect(env.paths, env.graph)["1.da"]
     assert status.summary == state.PENDING

@@ -74,7 +74,8 @@ def plan(config, paths, graph=None, statuses=None):
 
 
 def _still_queued(status):
-    return any(s in (state.PENDING, state.RUNNING, state.STRANDED)
+    return any(s in (state.PENDING, state.BLOCKED, state.RUNNING,
+                     state.STRANDED)
                for s in status.elements.values())
 
 

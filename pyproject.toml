@@ -27,9 +27,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+# The interactive console, and nothing else, needs these. Optional rather than a
+# hard dependency because every compute job imports `ackbar`, and a terminal UI
+# framework has no business being installed on a node that only runs a model.
+# `src/ackbar/ui/` is the only package allowed to import them, and nothing
+# outside it imports `ackbar.ui` at module scope.
+ui = ["textual>=8"]
 
 [project.scripts]
 ackbar = "ackbar.cli:main"
+ackbar-ui = "ackbar.ui.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

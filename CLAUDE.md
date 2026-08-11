@@ -279,7 +279,8 @@ The rest of `docs/` is narrower and worth knowing exists rather than reading up 
 `analysis.md` (the analysis tasks and what each produces), `background-error.md` (the four
 parts of B and which one is calibrated offline), `domains.md` (what each domain is and costs),
 `ensemble-spread.md` (the three spread mechanisms and the offline archive each needs),
-`forcing-reference-height.md` (the deferred `z_bot` question), `from-soca-science.md` (what
+`forcing-reference-height.md` (the deferred `z_bot` question), `ui.md` (the interactive console,
+`ackbar-ui`), `from-soca-science.md` (what
 changes and what to unlearn, for someone who knows the old bash workflow), `model-build.md`
 and `model-data.md` (the model and its input data), `observing-system.md` (what the OSSE archive
 imitates and why), `osse.md` (the worked end-to-end study), `slurm.md`, and `testing.md` (the
