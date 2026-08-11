@@ -42,6 +42,7 @@ opens the full map.
 | `1`-`5` | grid, nodes, log, stats, config |
 | `enter` | open the log of the node under the cursor |
 | `backspace` | back to the grid from any pane |
+| `← →` | in the log: which member. `[` `]`: which file. `f`: follow |
 | `h` `s` `r` `p` `x` `t` | heal, start, resume, pause, cancel, harvest |
 | `R` `A` `P` `q` | refresh now, show all experiments, colour-blind-safe palette, quit |
 
@@ -73,6 +74,46 @@ name and its column, the way a spreadsheet does.
 `--palette safe`, or `P` in the app, swaps the red/green pair out. Red beside green is the one
 combination a sizable fraction of people cannot separate, and a status display nobody can read
 is not one.
+
+## The log pane: whose log, which file, and where it is right now
+
+A cycle of a twenty member forecast leaves 168 files in one log directory, so "show the log"
+is not a well posed request. Three things resolve it, and each of them is a fact about this
+workflow rather than a preference.
+
+**Whose.** Member identity is written three ways and all three are real. Slurm expands `%A_%a`
+itself, so its capture is `forecast.59089_7.out`; a task writes its own logs as
+`forecast.mem007.59089_7.model.log`; and a task that loops over the members inside one job has no
+array index at all, so `da.ens` marks them at the end, `da.ens.59084.hofx_ens.mem001.log`. The
+member strip lists whichever members the graph or the directory knows about, `←` `→` step it, and
+clicking a block picks it. The pane opens on the first member that *failed*, since that is why a
+twenty member cell gets opened.
+
+Task names contain dots, which is why this is not a glob: `forecast.` is a prefix of every one of
+`forecast.ext`'s files, and both write a `model.log`. What separates them is what follows the task
+name, either the job id or `mem###` and then the job id.
+
+**Which file.** One file at a time, with the rest a bracket or a click away, rather than three
+concatenated by modification time. It opens on the first file with anything *in* it: Slurm's
+capture is right when it has content, because a task that died before writing anything of its own
+leaves its traceback there and nowhere else, but in this workflow it is usually empty either way,
+since tasks redirect their output. A successful forecast member leaves a zero byte capture beside
+a sixty five kilobyte model log.
+
+**Where it is.** `mom6sis2.launch` points the model's stdout at `model.log` inside the *scratch*
+run directory, and `keep_traces` copies that out next to the job's log only once the task has
+finished. So while a forecast runs, nothing under `run/<date>/log` grows at all. A pane that
+watched only the log directory would show an empty file for the whole of a run and the finished
+article afterwards, which is exactly backwards, so `candidates` includes the live files from
+`paths.scratch(cycle, task, member)` and puts them first, marked `◂live`. Scratch is deleted when
+a task succeeds, so those paths exist exactly while they are the interesting ones, and the pane
+hands over to the archived copy when they go.
+
+Following is an append, not a re-read: the pane remembers how far it has read and each half second
+costs one `stat` plus whatever was added, so the scroll position survives and a growing log does
+not flicker. `f` toggles it. Measured against a live forecast member: 33034 bytes at open, rising
+to 35554 over ten seconds, then the member finished and the pane was reading the 65 kilobyte
+archived copy.
 
 ## Queued is not blocked
 

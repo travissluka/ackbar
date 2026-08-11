@@ -558,7 +558,7 @@ class CellDetail(Static):
     rather than merely announced.
     """
 
-    def show(self, view, node_id, *, palette, phase=0):
+    def show(self, view, node_id, *, palette, phase=0, member=None):
         if view is None or node_id is None:
             self.update(Text("", no_wrap=True))
             return
@@ -591,12 +591,20 @@ class CellDetail(Static):
 
         if status.members and len(status.members) > 1:
             text.append("\n ")
-            for member in status.members:
-                member_state = status.elements.get(member, st.UNSUBMITTED)
-                text.append(theme.CELL,
-                            style=cell_style(member_state, palette, phase))
-            text.append(f"  mem000-{max(status.members):03d}",
-                        style=theme.INK["faint"])
+            for index in status.members:
+                member_state = status.elements.get(index, st.UNSUBMITTED)
+                if index == member:
+                    text.append(theme.CURSOR_CELL,
+                                style=f"bold #f0f6fc on {palette[member_state]}")
+                else:
+                    text.append(theme.CELL,
+                                style=cell_style(member_state, palette, phase))
+            if member is None:
+                text.append(f"  mem000-{max(status.members):03d}",
+                            style=theme.INK["faint"])
+            else:
+                text.append(f"  mem{member:03d}",
+                            style=f"bold {theme.INK['accent']}")
 
         reasons = {m: r for m, r in status.reasons.items() if r}
         if reasons:

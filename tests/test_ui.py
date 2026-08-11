@@ -33,6 +33,8 @@ from ackbar.ui import theme  # noqa: E402
 from ackbar.ui.app import AckbarUI  # noqa: E402
 from ackbar.ui.discover import discover, load  # noqa: E402
 from ackbar.ui.poll import Poller  # noqa: E402
+from ackbar.ui.panes import (LogPane, candidates, for_member,  # noqa: E402
+                             members_of)
 from ackbar.ui.widgets import StatusGrid, _buckets, _fit  # noqa: E402
 
 CONFIG = {
@@ -78,13 +80,45 @@ def fake_slurm(monkeypatch):
     return live, done
 
 
-def submitted(site, tasks, job=100):
+#: The same fixture with an ensemble, for the log pane's member handling. Four
+#: members, because `mem000` is the control and a bug that shows up on the first
+#: member only would hide behind three.
+ENSEMBLE = dict(CONFIG, solver={"name": "letkf"}, ensemble={"size": 3})
+
+
+@pytest.fixture
+def ensemble(tmp_path):
+    site = {
+        "output_root": str(tmp_path / "out"),
+        "scratch_root": str(tmp_path / "scratch"),
+        "launcher": "",
+    }
+    directory = tmp_path / "out" / "demo" / "cfg"
+    directory.mkdir(parents=True)
+    with open(directory / "experiment.yaml", "w") as handle:
+        yaml.safe_dump(ENSEMBLE, handle)
+    return site
+
+
+def submitted(site, tasks, job=100, config=CONFIG, members=()):
     """Put ledger records on disk for *tasks*, as `[(cycle, task)]`."""
-    paths = Paths.of(CONFIG, site)
+    paths = Paths.of(config, site)
     for index, (cycle, task) in enumerate(tasks):
-        ledger.append(paths, cycle=cycle, task=task, members=(),
+        ledger.append(paths, cycle=cycle, task=task, members=members,
                       attempt=1, job_id=job + index, dependency="")
     return paths
+
+
+def logs(paths, cycle, names):
+    """Write *names* into the cycle's log directory, with some content."""
+    directory = paths.log_dir(cycle)
+    directory.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name in names:
+        path = directory / name
+        path.write_text(f"this is {name}\n")
+        written.append(path)
+    return written
 
 
 # --- discovery ---------------------------------------------------------------
@@ -608,6 +642,396 @@ async def test_backspace_comes_back_out_of_a_pane_to_the_grid(experiment,
         await pilot.pause()
         assert app.query_one("#tabs").active == "grid"
         assert app.focused is app.query_one("#statusgrid")
+
+
+# --- which log, whose log ------------------------------------------------------
+#
+# Names as they actually appear in a cycle's log directory. A twenty member
+# forecast leaves 168 files there, so which one is shown is the whole question.
+
+FORECAST_LOGS = [
+    "forecast.59089_0.out",
+    "forecast.59089_7.out",
+    "forecast.mem000.59089_0.model.log",
+    "forecast.mem007.59089_7.model.log",
+    "forecast.mem007.59089_7.ocean.stats",
+    # The extended forecast, a *different* task whose every file has
+    # `forecast.` as a prefix.
+    "forecast.ext.59090_7.out",
+    "forecast.ext.mem007.59090_7.model.log",
+]
+
+
+def test_another_tasks_logs_are_not_this_tasks(experiment):
+    """`forecast.` is a prefix of every one of `forecast.ext`'s files.
+
+    The log list for a forecast used to be half its extended forecast's, and
+    both write a `model.log`, so the reader had no way to tell.
+    """
+    paths = submitted(experiment, [(1, "forecast")])
+    logs(paths, 1, FORECAST_LOGS)
+
+    mine = [p.name for p in candidates(paths, 1, "forecast", 59089)]
+    assert not any(".ext." in name for name in mine)
+    assert len(mine) == 5
+
+    theirs = [p.name for p in candidates(paths, 1, "forecast.ext", 59090)]
+    assert theirs == ["forecast.ext.59090_7.out",
+                      "forecast.ext.mem007.59090_7.model.log"]
+
+
+def test_a_members_logs_are_found_by_either_spelling(experiment):
+    """Slurm writes `_7`, the task writes `mem007`, and both mean member 7."""
+    paths = submitted(experiment, [(1, "forecast")])
+    logs(paths, 1, FORECAST_LOGS)
+
+    mine = [p.name for p in candidates(paths, 1, "forecast", 59089, 7)]
+    assert mine == ["forecast.59089_7.out",
+                    "forecast.mem007.59089_7.model.log",
+                    "forecast.mem007.59089_7.ocean.stats"]
+
+
+def test_slurms_own_capture_comes_first(experiment):
+    """It holds the traceback of a task that died before writing anything."""
+    paths = submitted(experiment, [(1, "forecast")])
+    logs(paths, 1, FORECAST_LOGS)
+    first = candidates(paths, 1, "forecast", 59089, 0)[0]
+    assert first.name == "forecast.59089_0.out"
+
+
+def test_a_member_marked_only_at_the_end_of_the_name_still_counts(experiment):
+    """`da.ens` is one job that loops the members itself.
+
+    No array index, so its per member logs carry `mem###` as a suffix. The
+    graph calls that node memberless; the log directory plainly does not.
+    """
+    paths = submitted(experiment, [(1, "da.ens")])
+    logs(paths, 1, [
+        "da.ens.59084.out",
+        "da.ens.59084.hofx_ens.mean.log",
+        "da.ens.59084.hofx_ens.mem001.log",
+        "da.ens.59084.hofx_ens.mem002.log",
+    ])
+    everything = candidates(paths, 1, "da.ens", 59084)
+    assert members_of(everything, "da.ens") == [1, 2]
+    assert [p.name for p in for_member(everything, "da.ens", 2)] == [
+        "da.ens.59084.hofx_ens.mem002.log"]
+    # No member chosen means all of them, including the files that belong to
+    # none: the mean is not a member and is worth reading.
+    assert len(for_member(everything, "da.ens", None)) == 4
+
+
+def test_following_appends_only_what_was_added(tmp_path):
+    """A growing model log costs one stat and the new bytes, not a re-read."""
+    path = tmp_path / "model.log"
+    path.write_text("first\n")
+    pane = LogPane()
+    pane.show(path)
+    assert pane.read_to == len("first\n")
+    assert not pane.poll()
+
+    with open(path, "a") as handle:
+        handle.write("second\n")
+    assert pane.poll()
+    assert pane.read_to == len("first\nsecond\n")
+    assert not pane.poll()
+
+
+def test_a_file_that_got_shorter_is_read_again(tmp_path):
+    """Truncated or replaced: what is on screen is no longer its beginning."""
+    path = tmp_path / "model.log"
+    path.write_text("aaaa\nbbbb\n")
+    pane = LogPane()
+    pane.show(path)
+    path.write_text("c\n")
+    assert pane.poll()
+    assert pane.read_to == len("c\n")
+
+
+def test_following_stops_when_it_is_turned_off(tmp_path):
+    path = tmp_path / "model.log"
+    path.write_text("first\n")
+    pane = LogPane()
+    pane.show(path)
+    pane.following = False
+    with open(path, "a") as handle:
+        handle.write("second\n")
+    assert not pane.poll()
+    assert pane.read_to == len("first\n")
+
+
+def test_a_running_tasks_log_is_the_one_in_scratch(experiment):
+    """Where the growing file actually is, which is not the log directory.
+
+    `mom6sis2.launch` points the model's stdout at `model.log` inside the
+    scratch run directory and `keep_traces` copies it out only when the task has
+    finished. So for the whole of a forecast, nothing under `run/<date>/log`
+    grows: the archived files do not exist yet and Slurm's capture is empty
+    because the output was redirected away from it. Following only the log
+    directory shows an empty file during the run and the finished article after,
+    which is exactly backwards.
+    """
+    paths = submitted(experiment, [(1, "forecast")])
+    logs(paths, 1, ["forecast.100_0.out"])
+    scratch = paths.scratch(1, "forecast", 0)
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "model.log").write_text("step 1\n")
+    (scratch / "logfile.000000.out").write_text("fms\n")
+    (scratch / "ocean.stats").write_text("stats\n")
+    # Not a log, and much the largest thing in there.
+    (scratch / "MOM.res.nc").write_text("x" * 1000)
+
+    found = candidates(paths, 1, "forecast", 100, 0)
+    assert [p.name for p in found[:3]] == ["model.log", "logfile.000000.out",
+                                           "ocean.stats"]
+    assert "MOM.res.nc" not in [p.name for p in found]
+    # The live ones come first: a task still running is the reason anybody is
+    # following a log, and the archived copy of a finished one cannot move.
+    assert found[0].parent == scratch
+    assert found[-1].parent == paths.log_dir(1)
+
+
+def test_a_live_log_hands_over_to_the_archived_copy(experiment, fake_slurm):
+    """Scratch is deleted when a task succeeds; the copy is the record.
+
+    Observed on a real cycle: the pane followed the scratch file from 19058 to
+    19721 bytes as the model wrote, then the member finished and it was reading
+    the 65 kilobyte archived copy.
+    """
+    paths = submitted(experiment, [(1, "forecast")])
+    scratch = paths.scratch(1, "forecast", 0)
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "model.log").write_text("step 1\n")
+    assert candidates(paths, 1, "forecast", 100, 0)[0].parent == scratch
+
+    # The task succeeds: the trace is copied out and scratch is removed.
+    logs(paths, 1, ["forecast.mem000.100_0.model.log"])
+    for path in scratch.iterdir():
+        path.unlink()
+    scratch.rmdir()
+
+    found = candidates(paths, 1, "forecast", 100, 0)
+    assert [p.name for p in found] == ["forecast.mem000.100_0.model.log"]
+
+
+async def test_the_log_opens_on_the_member_that_failed(ensemble, fake_slurm):
+    """A twenty member forecast is opened because one member went wrong."""
+    live, done = fake_slurm
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    logs(paths, 1, [f"forecast.100_{m}.out" for m in range(4)]
+         + [f"forecast.mem{m:03d}.100_{m}.model.log" for m in range(4)])
+    live[(100, 0)] = ("COMPLETED", "None")
+    live[(100, 1)] = ("COMPLETED", "None")
+    live[(100, 3)] = ("RUNNING", "None")
+    done[100] = "FAILED"
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+        # Member 2 is the one with no queue row and a failed array: the first
+        # member worth reading, not member 0.
+        assert app.member == 2
+        assert app.query_one("#logview", LogPane).path.name == \
+            "forecast.100_2.out"
+        # And the keys are live without a tab press.
+        assert app.focused is app.query_one("#logview")
+
+
+async def test_an_empty_capture_is_not_what_the_log_opens_on(ensemble,
+                                                             fake_slurm):
+    """Measured on a real run, not supposed: the capture is usually empty.
+
+    Tasks here redirect their own output, so a successful member of a forecast
+    leaves a zero byte `.out` beside a sixty five kilobyte `model.log`. Opening
+    on the empty one and following it looks exactly like a wedged job.
+    """
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    directory = paths.log_dir(1)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "forecast.100_0.out").write_text("")
+    (directory / "forecast.mem000.100_0.model.log").write_text("step 1\n")
+    fake_slurm[1][100] = "COMPLETED"
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+        assert app.query_one("#logview", LogPane).path.name == \
+            "forecast.mem000.100_0.model.log"
+        # The capture is still one bracket away, because a traceback lands there
+        # when there is one.
+        await pilot.press("left_square_bracket")
+        await pilot.pause()
+        assert app.query_one("#logview", LogPane).path.name == \
+            "forecast.100_0.out"
+
+
+async def test_a_log_that_appears_after_the_pane_opened_is_picked_up(
+        ensemble, fake_slurm):
+    """Opening on a member Slurm started a second ago.
+
+    All it has is an empty capture; its model log arrives just after. Left
+    alone the reader watches a file that will never grow while the real one
+    fills up beside it.
+    """
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    directory = paths.log_dir(1)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "forecast.100_0.out").write_text("")
+    fake_slurm[0][(100, 0)] = ("RUNNING", "None")
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+        pane = app.query_one("#logview", LogPane)
+        assert pane.path.name == "forecast.100_0.out"
+
+        # The model starts writing.
+        (directory / "forecast.mem000.100_0.model.log").write_text("step 1\n")
+        app.show_log(app.log_node)
+        await pilot.pause()
+        assert pane.path.name == "forecast.mem000.100_0.model.log"
+
+        # But a file the reader chose is theirs, empty or not.
+        await pilot.press("left_square_bracket")
+        await pilot.pause()
+        assert pane.path.name == "forecast.100_0.out"
+        app.show_log(app.log_node)
+        await pilot.pause()
+        assert pane.path.name == "forecast.100_0.out"
+
+
+async def test_the_pane_moves_off_a_live_log_that_has_been_deleted(
+        ensemble, fake_slurm):
+    """Even one the reader chose: there is nothing to be loyal to."""
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    scratch = paths.scratch(1, "forecast", 0)
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "model.log").write_text("step 1\n")
+    fake_slurm[0][(100, 0)] = ("RUNNING", "None")
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+        pane = app.query_one("#logview", LogPane)
+        assert pane.path.parent == scratch
+
+        logs(paths, 1, ["forecast.mem000.100_0.model.log"])
+        (scratch / "model.log").unlink()
+        scratch.rmdir()
+        app.show_log(app.log_node)
+        await pilot.pause()
+        assert pane.path.name == "forecast.mem000.100_0.model.log"
+
+
+async def test_arrows_step_members_and_brackets_step_files(ensemble,
+                                                           fake_slurm):
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    logs(paths, 1, [f"forecast.100_{m}.out" for m in range(4)]
+         + [f"forecast.mem{m:03d}.100_{m}.model.log" for m in range(4)])
+    fake_slurm[1][100] = "COMPLETED"
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+        assert app.member == 0
+
+        pane = app.query_one("#logview", LogPane)
+        await pilot.press("right", "right")
+        await pilot.pause()
+        assert app.member == 2
+        assert pane.path.name == "forecast.100_2.out"
+
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.member == 1
+
+        # A different file of the same member.
+        await pilot.press("right_square_bracket")
+        await pilot.pause()
+        assert pane.path.name == "forecast.mem001.100_1.model.log"
+        await pilot.press("left_square_bracket")
+        await pilot.pause()
+        assert pane.path.name == "forecast.100_1.out"
+
+        # And follow is a key, reported in the title.
+        assert pane.following
+        await pilot.press("f")
+        await pilot.pause()
+        assert not pane.following
+        assert "off" in str(app.query_one("#log-title").content)
+
+
+async def test_clicking_a_member_in_the_strip_opens_its_log(ensemble,
+                                                            fake_slurm):
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    logs(paths, 1, [f"forecast.100_{m}.out" for m in range(4)])
+    fake_slurm[1][100] = "COMPLETED"
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+
+        strip = app.query_one("#log-members")
+        await pilot.click(strip, offset=(strip.gutter.left + strip._first + 3,
+                                         strip.gutter.top))
+        await pilot.pause()
+        assert app.member == 3
+        assert app.query_one("#logview", LogPane).path.name == \
+            "forecast.100_3.out"
 
 
 async def test_the_stats_pane_reads_the_harvest_and_invents_nothing(

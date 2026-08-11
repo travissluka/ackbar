@@ -145,6 +145,14 @@ DataTable > .datatable--cursor {
     background: #1c2b33;
 }
 
+/* The log pane's three header lines: what is open, which member, which file.
+ * Each is one line and collapses to nothing when it has nothing to say, so a
+ * task with a single log gets the whole pane for text. */
+#log-title, #log-members, #log-files {
+    height: auto;
+    max-height: 1;
+}
+
 #logview {
     height: 1fr;
     background: #0d1117;
