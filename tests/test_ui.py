@@ -165,6 +165,56 @@ def test_an_outage_keeps_the_last_report_rather_than_blanking_it(
     assert second.views["demo"].statuses == first.views["demo"].statuses
 
 
+def test_a_cycle_submitted_mid_refresh_is_not_reported_as_failed(
+        experiment, fake_slurm, monkeypatch):
+    """The cycle boundary flicker.
+
+    The submitter appends a whole cycle's ledger records at once. A refresh that
+    read the ledger, asked Slurm about those ids, and then read the ledger again
+    would find ids it never asked about: absent from the queue, absent from
+    accounting, and with no sentinel yet, which is the one combination
+    `_element_state` calls failed. It showed a whole cycle red for one refresh at
+    every boundary.
+    """
+    live, done = fake_slurm
+    paths = submitted(experiment, [(1, "da")])
+    done[100] = "COMPLETED"
+
+    # A submitter that lands cycle 2 in the ledger between the poller's read and
+    # `collect`'s, which is exactly the race.
+    real = st.snapshot
+
+    def snapshot_then_submit(job_ids):
+        result = real(job_ids)
+        ledger.append(paths, cycle=2, task="da", members=(), attempt=1,
+                      job_id=999, dependency="")
+        return result
+
+    monkeypatch.setattr(st, "snapshot", snapshot_then_submit)
+
+    view = Poller(experiment).refresh().views["demo"]
+    assert view.statuses["2.da"].summary == st.UNSUBMITTED
+    assert view.statuses["2.da"].broken == ()
+    assert view.overall != "broken"
+
+
+def test_a_snapshot_that_was_never_asked_about_an_id_says_nothing_about_it(
+        experiment, fake_slurm):
+    """The guard under the fix, for any caller that passes a stale snapshot."""
+    paths = submitted(experiment, [(1, "da")])
+    graph = build_graph(CONFIG)
+
+    stale = st.snapshot([])
+    assert 100 not in stale.asked
+    statuses = st.collect(paths, graph, stale)
+    assert statuses["1.da"].summary == st.UNSUBMITTED
+
+    # Asked about, and genuinely unaccounted for: that one is failed, and has to
+    # stay failed, because the only way forward is to run it again.
+    fresh = st.snapshot([100])
+    assert st.collect(paths, graph, fresh)["1.da"].summary == st.FAILED
+
+
 def test_the_queue_split_is_counted_separately(experiment, fake_slurm):
     live, _ = fake_slurm
     submitted(experiment, [(1, "da"), (1, "forecast"), (2, "da")])

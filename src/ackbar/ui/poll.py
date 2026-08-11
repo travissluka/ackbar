@@ -128,7 +128,9 @@ class Poller:
 
         views = {}
         for experiment in self.experiments:
-            views[experiment.name] = self._view(experiment, snap)
+            views[experiment.name] = self._view(
+                experiment, snap, wanted.get(experiment.name) or {},
+            )
 
         report = Report(
             views=views,
@@ -138,10 +140,14 @@ class Poller:
         self.previous = report
         return report
 
-    def _view(self, experiment, snap):
+    def _view(self, experiment, snap, records):
         graph = experiment.graph
         try:
-            statuses = state.collect(experiment.paths, graph, snap)
+            # The same ledger read the snapshot was built from. Re-reading it
+            # here would let the submitter slip a whole cycle in between, and
+            # every one of those nodes would be a job the scheduler was never
+            # asked about; see `state.collect`.
+            statuses = state.collect(experiment.paths, graph, snap, records)
         except (OSError, slurm.SlurmError):
             return View(experiment=experiment)
 

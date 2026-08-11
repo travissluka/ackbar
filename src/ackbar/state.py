@@ -126,6 +126,14 @@ class Snapshot:
     done: dict = field(default_factory=dict)
     #: (base job id, member) -> {"state": ...}, from `sacct`
     done_elements: dict = field(default_factory=dict)
+    #: The job ids the scheduler was actually asked about.
+    #:
+    #: Load-bearing rather than bookkeeping. `_element_state`'s last resort says
+    #: that a submitted job absent from the queue, absent from accounting and
+    #: without a sentinel has failed, and that sentence is only true of a job
+    #: that was *asked* about. An id outside this set was never queried, so
+    #: nothing is known about it and it must not be called failed.
+    asked: frozenset = frozenset()
 
 
 def snapshot(job_ids):
@@ -135,18 +143,24 @@ def snapshot(job_ids):
         live=_queue_elements(job_ids),
         done=slurm.accounting(job_ids) if job_ids else {},
         done_elements=_accounting_elements(job_ids),
+        asked=frozenset(job_ids),
     )
 
 
-def collect(paths, graph, snap=None):
+def collect(paths, graph, snap=None, records=None):
     """A NodeStatus for every node in the graph, keyed by node id.
 
-    *snap* is an optional pre-fetched `Snapshot`. It has to cover at least this
-    experiment's job ids; covering more is harmless, because every lookup in it
-    is by job id. Passing none queries the scheduler for exactly this
-    experiment, which is what every command line caller wants.
+    *snap* is an optional pre-fetched `Snapshot`, and *records* the ledger read
+    it was built from. Pass both or neither: a snapshot built from one read of
+    the ledger and then used against a second read of it is the one combination
+    that can be wrong, because the submitter appends a whole cycle's records
+    between the two and the scheduler was never asked about any of them. That
+    reported an entire cycle as failed for one refresh, every cycle boundary.
+
+    Passing neither queries the scheduler for exactly this experiment, which is
+    what every command line caller wants.
     """
-    records = ledger.latest(paths)
+    records = ledger.latest(paths) if records is None else records
     attempts = _attempt_counts(paths)
 
     if snap is None:
@@ -156,6 +170,12 @@ def collect(paths, graph, snap=None):
     out = {}
     for node in graph.nodes:
         record = records.get((node.cycle, node.task))
+        # A record whose id was not queried is one that arrived after the
+        # snapshot. Left unsubmitted for this refresh, which is the truthful
+        # answer to "what is it doing" when nothing has been asked, and it
+        # resolves on the next tick a few seconds later.
+        if record and record["job_id"] not in snap.asked:
+            record = None
         status = NodeStatus(
             cycle=node.cycle,
             task=node.task,
