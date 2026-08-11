@@ -21,6 +21,12 @@
 # there is anything for an analysis to correct. Restamping is how that assertion
 # gets made in a way the model will honour.
 #
+# Passing a state its own date is the other use, and it is not a degenerate one:
+# it promotes a run's final state out of the `run/` tree that cleanup prunes, so
+# the next stage names a stable path instead of reaching into another
+# experiment's disposable output. The README says which of the two happened,
+# because on disk they are the same directory.
+#
 # The date is an argument rather than something derived, for the same reason it
 # is in `coldstart-ic.sh`: promoting a state to a date is the decision this
 # stage exists to record, and getting it wrong produces a state that is
@@ -83,6 +89,31 @@ awk -v y="$YY" -v m="$MM" -v d="$DD" -v h="$HH" '
 mv "$OUT.partial/coupler.res.new" "$OUT.partial/coupler.res"
 mv "$OUT.partial" "$OUT"
 
+# The README has to say which of the two things this state is, because they
+# read identically on disk and mean opposite things. A state promoted to its
+# own valid time is a handoff between stages; a state promoted to any other is
+# the asserted initial error an OSSE control exists to carry. Claiming the
+# second when it was the first tells the next reader an offset is deliberate
+# when there is no offset at all.
+if [[ $WAS == "$WHEN" ]]; then
+    CLOCK="whose own clock already read ${WHEN}:00:00Z, so nothing was restamped:
+tools/restamp-ic.sh made the copy and wrote this file. Every byte, coupler.res
+included, matches the source."
+    MEANING="**There is no offset, and that is the point.** This is a handoff
+between stages: one run's final state, promoted out of the disposable run
+directory so that the next stage names a stable path rather than reaching inside
+a tree cleanup prunes. It is the ocean at $STAMP as the model that produced it
+had it."
+else
+    CLOCK="whose own clock read ${WAS}, restamped to ${WHEN}:00:00Z by
+tools/restamp-ic.sh. The fields are unchanged; only coupler.res differs."
+    MEANING="**The offset is deliberate and it is the initial error.** A state of
+the ocean from one date, used as an estimate of the ocean at another, which is
+how an OSSE gets a control that is wrong in a realistic way rather than wrong by
+added noise. It is not an error and it is not a state anyone should read as being
+the ocean at $STAMP."
+fi
+
 cat > "$(dirname "$OUT")/README" <<EOF
 $DOMAIN initial conditions, $SLUG. One state per directory, named for the date
 it is asserted to be valid at.
@@ -91,14 +122,9 @@ $STAMP is a copy of
 
     $SOURCE
 
-whose own clock read ${WAS}, restamped to ${WHEN}:00:00Z by
-tools/restamp-ic.sh. The fields are unchanged; only coupler.res differs.
+$CLOCK
 
-**The offset is deliberate and it is the initial error.** This is a state of the
-ocean from one date used as an estimate of the ocean at another, which is how an
-OSSE gets a control that is wrong in a realistic way rather than wrong by added
-noise. It is not an error and it is not a state anyone should read as being the
-ocean at $STAMP.
+$MEANING
 
 Regenerate with:
     tools/restamp-ic.sh $SOURCE $DOMAIN $SLUG $WHEN
