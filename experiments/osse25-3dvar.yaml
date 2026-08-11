@@ -31,6 +31,7 @@ inherit:
   - model/mom6sis2
   - da/variational
   - da/corr_vt_cycled
+  - forcing/gefs
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2

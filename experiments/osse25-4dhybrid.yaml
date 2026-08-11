@@ -1,0 +1,110 @@
+# The quarter degree OSSE's 4D hybrid, with a 4D-LETKF ensemble.
+#
+# `osse25-hybrid` with one word changed, `solver.window.type` from `fgat` to
+# `4d`, and nothing else: same domain, same dates, same initial conditions, same
+# thirteen observers, same archive, same weights. The pair is a paired
+# difference on whether the *covariance* gets a time dimension.
+#
+# **What the one word buys.** Under `fgat` the departures are four-dimensional
+# and the covariance is not: every observation is compared against the
+# background nearest its own time, then one increment is solved at the window's
+# centre against the ensemble's spread *there*. Under `4d` the members are read
+# as trajectories and the covariance is the ensemble's spread at each
+# sub-window, so an observation early in the window reaches the analysis time
+# through the ensemble's own estimate of the tangent linear model rather than
+# through whatever correlation happens to exist at the centre.
+#
+# **The static half does not get that, and cannot.** `graph.build.
+# _check_four_d_covariance` permits `4d` over `ensemble` or `hybrid` and refuses
+# it over a static B, because the four dimensions are the ensemble's and a
+# static B has no time dimension to offer. So in this experiment the hybrid's
+# two halves differ in more than shape: the ensemble half is four-dimensional
+# and the static half is the same 3D covariance it always was, applied at the
+# window's centre. That is the honest arrangement rather than a compromise, but
+# it is the thing to remember when reading a weight sweep here.
+#
+# **Why it exists alongside `osse25-4denvar`.** That one is 4D over a pure
+# ensemble covariance. Running both says whether the value of a
+# four-dimensional covariance depends on having a static half beside it, which
+# neither run answers alone. The two FGAT arms are the other half of the same
+# square.
+#
+# **What it costs over `osse25-hybrid`.** Every member's trajectory is read
+# twice rather than once, by the departures and again by the covariance. At
+# `gom_25km` that is disk and memory rather than wall clock; on a bigger domain
+# it is the first thing to measure.
+#
+# The ensemble, the recentring, the weights and the spread argument are all in
+# `osse25-hybrid.yaml`, which this is otherwise a copy of. Read that file first;
+# nothing about them is restated here.
+
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - da/corr_vt_cycled
+  - ensemble/perturbed-inputs
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dhybrid
+  description: OSSE, gom_25km 4D hybrid with a 4D-LETKF ensemble
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # The comparison length, identical across all eight experiments in it.
+  count: 20
+
+solver:
+  window:
+    type: '4d'
+
+forecast:
+  # Six hourly, the same cadence and for the same reason as every other 4D
+  # experiment here: the truth the observations were drawn from is six hourly
+  # and the archive samples the nearest state rather than interpolating, so no
+  # trajectory resolved finer than that can remove the representativeness error
+  # already in the observations.
+  slots: PT6H
+
+  # Identical to every other arm's. The comparison at each lead is a paired
+  # difference, so the launches and the valid times have to match.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  # The full thirteen platform archive, the same directory every other
+  # experiment in the comparison reads. Two archives sampled from different
+  # nature runs must never be mixed, because nothing downstream reads the
+  # provenance and the mixture would score as ordinary observation error.
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  source: letkf
+  on_missing_member: fail_cycle
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

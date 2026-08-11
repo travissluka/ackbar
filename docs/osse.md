@@ -388,10 +388,11 @@ Two more, from the same sweep, that bear on this run specifically:
 - **`ENERGYSAVEDAYS` on `gom_25km`** means the NaN and truncation guards only
   ever see step zero, so a forecast that blows up mid-cycle exits 0 and writes a
   restart set of NaNs. On a 180 day spinup that is a real exposure.
-- **The hybrid inherits the variational land mask (0.9)**, so its filter sees
-  fewer coastal observations than `osse25-letkf` does at the same domain. Those
-  two experiments are then not comparable, which defeats the reason they are in
-  the same table.
+- **The land mask used to differ by solver**, 0.5 in the filter layer against
+  0.9 in the variational one, so a hybrid and a filter at the same domain
+  assimilated different coastal observations and were not comparable. It is one
+  value in the observer bodies now, which is the level it belongs at: what a
+  platform can measure over a partly wet cell is a property of the platform.
 
 ## Open choices
 

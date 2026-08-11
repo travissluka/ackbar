@@ -1,0 +1,39 @@
+# The two spread sources that reach the model as input files, together.
+#
+# An ensemble filter removes spread every cycle and the forecast between two
+# analyses puts almost none back, so without something here the prior decays
+# geometrically and RTPS chases a floor that moves down with it. `da/letkf`
+# argues that at length; this layer is what an experiment inherits to stop it.
+#
+# Two sources, one line each, because they are always wanted together and an
+# experiment that took one and forgot the other is the mistake this layer
+# exists to prevent:
+#
+# - **Atmosphere**, through `forcing/gefs-ensemble`: each member reads a
+#   different GEFS forecast of the same verifying time. The largest of the three
+#   sources by a wide margin, and the only one that puts spread into salinity
+#   and momentum.
+# - **Open boundary**, per member: each reads its own time-lagged GLORYS
+#   boundary as `INPUT/obc.nc`. Measured as the source that arrests the
+#   collapse rather than merely slowing it.
+#
+# `mem000` is unperturbed in both archives, so the control is scored against the
+# same atmosphere and the same boundary the deterministic experiments used and
+# the comparison stays paired.
+#
+# **oSPPT is deliberately not here.** It is the third source, it is the smallest
+# of them, and it reaches sea surface height and salinity only through what the
+# ocean does with a perturbed temperature tendency. It is also the only one with
+# an amplitude to tune, so it stays an experiment level `ensemble.stochastic`
+# block rather than something inherited by accident. See docs/ensemble-spread.md.
+#
+# The boundary archive is built by `tools/obc-lagged.py` and is keyed by domain,
+# which is why the path resolves through `$(domain_slug)` rather than naming a
+# resolution. A domain without one fails at validate step 3 on a missing path.
+
+inherit:
+  - forcing/gefs-ensemble
+
+ensemble:
+  inputs:
+    obc.nc: $(static_root)/obc/$(domain_slug)/glorys-lag21-m20/{{member_dir}}.nc

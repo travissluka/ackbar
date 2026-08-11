@@ -309,12 +309,11 @@ is what catches it. Over open water the choice makes no measurable difference ei
 
 ### Consequences
 
-**Every forcing archive built before this has to be rebuilt.** The archive is per domain and
-shared with truth, so that means rebuilding forcing and rerunning every experiment that reads
-it. Today that is `osse25-4dletkf-atm` and `osse25-4dletkf-all`; the truth run is still
-climatology-forced, so nothing else is affected yet, and the cost only grows from here. The
-existing archives have no `scalar_reference_height`, so they will be refused at stage time
-rather than silently reused, which is the intended way to find out.
+**Every forcing archive built before this had to be rebuilt**, and the rebuild is what makes
+an archive usable at all: a file with no `scalar_reference_height` is refused at stage time
+rather than silently reused, which is the intended way to find out. The archives are now keyed
+by purpose rather than by domain, so a rebuild is two fetches (`gom_truth/era5` and
+`gom_exp/gefs`) rather than one per resolution.
 
 **In an OSSE the bias is largely common-mode**: truth and every experiment run the same model
 over the same archive, so a shared flux bias mostly cancels in the departures, and the

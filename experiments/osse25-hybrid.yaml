@@ -72,6 +72,7 @@ inherit:
   - da/variational
   - da/hybrid
   - da/corr_vt_cycled
+  - ensemble/perturbed-inputs
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2

@@ -315,10 +315,10 @@ All of them belong to `tools/obc-lagged.py`, at archive build time, not to the e
 | `--amplitude` | scales the anomaly about the member mean. Default 1.0 is the lagged ocean's own amplitude. Separates size from structure, the same split `ensemble.stochastic` has between pattern and amplitude |
 | `--source` | a boundary file other than the domain's `obc.nc` |
 
-`osse25-4dletkf-obc.yaml` runs at amplitude 1.0 and its header states that this is probably low:
-differencing GLORYS against HYCOM on the same day, each as an anomaly about its own boundary
-mean, implies 1.4 to 2.1 depending on the field, median 1.6. It runs at 1 because the paired
-difference was wanted first and amplitude is a second axis.
+The archive is built at amplitude 1.0 and that is probably low: differencing GLORYS against
+HYCOM on the same day, each as an anomaly about its own boundary mean, implies 1.4 to 2.1
+depending on the field, median 1.6. It stays at 1 because the paired difference was wanted
+first and amplitude is a second axis.
 
 Note that a second product used for calibration carries a different sea surface height datum,
 0.16 m between HYCOM GOFS 3.1 and GLORYS on this boundary, which under FLATHER is a permanent
@@ -416,7 +416,7 @@ quietly wrong; `forcing.md` has that section.
   (`config/layers/forcing/gefs-ensemble.yaml`).
 - **Reaches, largest of the three**: the mixed layer, still growing at day 5, 0.84 degC of
   surface temperature spread over the divergence floor.
-- Measured on `osse25-4dletkf-atm` over ten cycles ([`forcing.md`](forcing.md)): the surface
+- Measured over ten cycles ([`forcing.md`](forcing.md)): the surface
   temperature spread collapse is largely arrested, with the cycle mean falling 65% over ten
   cycles on the shared climatology and 16% with a GEFS member per member. Salinity is barely
   moved and the thickness-weighted column mean does not move at all, which matters because the
@@ -436,12 +436,10 @@ There is no amplitude, span, mean preservation or clamping, because those manufa
 this spread is measured. Physical consistency is free, since a member's seven fields come out of
 one model run.
 
-**The truth caveat.** The intent is that ERA5 forces the truth and GEFS forces every experiment,
-the deterministic ones included. Neither half holds yet: the truth run is still
-climatology-forced, so an experiment on GEFS carries a forcing error the climatology-forced
-experiments do not. Read the spread, which is a property of the ensemble, and read the skill
-numbers as the reason to build a matching ERA5 truth rather than as a result
-(`osse25-4dletkf-atm.yaml`).
+**The truth caveat, now closed.** ERA5 forces the truth and GEFS forces every experiment, the
+deterministic ones included. The spread numbers above were measured before that held, against a
+climatology-forced truth, so read them as properties of the ensemble rather than as skill. The
+skill question is open again and is what the eight arm comparison answers.
 
 ## How a per-member file reaches the model
 
@@ -491,11 +489,14 @@ that model stages an `INPUT/` for a member's files to be linked into.
 | spread on a global domain | ensemble atmospheric forcing | there is no open boundary to perturb |
 | an answer within ten cycles | oSPPT or ensemble forcing | a boundary perturbation takes about three weeks to mature |
 
-They compose: `osse25-4dletkf-all.yaml` runs all three at settings each measured on its own. Its
-header states the question that combination exists to answer, which is not whether the spread
-goes up (it must) but whether the three are close to additive in *variance* and whether the
-field-by-field imbalance each leaves behind cancels or compounds. Note the cost it names: with
-three sources changed at once it is not a paired difference against any single existing run.
+They compose, and the question a combined run answers is not whether the spread goes up (it
+must) but whether the three are close to additive in *variance* and whether the field-by-field
+imbalance each leaves behind cancels or compounds. The cost of asking it that way: with three
+sources changed at once the run is not a paired difference against any single other one.
+
+The comparison arms take two of the three, through `ensemble/perturbed-inputs`: per-member
+atmosphere and per-member boundary. oSPPT is left out because it is the smallest of the three
+and the only one with an amplitude to tune.
 
 One composition rule is already known. Ensemble forcing adds surface temperature spread of its
 own, so an oSPPT amplitude already known to overshoot in surface temperature should not be
@@ -541,8 +542,8 @@ Two lessons in that table, both worth keeping:
   and the 155% in surface temperature is oSPPT's. Backing the relaxation off would give up the
   altimetric gain, the only skill improvement the pair produced, and leave the overshoot in
   place.
-- **Size the amplitude against the error, not against a global default.** `stoch-a035` derives
-  0.35 that way: surface temperature spread has to fall from 0.261 to about 0.15 to sit on its
+- **Size the amplitude against the error, not against a global default.** The 0.35 amplitude was
+  derived that way: surface temperature spread has to fall from 0.261 to about 0.15 to sit on its
   error of 0.154, which is removing four fifths of the added *variance*
   (`0.261^2 - 0.102^2 = 0.0578` against a target `0.150^2 - 0.102^2 = 0.0121`), so the added
   standard deviation comes down by a factor of 0.46, and 0.8 x 0.46 with a little back for the

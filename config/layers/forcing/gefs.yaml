@@ -1,0 +1,23 @@
+# GEFS, one atmosphere for every member: the deterministic experiment source.
+#
+# The experiments' half of the fraternal twin. The truth reads ERA5, which is
+# the weather that happened; an experiment reads a GEFS forecast of it, so the
+# analysis has to cope with forcing error rather than being handed the nature
+# run's own atmosphere. `forcing/era5` carries the argument for why those are
+# two layers.
+#
+# **`mem000.nc` explicitly, not `{{member_dir}}`.** The archive's control member
+# is the shortest lead of the GEFS control run, so on a single member experiment
+# this and `forcing/gefs-ensemble` resolve to the same file. They stop being the
+# same the moment an ensemble is added, and that is the point: an experiment
+# that wants one shared atmosphere keeps it when it grows an ensemble, instead
+# of silently acquiring per-member forcing because a template expanded
+# differently. An ensemble that wants the spread inherits
+# `ensemble/perturbed-inputs` and says so.
+
+inherit:
+  - forcing/common
+
+ensemble:
+  inputs:
+    atm.nc: $(forcing_archive)/gefs/mem000.nc

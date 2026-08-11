@@ -157,11 +157,12 @@ the deterministic ones included. That last part is not a detail: if 3DVar read
 ERA5 while the LETKF read GEFS, the solver comparison this repository exists to
 make would be decided by which experiments got a free atmosphere.
 
-Neither half holds yet. The truth run is still climatology-forced, and the only
-experiment reading GEFS is `osse25-4dletkf-atm`. Until the truth is rebuilt on
-ERA5, an experiment on GEFS carries a forcing error against the truth that the
-climatology-forced experiments do not, so the two are comparable on spread and
-not on skill.
+Both halves hold now. `osse-truth` inherits `forcing/era5`; every experiment
+inherits a GEFS source, `forcing/gefs` for one shared atmosphere and
+`ensemble/perturbed-inputs` for a member per member. The failure mode to watch
+for is not one solver on the wrong source but an experiment on *no* source: a
+layer left off falls back to the model's built-in climatology, which runs
+without complaint and is further from an ERA5 truth than any GEFS forecast is.
 
 ERA5 is hourly, quarter degree, instantaneous analysis for the state fields and
 hourly *mean rates* for the fluxes, so there is no de-accumulation step and
@@ -307,9 +308,10 @@ swapping source is swapping which archive directory the template names.
 
 ## What this has actually been run against
 
-One experiment, `osse25-4dletkf-atm`: `gom_25km`, ten cycles from 2015-07-12,
-twenty-one members on a five rung ladder, against `osse25-4dletkf` with
-everything else identical. Measured there, the surface temperature spread
+One dedicated experiment, since retired once the answer was in: `gom_25km`, ten
+cycles from 2015-07-12, twenty-one members on a five rung ladder, against a
+baseline with everything else identical. Measured there, the surface temperature
+spread
 collapse is largely arrested: the cycle-mean falls 65% over ten cycles with the
 shared climatology and 16% with a GEFS member per member. Salinity is barely
 moved, and the thickness-weighted column mean does not move at all, which is

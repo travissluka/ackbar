@@ -33,6 +33,7 @@ inherit:
   - domain/gom_25km
   - model/mom6sis2
   - da/none
+  - forcing/gefs
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2

@@ -1,0 +1,141 @@
+# The quarter degree OSSE's 4D-Ens-Var.
+#
+# See docs/osse.md. `osse25-envar` with one word changed, `solver.window.type`
+# from `fgat` to `4d`, and that one word is the whole experiment: it is what
+# gives the *covariance* a time dimension.
+#
+# **What `4d` means here, and why it is not the hybrid.** In `osse25-hybrid` and
+# `osse25-envar` the departures are four-dimensional and the covariance is not:
+# each observation is compared against the background nearest its own time, and
+# one increment is solved at the window's centre against the ensemble's spread
+# *there*. That is FGAT, and it is a concession, made because there is no
+# tangent linear ocean to carry an increment across the window with.
+#
+# 4D-Ens-Var does not make that concession. The members are read as
+# trajectories, `states` lists rather than single states, and the covariance is
+# the ensemble's spread at each sub-window. The increment at the analysis time
+# is `X_b(t_a) w` for one weight vector `w`, and an observation at time `t`
+# reaches it through `X_b(t) X_b(t_a)^+`, which is the ensemble's own estimate
+# of the tangent linear model. So an observation early in the window informs the
+# analysis through the flow that connects the two times, rather than through
+# whatever correlation happens to exist at the centre.
+#
+# That is why `graph.build._check_four_d_covariance` refuses `4d` over a static
+# B and permits it only over `ensemble` or `hybrid`: the four dimensions are the
+# ensemble's, and a static B has no time dimension to offer. The refusal is
+# permanent rather than a phase gate.
+#
+# **Read this against `osse25-envar`, which is the same experiment with `fgat`
+# in place of `4d`.** That pair is the whole question: whether giving the
+# covariance a time dimension is worth reading every member's trajectory twice.
+# The same pair exists over a hybrid covariance as `osse25-hybrid` against
+# `osse25-4dhybrid`, and the two pairs together say whether the answer depends
+# on having a static half.
+#
+# A pure ensemble covariance is the configuration most exposed to a decaying
+# prior, since there is no static half to carry what the ensemble stops
+# describing. `ensemble/perturbed-inputs` is what keeps that from being the
+# dominant effect; see docs/ensemble-spread.md.
+#
+# **The trap this run exists to catch.** Every member is handed to the
+# application as a `states` list and `oops::DataSetBase` asserts that all of
+# them carry the same number of times. A member short one sub-window state
+# fails inside the application, and nothing upstream can see it: the graph is
+# satisfied by the file existing, not by the trajectory being whole. That is
+# `tests/test_tier3_4denvar.py`'s subject at three cycles and four members, and
+# this is the same claim at twenty members on the real archive.
+#
+# Localization is 1.5 Rossby radii, floored at two grid cells, and not masked
+# over land: `loc_hz_open` in `config/static/diffusion.yaml`, built into
+# `loc_hz_open.nc` by `tools/soca-diffusion.sh`. Changing the multiplier means
+# rebuilding that file. The masked `loc_hz` is still calibrated and can be
+# selected with `vars: {localization_hz: loc_hz}`, but masking a localization
+# is wrong here: it is a taper, not a correlation, so land cells have to carry
+# a scale or a coastal observation stops reaching across the shelf.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/variational
+  - da/hybrid
+  - da/envar
+  - ensemble/perturbed-inputs
+  # No `da/corr_vt_cycled`, and its absence is deliberate rather than an
+  # oversight. That layer rebuilds the static B's vertical correlation from each
+  # cycle's own background, and in a pure ensemble covariance the static B is
+  # configured and never read. `graph.build` already drops the `b.corr_vt` node
+  # here for exactly that reason, so inheriting the layer would add nothing but
+  # a reader's belief that it did something. `osse25-hybrid` carries it because
+  # there the static half is real.
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4denvar
+  description: OSSE, gom_25km 4D-Ens-Var against the gom_12km truth
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # The comparison length, identical across all eight experiments in it.
+  count: 20
+
+solver:
+  window:
+    type: '4d'
+
+forecast:
+  # Six hourly, the same cadence and for the same reason as every other 4D
+  # experiment here: the truth the observations were drawn from is six hourly
+  # and the archive samples the nearest state rather than interpolating, so no
+  # trajectory resolved finer than that can remove the representativeness error
+  # already in the observations.
+  #
+  # Four states inside the 24 hour window plus the background at its start, for
+  # **every member**, and here they are read twice over rather than once: the
+  # departures need them and so does the covariance. That is the disk and the
+  # memory cost of `4d` over `fgat`, and it is the reason a bigger domain will
+  # want this before it wants anything else about the method.
+  slots: PT6H
+
+  # Identical to the other experiments'. The comparison at each lead is a paired
+  # difference, so the launches and the valid times have to match.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+
+vars:
+  # The full thirteen platform archive, the same directory every other
+  # experiment in the comparison reads. Two archives sampled from different
+  # nature runs must never be mixed, because nothing downstream reads the
+  # provenance and the mixture would score as ordinary observation error.
+  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+
+ensemble:
+  size: 20
+  control: true
+  # A 4D-LETKF beside the variational analysis, the same filter `osse25-hybrid`
+  # runs, so the ensemble is observation informed rather than a decaying sample
+  # of what it started as. The members are then recentred on the variational
+  # analysis, so the ensemble follows the run being reported.
+  source: letkf
+  on_missing_member: fail_cycle
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00

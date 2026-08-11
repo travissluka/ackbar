@@ -36,6 +36,7 @@ inherit:
   - domain/gom_25km
   - model/mom6sis2
   - da/letkf
+  - ensemble/perturbed-inputs
   - obs/adt_j2
   - obs/adt_saral
   - obs/adt_c2
