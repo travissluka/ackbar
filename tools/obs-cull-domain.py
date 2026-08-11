@@ -10,7 +10,9 @@ run once against an archive, producing a domain-scoped archive that every
 experiment on that domain then reads unchanged. The tree under `--out` mirrors
 `--in` file for file, so nothing downstream learns a new layout: an experiment
 points `obs_dir` at the culled archive instead of the global one and changes in
-no other way.
+no other way. That mirroring is why nothing here knows what a time bin is. The
+archive is `<platform>/<bin start>.nc4` and this copies whatever it finds, so
+the culled archive is contiguous exactly when the source was.
 
 **What this is owed for is not stability.** A global observation file handed to
 a regional domain does not break anything: SOCA runs, every observation outside
@@ -67,7 +69,7 @@ and observation files are written -180 to 180. A domain that spans the wrapped
 range then admits everything, which is the safe direction to be wrong in, since
 the alternative is an archive silently emptied.
 
-## A window with nothing in it gets an empty file, not no file
+## A time bin with nothing in it gets an empty file, not no file
 
 This is the opposite of what `tools/obs-archive-osse.py` says, and that file is
 wrong for this bundle. Its comment claims an ioda file with a zero length
@@ -79,11 +81,16 @@ flag from `Location`'s dimension being zero and every later step branches on it,
 the file is empty, and `ObsSpace::empty()` reports every variable as present so
 that nothing downstream has to ask. Both distributions are safe, RoundRobin
 trivially and Halo through an explicit guard. `obs-archive-osse.py` is not
-changed here: its behaviour is pinned by the committed tier 3 archive.
+changed here: writing no file for an empty bin costs nothing, because the
+selection rule reaches back to the last bin at or before a window and a bin with
+no file is a bin that was empty.
 
-A present empty file says something an absent one cannot: this platform was
-considered for this window and had nothing inside the domain. An absent file is
-indistinguishable from a fetch that failed, and `stage.obs` treats it as a gap.
+Here the reason to write one is the mirror. The culled tree matches the source
+file for file, so a reader comparing the two can see that every bin was
+considered, and a present empty file says something an absent one cannot: this
+platform was looked at for this bin and had nothing inside the domain. Either
+way the observer's fate is the same, because what decides whether it runs is how
+many of its observations fall in the window and not whether a file exists.
 
 `Location` must exist in the file even when it holds no rows, because the reader
 opens it unconditionally to decide emptiness. Subsetting preserves it along with

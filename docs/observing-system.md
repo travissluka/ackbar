@@ -13,6 +13,31 @@ to reach for and `config/layers/obs/adt_3a.yaml` is named after one of them.
 That file predates the period being chosen and is kept because the tier 3
 archive is pinned to it.
 
+## How the archive is filed, and the quarter of it that used to be lost
+
+The generator writes fixed time bins, one directory per platform and one file per
+bin named by the bin's start, with nothing about an assimilation cycle anywhere
+in the layout. `--bin P1D` is what the OSSE archive is built with, and it is an
+argument rather than a property of anything downstream: `stage.obs` joins the
+bins a window touches and lets ioda apply its own window to the result.
+[`src/ackbar/obsarchive.py`](../src/ackbar/obsarchive.py) is the reference for
+the selection rule.
+
+This is worth knowing here, and not only in the design, because of what the
+previous layout did to the sampling described below. The archive was cut into
+assimilation windows at generation time, and an assimilation window is half open,
+`(begin, end]`. An observation stamped at the instant a window opens is dropped
+by that window, and under a per window archive it sat in no other window's file,
+so it was never read by anything. Every platform on a fixed cadence anchored to
+the window start lost one sample in four: the gliders, the drifters, and SMAP on
+the cycles where its swath crossed the edge. The files held the rows and the
+counts below were what the generator drew, so nothing said so.
+
+The counts in this note are what the archive holds and now also what an
+experiment reads. Nothing about the sampling changed: the six hourly platforms
+are still six hourly, and a sample landing exactly on a window boundary is now
+read by the window that boundary closes, exactly once.
+
 ## Why orbits at all
 
 The previous generator drew each altimeter track as a random straight line

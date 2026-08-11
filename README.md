@@ -273,6 +273,7 @@ reaps it on the schedule the experiment sets.
   ana/20150105T000000Z/mem000.nc         the analysis, compressed
   bkg/20150105T000000Z/mem000.nc         the background, compressed
   corr_vt/20150105T000000Z/              the vertical correlation, if rebuilt per cycle
+  obs_in/20150105T000000Z/adt_j2.nc4     the archive bins this window read, joined
   obs_out/20150105T000000Z/              departures, and a per-cycle summary
   fcst/20150105T000000Z/F120/mem000.nc   an extended forecast at that lead
   run/

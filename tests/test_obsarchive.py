@@ -180,6 +180,28 @@ def test_no_observation_is_read_twice_and_none_is_read_by_nobody(archive, tmp_pa
     assert len(set(seen)) == len(seen)
 
 
+def test_daily_bins_and_windows_at_midday_read_every_sample_exactly_once(
+        archive, tmp_path):
+    """The OSSE's own geometry, which is where the loss was measured.
+
+    Daily bins and 24 hour windows centred on 00Z, so every window opens at
+    12:00 and each one straddles two bins. The six hourly samples include one at
+    exactly 12:00 in every day, which is exactly a window edge, and one at
+    exactly 00:00, which is exactly a bin edge. Both are the cases that used to
+    fall through, and neither may be read twice now.
+    """
+    windows = [(START + timedelta(hours=12) + n * DAY,
+                START + timedelta(hours=36) + n * DAY) for n in range(2)]
+    seen = []
+    for index, (begin, end) in enumerate(windows):
+        _, kept = stage(archive, begin, end, tmp_path / f"staged{index}.nc4")
+        seen += kept
+
+    assert len(set(seen)) == len(seen)
+    assert sorted(seen) == [START + timedelta(hours=h)
+                            for h in range(18, 61, 6)]
+
+
 def test_the_join_rebases_the_times_rather_than_repeating_an_epoch(archive,
                                                                   tmp_path):
     """Each bin is written against its own start, and a naive join would lie.

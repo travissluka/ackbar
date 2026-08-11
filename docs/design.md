@@ -277,6 +277,7 @@ place `cleanup` ever deletes from.
     ana/<date>/mem###.nc    the analysis, compressed                    kept
     ana/<date>/members.json which members the cycle had, and the policy  kept
     bkg/<date>/mem###.nc    the background, compressed                  kept
+    obs_in/<date>/<platform>.nc4   what the observers were handed      kept
     obs_out/<date>/         ioda output, ombg and oman                  kept
     obs_out/<date>/summary.json    departure statistics for the cycle
     obs_out/<date>/observers.json  which observers the cycle had, and why not
@@ -1046,10 +1047,11 @@ Regional costs more than a different grid file. What it actually pulls in:
   both are the kind a later reader reverses on sight. It culls on the grid's **extent** and
   never on its land mask, which keeps a culled archive keyed on the extent alone, so a change
   to a domain's mask or topography does not invalidate it, and leaves a land rejection to
-  SOCA's `Domain Check` where it is counted honestly. And a window with nothing in it gets an
-  **empty file** rather than no file, because ioda has a canonical empty representation and an
-  absent file already means something else here: a gap in the archive, which `stage.obs` drops
-  an observer for.
+  SOCA's `Domain Check` where it is counted honestly. And a time bin with nothing in it gets an
+  **empty file** rather than no file, because ioda has a canonical empty representation and the
+  culled archive should mirror the source file for file. Whether the observer runs is decided
+  from the observations in the window rather than from the file's presence, so an empty bin and
+  an absent one lead to the same place: the observer is dropped for the windows it covers.
 
   Because the stage is offline, nothing stops an experiment pointing at an unculled archive, so
   two checks make that loud rather than silent. `validate` step 3 refuses an experiment whose
@@ -1079,12 +1081,51 @@ path with a different grid file, and the README should not claim otherwise.
 **No downloading inside the cycle.** v2 could download and convert observations mid-cycle
 (`OBS_GEN_ENABLED`, `OBS_*_DWNLD`, `OBS_*_CNVRT`, the `scripts/obs/*.sh` downloader set)
 because it was built with realtime running in mind. These are retrospective experiments. The
-in-cycle obs step reduces to: find the file covering this window in the archive, and drop
-observers whose input file is absent (unless marked required, per v3's `_required`). The
+in-cycle obs step reduces to: join the archive bins this window touches into one file, and drop
+observers with nothing inside the window (unless marked required, per v3's `_required`). The
 archive is keyed by date and the experiment's own output by cycle number, which looks
 inconsistent and is not: an archive is built once and read by experiments that number their
 cycles differently, while everything an experiment writes has to be addressable by cleanup and
 the harvest, which work off cycle numbers.
+
+**The archive knows nothing about the assimilation cycle, and the window is cut once.** It is
+filed in fixed time bins, `<platform>/<bin start>.nc4`, and the bin size is the generator's
+argument rather than anything the workflow stores. It was one file per window, cut by the
+generator, and that was wrong in a way that cost real observations: an assimilation window is
+half open, `(begin, end]`, so an observation stamped at the instant a window opens is dropped
+by that window, and with a per window archive it was in no other window's file to be picked up
+by. Every fixed cadence platform lost about a quarter of its observations in every cycle, in
+silence, because the file held the row and the observer simply never formed a departure from
+it. Cutting at generation time also baked a DA convention into a read-only product: an
+experiment could not change its window length without rebuilding the archive, and a real
+observing system, which arrives in granules of a few minutes and cannot promise to avoid an
+edge, could not be filed in it at all. soca-science did not do it this way either: its
+`prep.obs.sh` kept a continuous `P1D` or `PT10M` database, fetched everything covering the
+window, concatenated it and cut once.
+
+So `stage.obs` selects the bins, joins them, and hands ioda a single file to apply its own half
+open window to. The selection needs no index and no stored bin size: the files a window
+`(begin, end]` needs are the one with the largest start at or before `begin` plus every one
+starting in `(begin, end]`, which is correct for daily bins, ten minute granules, and an
+archive that changed cadence half way through. It rests on one property, that a platform's bins
+tile the period without overlapping, which is the generator's to guarantee and is stated in the
+archive's own `README`. The upper bound is closed for the same reason the window is: an
+observation at exactly `end` is inside the window, and if `end` falls on a bin boundary that
+observation is in the bin *starting* at `end`. That is the original bug in its general form.
+
+Two consequences worth stating. `obs_cat.x` is not built in this bundle, so the join is Python
+(`src/ackbar/obsarchive.py`): structure preserving, along `Location`, and rebasing the times,
+because ioda names a time epoch in `MetaData/dateTime`'s `units` and each bin is written
+against its own, so a naive join would file a day's observations on the day before and every
+one of them would still land inside the window. And what makes an observer *present* is an
+observation inside the window rather than a file on disk, because the selection rule reaches
+back to the last bin at or before the window and therefore nearly always finds one: without the
+count, an archive that stopped half way through an experiment would keep every observer for
+every later cycle and record a full observing system that assimilated nothing.
+
+The joined file is the experiment's own, at `obs_in/<date>/<platform>.nc4`, and it is kept
+rather than reaped: it is what was actually handed to the observers, which the archive alone no
+longer answers.
 
 Because that makes the observation set vary silently, **the realized observer list is written
 per cycle** and diffed by the comparison tooling. Two experiments differing in which observers
@@ -1102,13 +1143,15 @@ observer set without changing the record of it.
 one input an experiment is allowed to be missing, so `validate` cannot check it the way it
 checks a grid file; skipping it entirely would let a misspelled archive path produce an
 experiment that runs to completion assimilating nothing. The rule that separates the two is
-proportion. An observer with no file in some cycles is a gap, and is left to `stage.obs`. An
-observer with no file in any cycle at all is reported before submission. One marked `required`
-is checked file by file, because the experiment has already said its own gaps are not
-acceptable.
+proportion. An observer with nothing in some windows is a gap, and is left to `stage.obs`. An
+observer with nothing in any window at all is reported before submission. One marked `required`
+is checked window by window, because the experiment has already said its own gaps are not
+acceptable. The unit is a window and not a file: under a window agnostic archive a file is
+nearly always found, so both halves of the rule ask the times whether anything is inside the
+window, which is the same question `stage.obs` asks and off the same reader.
 
 **The same rule reads across the observers as well as down the cycles, and that half is a
-refusal.** A cycle in which no observer at all has a file assimilates nothing, and nothing
+refusal.** A cycle in which no observer at all has an observation assimilates nothing, and nothing
 downstream can say so: the analysis is skipped because there is nothing to solve against,
 `writeback` copies the background into `ana/`, `post.obs` writes zeros and passes its own
 all-rejected check, which is about observations that were read. Three such cycles are a free
@@ -1119,7 +1162,8 @@ makes the refusal defensible rather than superstitious is the archive itself: it
 product, so its other windows are on disk to be compared against, and one platform being absent
 is a gap while every platform absent at the same instant is a window that was never built.
 There is deliberately no way to declare an empty cycle acceptable. Every archive here is
-generated per window, so an empty one is a hole in something that was meant to be complete; the
+generated over a period it covers completely, so an empty window is a hole in something that
+was meant to be whole; the
 cost is a single-observer experiment over a gappy real archive, where the platform's gap and
 the empty cycle are the same event and the run stops at it.
 
@@ -1172,8 +1216,8 @@ in a way no comparison would attribute correctly. A free run names none of it.
 They live under `$ACKBAR_STATIC_ROOT`, one directory per stage, keyed as the table says and in
 that order: `ic/<domain>/<source>/<YYYYMMDDThh>` is the initial condition stage,
 `obs/<source>/<period>` the observation stage, and `static/<domain>` the static stage. The
-observation layers append their own `<cycle>/` beneath what they are given, so `$(obs_dir)` names
-the archive and not a cycle inside it.
+observation layers append their own `<platform>/` beneath what they are given, so `$(obs_dir)`
+names the archive and not a platform inside it, and nothing about a cycle appears below it.
 
 `<source>` names the **producer**, since the domain and the date are already in the path around
 it: `woa13-smoke`, `jra55-spinup`, `osse-truth-<experiment>`. It is a directory level rather than

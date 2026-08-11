@@ -120,7 +120,7 @@ goes away.
 | soca-science step | ACKBAR |
 |---|---|
 | `prep.forc` | gone from the cycle. Forcing is an offline archive; `ensemble.inputs` links each member's `atm.nc` into `INPUT/` at forecast time |
-| `prep.obs` | `stage.obs`. Finds this window's file in the archive, drops observers with no file (unless `$required: true`), and writes `obs_out/<T>/observers.json` recording every configured observer and why each did or did not run. No downloading, no conversion, no `obs_cat` |
+| `prep.obs` | `stage.obs`. Joins the archive time bins this window touches into `obs_in/<T>/<platform>.nc4` and lets ioda make the single half open cut, which is what `obs_cat.x` plus `soca_preqc.py -f time` did for you; that app is not built in this bundle, so the join is Python. Drops observers with nothing inside the window (unless `$required: true`) and writes `obs_out/<T>/observers.json` recording every configured observer and why each did or did not run. No downloading and no conversion |
 | `prep.bkgrst`, `prep.bkgrst.ens` | gone. The background is the previous cycle's restart set, resolved by path. Cycle 0 is materialized from the offline initial condition at `create` time, so cycle 1 is not special |
 | `prep.soca` | offline: `tools/soca-gridspec.sh`, `tools/soca-diffusion.sh`, run once per domain into `$ACKBAR_STATIC_ROOT/static/<domain>/`. The per-cycle vertical B calibration v2 did as a side effect is now an explicit task, `b.corr_vt`, opt-in via `da/corr_vt_cycled` |
 | `run.var`, `run.letkf` | both are `da`. Which executable runs is `solver.name` |
@@ -164,6 +164,7 @@ $ACKBAR_OUTPUT_ROOT/<experiment>/
   cfg/                            resolved config, provenance.json, every cycle's job script
   ana/20150712T000000Z/mem000.nc  the analysis, compressed          kept forever
   bkg/20150712T000000Z/mem000.nc  the background, same names        kept forever
+  obs_in/20150712T000000Z/        the archive bins each window read, joined
   obs_out/20150712T000000Z/       departures, summary.json, observers.json
   fcst/20150712T000000Z/F120/mem000.nc
   run/ledger.jsonl
