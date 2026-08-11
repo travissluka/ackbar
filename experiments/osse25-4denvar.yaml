@@ -108,13 +108,28 @@ forecast:
   # want this before it wants anything else about the method.
   slots: PT6H
 
-  # Identical to the other experiments'. The comparison at each lead is a paired
-  # difference, so the launches and the valid times have to match.
+  # Identical to the other experiments' in cadence, length and retention. The
+  # comparison at each lead is a paired difference, so the launches and the
+  # valid times have to match across arms.
+  #
+  # `members` is the one axis that may differ, because it changes who is
+  # launched and not when: the control's launches and valid times are the same
+  # whether it flies alone or with company. A handful of members fly with it
+  # here so that ensemble spread against ensemble mean error is answerable at
+  # lead, which is the diagnostic that says whether a filter is consistent
+  # rather than merely running; the control's own forecast can only ever give
+  # the error half of it. `mem000` is the control, since a run with a control
+  # numbers its members from zero.
+  #
+  # A subset rather than all twenty: the long forecast costs one model run per
+  # member per launch and a spread estimate at lead does not need the full
+  # ensemble, while the filter itself still runs every member.
   extended:
     length: P5D
     every: PT24H
     keep_states: PT24H
     slots: PT6H
+    members: [0, 1, 2, 3, 4, 5]
 
 vars:
   # The full thirteen platform archive, the same directory every other
