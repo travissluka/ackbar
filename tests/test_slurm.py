@@ -68,6 +68,37 @@ def test_unparseable_lines_are_ignored_rather_than_fatal(monkeypatch):
     assert slurm.queue() == {7: ("RUNNING", "None")}
 
 
+# --- finding an experiment's jobs by name -------------------------------------
+
+def test_a_hand_submitted_job_is_found_by_name(monkeypatch):
+    # The whole reason this exists: nothing in the ledger knows about it.
+    monkeypatch.setattr(slurm, "run", fake("41|osse.3.forecast\n"))
+    assert slurm.named("osse") == {41}
+
+
+def test_another_experiment_sharing_a_prefix_is_not_swept_up(monkeypatch):
+    # `osse-truth` and `osse-truth.presmooth` both exist here. A prefix match
+    # would cancel the second while cancelling the first, and the names differ
+    # only after the dot the cycle number is supposed to follow.
+    monkeypatch.setattr(slurm, "run", fake(
+        "41|osse-truth.3.forecast\n"
+        "42|osse-truth.presmooth.3.forecast\n"
+        "43|osse-truth-v2.1.forecast\n"
+    ))
+    assert slurm.named("osse-truth") == {41}
+
+
+def test_array_elements_collapse_here_too(monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake(
+        "50_0|e.1.forecast\n50_1|e.1.forecast\n"))
+    assert slurm.named("e") == {50}
+
+
+def test_an_empty_queue_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake("", returncode=1))
+    assert slurm.named("e") == set()
+
+
 # --- accounting --------------------------------------------------------------
 
 def _sacct(state, comment="ackbar:e:1:da"):

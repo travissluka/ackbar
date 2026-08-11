@@ -8,6 +8,7 @@ Nothing here interprets the workflow. It converts arguments to a command and a
 command's output to plain data, and that is all.
 """
 
+import getpass
 import json
 import shutil
 import subprocess
@@ -115,6 +116,36 @@ def queue(job_ids=None):
         key = int(base)
         if key not in out or reason == NEVER_SATISFIED:
             out[key] = (state, reason)
+    return out
+
+
+def named(experiment):
+    """Live job ids belonging to *experiment*, found by job name.
+
+    The half of `cancel` the ledger cannot answer: a job somebody submitted by
+    hand is nowhere in the ledger, and `scancel` has no name glob to find it
+    with.
+
+    Matched as `<experiment>.<cycle>.<task>` rather than by prefix, because a
+    prefix would make cancelling `osse-truth` also cancel `osse-truth.presmooth`
+    and `osse-truth-v2`. The cycle field is a number, so requiring the segment
+    after the experiment name to be one separates the two without needing to
+    know what experiments exist.
+    """
+    result = run(["squeue", "-h", "-o", "%i|%j", "-u", getpass.getuser()],
+                 check=False)
+    out = set()
+    for line in result.stdout.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 2:
+            continue
+        raw, name = parts
+        base = raw.split("_")[0]
+        if not base.isdigit():
+            continue
+        rest = name[len(experiment) + 1:].split(".")
+        if name.startswith(f"{experiment}.") and rest and rest[0].isdigit():
+            out.add(int(base))
     return out
 
 

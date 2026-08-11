@@ -151,15 +151,30 @@ def cmd_resume(args):
 
 
 def cmd_cancel(args):
-    """Cancel the union of the ledger's job ids and a name-prefix queue scan.
+    """Cancel the union of the ledger's live job ids and a queue scan by name.
 
     Both, because `scancel` has no name glob and the ledger cannot know about a
-    job somebody submitted by hand, while the queue cannot know about a job that
-    has not started yet under a name Slurm truncated.
+    job somebody submitted by hand, while the queue cannot know about a job the
+    ledger recorded and Slurm has since forgotten. This used to be the
+    intersection of the two, which is the ledger alone wearing a union's
+    docstring: a hand-submitted job was reported as "nothing of this experiment
+    is in the queue" and left running.
+
+    **The halt flag goes down first, and stays down.** Cancelling without it
+    races the submitter: `submit` is an ordinary job in the graph, so one that
+    is running while this reads the queue arms the next cycle after this
+    returns, and the experiment carries on with a hole in it. Setting the flag
+    first means anything that survives the scan submits nothing. It stays set
+    afterwards because an experiment that was cancelled is meant to be stopped;
+    `ackbar resume` is how it starts again, and it clears the flag.
     """
     _, _, paths = _frozen(args.name)
+
+    paths.halt_flag.write_text("cancelled by ackbar cancel\n")
+    print(f"{paths.halt_flag} created; nothing will submit while it exists")
+
     known = {r["job_id"] for r in ledger.read(paths)}
-    live = set(slurm.queue()) & known
+    live = (set(slurm.queue()) & known) | slurm.named(args.name)
     if not live:
         print("nothing of this experiment is in the queue")
         return 0
@@ -477,7 +492,7 @@ def main(argv=None):
     p.set_defaults(func=cmd_resume)
 
     p = sub.add_parser("cancel", help="cancel every live job of an experiment",
-        description="Cancel every live job of an experiment. Artifacts already written are left alone.")
+        description="Cancel every live job of an experiment and set the halt flag, so a submitter that was already running cannot re-arm behind it. Artifacts already written are left alone. Use `ackbar resume` to start again; it clears the flag.")
     p.add_argument("name", help="experiment name, the `experiment.name` of the file that was passed to `ackbar create`")
     p.set_defaults(func=cmd_cancel)
 
