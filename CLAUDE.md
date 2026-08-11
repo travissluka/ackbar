@@ -282,7 +282,9 @@ parts of B and which one is calibrated offline), `domains.md` (what each domain 
 `forcing-reference-height.md` (the deferred `z_bot` question), `ui.md` (the interactive console,
 `ackbar-ui`), `from-soca-science.md` (what
 changes and what to unlearn, for someone who knows the old bash workflow), `model-build.md`
-and `model-data.md` (the model and its input data), `observing-system.md` (what the OSSE archive
+and `model-data.md` (the model and its input data), `observer-qc.md` (a design, not yet built:
+per-application observation QC, so a hybrid can thin its ensemble half only),
+`observing-system.md` (what the OSSE archive
 imitates and why), `osse.md` (the worked end-to-end study), `slurm.md`, and `testing.md` (the
 tiers, and what each can and cannot catch). `README.md` is the outside view of the same
 material.
