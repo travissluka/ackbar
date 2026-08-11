@@ -210,9 +210,15 @@ solver:
       # forecast reconciling the two. hat10 sets this to zero for the same
       # reason. It is also what makes the ssh column of a dirac test through
       # this file meaningful, since a response there is then entirely balance.
+      #
+      # A var rather than a literal because it is the one number in this block
+      # whose right value is an open question rather than a default: it decides
+      # how much of an altimeter's increment the balance operator has to carry,
+      # and with `kst` off the balance operator carries it entirely in
+      # temperature. `docs/background-error.md` has the measurement.
       unbalanced ssh:
-        min: 0.0
-        max: 0.0
+        min: $(unbalanced_ssh)
+        max: $(unbalanced_ssh)
 
     # The balance operator, which is what makes an increment in temperature
     # imply one in sea surface height rather than two independent analyses of
@@ -262,6 +268,11 @@ solver:
 vars:
   # `diffusion_levels` is the domain's, declared in the domain layer, because it
   # is that domain's NK.
+
+  # The unbalanced sea surface height standard deviation, in metres. Zero, for
+  # the reason stated beside the key itself: every height increment then arrives
+  # through the balance operator, out of water the analysis actually moved.
+  unbalanced_ssh: 0.0
 
   # Inner iterations per outer loop. One outer loop, which is what `3d` means
   # here; FGAT and 4D add loops rather than iterations.
