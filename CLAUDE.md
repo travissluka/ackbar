@@ -425,15 +425,20 @@ outlives the subagent, so whoever spawned it inherits the merge and the cleanup.
 without that option inherits its parent's working directory and is pinned wherever the parent
 is standing, which is why a session driving experiments cannot get writes out through one.
 
-**A session driving experiments cannot write at all.** This is the case that forces the rule
-rather than merely recommending it. `ackbar create` and `ackbar start` have to run from the
-shared checkout, for the reason in the paragraph above, so a session running experiments
-sends every edit it wants to a peer, however small. A one line README fix is a peer's job
-under those conditions, and that is the process working rather than failing.
+**A session driving experiments cannot make the edit with its own hands.** This is the case
+that forces the rule rather than merely recommending it. `ackbar create` and `ackbar start`
+have to run from the shared checkout, for the reason in the paragraph above, and entering a
+worktree to make a quick edit takes the whole session, and every subagent it goes on to spawn
+without isolation, out of the checkout its experiments need. So it routes the edit outward
+instead, to a peer or to an isolated subagent, however small the edit is. A one line README
+fix belongs to somebody else under those conditions, and that is the process working rather
+than failing.
 
-**So the routing session stays out of a worktree while it is driving.** Entering one to make
-a quick edit takes the whole session, and its subagents, out of the checkout the experiments
-need.
+Which of the two to route it to is a question about the branch, not about the size of the
+edit. An isolated subagent is right when the branch is short lived and the spawning session
+is willing to merge and clean up after it. A peer is right when the work wants a name a human
+will still recognise in `git branch` a week later, or when it is large enough to outlive the
+conversation that started it.
 
 ## Conventions
 
