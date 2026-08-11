@@ -37,6 +37,15 @@ inherit:
   - domain/gom_25km
   - model/mom6sis2
   - da/none
+  # One shared atmosphere, not `ensemble/perturbed-inputs`, and both halves of
+  # that are deliberate. GEFS rather than the model's climatology, because the
+  # arms that inherit these members read GEFS and a member settled under a
+  # different atmosphere arrives carrying a fresh imbalance. Shared rather than
+  # per-member, because this run draws twenty three members against an archive
+  # of twenty one, and because one day of forcing difference is not where the
+  # spread comes from: the members are lagged states, and the arms give each of
+  # them its own atmosphere and boundary for the whole of the run that follows.
+  - forcing/gefs
 
 experiment:
   name: osse25-ensemble-settle

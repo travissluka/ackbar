@@ -43,6 +43,11 @@ inherit:
   - domain/gom_25km
   - model/mom6sis2
   - da/none
+  # The atmosphere every experiment downstream reads. A settling run exists to
+  # remove the imbalance in a state before an experiment inherits it, and one
+  # settled under a different atmosphere than the run that inherits it hands
+  # over a fresh imbalance in place of the one it removed.
+  - forcing/gefs
 
 experiment:
   name: osse25-spinup
