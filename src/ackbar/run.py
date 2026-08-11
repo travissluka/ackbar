@@ -1616,6 +1616,7 @@ def _hofx_ext(config, site, paths, cycle, task, member):
             initial=restart_source(config, paths, cycle, member),
             states=states, observers=observers,
             tstep=extended_slots(config)[0], begin=start, length=length,
+            member=member,
         )
     except (mom6sis2.ModelError, observations.ObservationError) as error:
         raise TaskError(f"{cycle}.{task} member {member}: {error}") from error

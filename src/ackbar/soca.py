@@ -281,7 +281,7 @@ def traces(name):
 
 
 def run_application(name, config, site, paths, cycle, task, document,
-                    label=None):
+                    label=None, member=None):
     """Run one SOCA application to completion, and keep its two traces.
 
     The shape every task in this module has. A run directory holding the case's
@@ -297,9 +297,22 @@ def run_application(name, config, site, paths, cycle, task, document,
     single job, and without a distinct label every member after the first would
     overwrite the config and log of the one before it, leaving one trace for
     twenty runs and no way to tell which member's it was.
+
+    *member* is what makes the run directory this job's own, and it is not
+    optional decoration on a member-level task. `run_task` creates
+    `paths.scratch(cycle, task, member)` and reaps it, so a run directory
+    computed without the member is both outside what the job owns (it is never
+    cleaned) and shared with every other member of the same array, which run at
+    the same time. What they would share is not innocuous: the document is
+    written to one `<label>.yaml` and read by the application a moment later, and
+    every observer's `obsdataout` points into one `out/`, whose filenames carry
+    the observer and the date and not the member. So the members race to author
+    each other's configuration and to write each other's departures, and
+    `commit` then copies whatever survived into every member's own output
+    directory, which is a wrong answer that exists rather than a failure.
     """
     label = label or name
-    run = paths.scratch(cycle, task)
+    run = paths.scratch(cycle, task, member)
     stage(config, run, cycle)
     _write(run / f"{label}.yaml", yaml.safe_dump(document, sort_keys=False))
 
@@ -307,7 +320,7 @@ def run_application(name, config, site, paths, cycle, task, document,
         launch(config, site, run, task, APPLICATIONS[name],
                f"{label}.yaml", f"{label}.log")
     finally:
-        keep_traces(run, paths.log_dir(cycle), task, None,
+        keep_traces(run, paths.log_dir(cycle), task, member,
                     names=traces(label))
     return run
 
@@ -334,12 +347,16 @@ def hofx(config, site, paths, cycle, task, *, background, observers):
 
 
 def hofx4d(config, site, paths, cycle, task, *, initial, states, observers,
-           tstep, begin, length):
+           tstep, begin, length, member=None):
     """Evaluate *observers* against a forecast trajectory already on disk.
 
     *states* maps each state's valid time to the directory holding it, and
     *initial* is where the trajectory starts. `PseudoModel` does not integrate,
     so this costs a read of each state rather than a second forecast.
+
+    The only caller is `hofx.ext`, which is a member-level array, so *member* is
+    passed through to both the run directory and the output staging under it.
+    See `run_application` for what two members sharing one of those would do.
 
     One application over the whole trajectory. That is a memory decision as much
     as a bookkeeping one, and it is the one that will need revisiting first on a
@@ -353,12 +370,14 @@ def hofx4d(config, site, paths, cycle, task, *, initial, states, observers,
               f"nothing to evaluate")
         return []
 
-    products = _redirect_output(observers, paths.scratch(cycle, task) / "out")
+    products = _redirect_output(observers,
+                                paths.scratch(cycle, task, member) / "out")
     run_application(
         "hofx4d", config, site, paths, cycle, task,
         hofx4d_config(config, cycle, observers, initial=initial, states=states,
                       tstep=tstep, begin=begin, length=length,
-                      templates=paths.templates))
+                      templates=paths.templates),
+        member=member)
     return commit(products)
 
 

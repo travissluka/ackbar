@@ -1022,6 +1022,90 @@ def test_no_observers_is_not_a_failure(config, paths, capsys):
     assert not paths.scratch(1, "hofx").exists()
 
 
+# --- one run directory per member --------------------------------------------
+
+def _fake_launch(runs):
+    """A launch that records where it ran and writes what the document asks for.
+
+    Enough of an application to reach `commit`: it reads the document from the
+    run directory it was given, which is the same file a real application would
+    read, and writes each observer's `obsdataout` with the run directory's own
+    name in it. That last part is what makes a shared directory visible as a
+    wrong answer rather than as a missing file.
+    """
+    def launch(config, site, run, task, executable, document, log_name):
+        runs.append(run)
+        (run / log_name).write_text(f"ran in {run}\n")
+        payload = yaml.safe_load((run / document).read_text())
+        for record in payload["observations"]["observers"]:
+            local = Path(record["obs space"]["obsdataout"]["engine"]["obsfile"])
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.write_text(f"{run}\n")
+    return launch
+
+
+def test_two_members_of_one_task_do_not_share_a_run_directory(
+        config, paths, monkeypatch):
+    """`hofx.ext` is an array, and every member of it runs at the same time.
+
+    Nothing in the run directory is per member by name. The document is one
+    `hofx4d.yaml`, and each observer's output under `out/` carries the observer
+    and the date and not the member, so members sharing a directory overwrite
+    each other's configuration and each other's departures. `commit` then copies
+    what survived into every member's own output directory, and the result is
+    six identical files that exist, which no output check can catch.
+
+    Driven off `paths.scratch`, which is what `run_task` creates and reaps, so a
+    body that runs somewhere else fails this rather than merely differing from
+    it.
+    """
+    import shutil
+    shutil.copytree(soca.TEMPLATES, paths.templates)
+
+    runs = []
+    monkeypatch.setattr(soca, "launch", _fake_launch(runs))
+
+    length = timedelta(days=2)
+    start = datetime(2018, 4, 15)
+    written = {}
+    for member in (0, 1):
+        section = paths.fcst_obs(1, length, member)
+        records = [observer(output=str(section / "e.adt.nc4"))]
+        written[member] = soca.hofx4d(
+            config, {}, paths, 1, "hofx.ext",
+            initial=Path(f"/rst/mem{member:03d}"),
+            states={start + timedelta(days=1): Path(f"/fcst/{member}")},
+            observers=records, tstep=timedelta(days=1), begin=start,
+            length=length, member=member)
+
+    assert runs == [paths.scratch(1, "hofx.ext", 0),
+                    paths.scratch(1, "hofx.ext", 1)]
+    assert runs[0] != runs[1]
+
+    # And the products differ, which is the failure the shared directory would
+    # have produced: two members' departures with one member's numbers in them.
+    contents = {member: files[0].read_text() for member, files in written.items()}
+    assert contents[0] != contents[1]
+    assert contents[0].strip() == str(runs[0])
+
+
+def test_the_traces_of_two_members_do_not_overwrite_each_other(
+        config, paths, monkeypatch):
+    """The log and the config are the evidence, and they are kept per member.
+
+    Same directory, same reason: `hofx4d.log` is one name. A shared trace leaves
+    one log for six members and no way to tell whose it was.
+    """
+    monkeypatch.setattr(soca, "launch", _fake_launch([]))
+    for member in (0, 1):
+        soca.run_application("hofx", config, {}, paths, 1, "hofx.ext",
+                             {"observations": {"observers": []}}, member=member)
+
+    kept = sorted(path.name for path in paths.log_dir(1).iterdir())
+    assert kept == ["hofx.ext.mem000.hofx.log", "hofx.ext.mem000.hofx.yaml",
+                    "hofx.ext.mem001.hofx.log", "hofx.ext.mem001.hofx.yaml"]
+
+
 # --- the real layers ---------------------------------------------------------
 
 def shipped(name):
