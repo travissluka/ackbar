@@ -2,7 +2,7 @@
 # All three spread sources at once: a GEFS member, an oSPPT pattern, and a draw
 # of perturbed parameters, one combination per ensemble member.
 #
-#   tools/spike-combined.sh /data/ackbar/spike/combined
+#   tools/spike/spike-combined.sh /data/ackbar/spike/combined
 #
 # The parameter draw is fixed per member and the same in every cycle a member
 # would run, which is the perturbed-parameter half. The oSPPT seed is fixed per
@@ -15,7 +15,7 @@
 # spread of the ranges says more than five draws from them would.
 set -euo pipefail
 
-ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
 OUT=${1:?usage: spike-combined.sh <out-dir>}
@@ -64,7 +64,7 @@ EOF
     SPIKE_LINK="atm.nc=$GEFS/$member/atm.nc" \
     SPIKE_NAMELIST=$namelist \
     NTASKS=${NTASKS:-8} \
-        bash "$ACKBAR_ROOT/tools/spike-forecast.sh" gom_25km "$IC" "$DAYS" "$target" \
+        bash "$ACKBAR_ROOT/tools/spike/spike-forecast.sh" gom_25km "$IC" "$DAYS" "$target" \
             DO_SPPT=True PERT_EPBL=True \
             KV="${KV[$n]}" KD="${KD[$n]}" \
             RINO_CRIT="${RINO[$n]}" MSTAR="${MSTAR[$n]}"

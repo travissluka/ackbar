@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Figures for the spread spike: growth curves, depth profiles, and maps.
 
-    tools/spike-figures.py --out /home/tsluka/work/ackbar/site/monitor/spread
+    tools/spike/spike-figures.py --out /home/tsluka/work/ackbar/site/monitor/spread
 
 Reads the member directories directly rather than the JSON `spike-spread.py`
 writes, because the maps need the fields and not the reduction.

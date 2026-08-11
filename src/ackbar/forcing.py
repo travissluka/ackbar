@@ -94,7 +94,7 @@ It matters because instantaneous fields and interval means are honestly stamped
 at different times. Temperature at 12:00 is the temperature at 12:00; downwelling
 shortwave "at 12:00" is the mean over an hour and belongs at its midpoint. Forced
 onto one axis, one of the two has to be interpolated, and it is always the
-shortwave that pays: `tools/spike-gefs-atm.py` says so in its own docstring and
+shortwave that pays: `tools/spike/spike-gefs-atm.py` says so in its own docstring and
 smears the diurnal cycle it was built to resolve. With per-field axes neither is
 interpolated and neither is wrong.
 """

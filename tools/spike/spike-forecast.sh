@@ -1,10 +1,10 @@
 #!/bin/bash
 # One free forecast from a restart set, with parameters perturbed, writing daily
-# snapshots. The unit of work behind `tools/spike-sweep.py`.
+# snapshots. The unit of work behind `tools/spike/spike-sweep.py`.
 #
-#   tools/spike-forecast.sh <domain> <ic-dir> <days> <out-dir> [KEY=VALUE ...]
+#   tools/spike/spike-forecast.sh <domain> <ic-dir> <days> <out-dir> [KEY=VALUE ...]
 #
-#   tools/spike-forecast.sh gom_25km \
+#   tools/spike/spike-forecast.sh gom_25km \
 #       $ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00 \
 #       5 /data/ackbar/spike/kd-3e-5  KD=3.0E-05
 #
@@ -25,7 +25,7 @@
 # staged.
 set -euo pipefail
 
-ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
 DOMAIN=${1:?usage: spike-forecast.sh <domain> <ic-dir> <days> <out-dir> [KEY=VALUE ...]}
@@ -123,7 +123,7 @@ cp "$OVERRIDE/MOM_override" "$OVERRIDE/SIS_override" .
 # wrong grid. Always written, empty when unset, so the namelist below can name it
 # unconditionally.
 : > SIS_forcing
-echo "! written by tools/spike-forecast.sh" >> SIS_forcing
+echo "! written by tools/spike/spike-forecast.sh" >> SIS_forcing
 if [[ -n ${SPIKE_SIS:-} ]]; then
     [[ -e $SPIKE_SIS ]] || {
         echo "spike-forecast: $SPIKE_SIS does not exist" >&2; exit 1; }
@@ -134,7 +134,7 @@ ln -s "$EXE" coupler_main
 # The perturbation, as its own parameter file so that what a member changed is
 # one `cat` away for as long as the output survives.
 : > MOM_sweep
-echo "! written by tools/spike-forecast.sh" >> MOM_sweep
+echo "! written by tools/spike/spike-forecast.sh" >> MOM_sweep
 for pair in "$@"; do
     key=${pair%%=*}
     value=${pair#*=}

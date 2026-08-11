@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Sweep MOM6 parameters from one initial condition and record what each does.
 
-    tools/spike-sweep.py --out /data/ackbar/spike/params
-    tools/spike-sweep.py --out /data/ackbar/spike/params --only kd,mstar
-    tools/spike-sweep.py --list
+    tools/spike/spike-sweep.py --out /data/ackbar/spike/params
+    tools/spike/spike-sweep.py --out /data/ackbar/spike/params --only kd,mstar
+    tools/spike/spike-sweep.py --list
 
 Every member integrates the same restart set for the same length through
-`tools/spike-forecast.sh`, differing only in the parameters named below. The
+`tools/spike/spike-forecast.sh`, differing only in the parameters named below. The
 control is a member too, perturbing nothing, so a difference between it and any
 other member is the parameter and not the staging.
 
@@ -39,8 +39,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-FORECAST = ROOT / "tools" / "spike-forecast.sh"
+ROOT = Path(__file__).resolve().parents[2]
+FORECAST = ROOT / "tools" / "spike" / "spike-forecast.sh"
 
 #: What every member starts from, and how far it runs.
 #:

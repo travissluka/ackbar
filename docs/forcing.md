@@ -111,7 +111,7 @@ Three details that are not free choices:
   against FMS over years of use. It exists so instantaneous fields and interval
   means can be stamped honestly at different times: an interval mean belongs at
   its midpoint, and forced onto a shared axis it is always the shortwave that
-  gets interpolated and smeared, which `tools/spike-gefs-atm.py` admits in its
+  gets interpolated and smeared, which `tools/spike/spike-gefs-atm.py` admits in its
   own docstring.
 - **The calendar attribute is the model's `NOLEAP`**, not the sources'
   `gregorian`. FMS resolves the axis with the calendar the file names, and the

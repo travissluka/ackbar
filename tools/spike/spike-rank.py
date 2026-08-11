@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """How many independent directions a perturbation ensemble actually spans.
 
-    tools/spike-rank.py <dir-of-mem###.nc>
-    tools/spike-rank.py /data/ackbar/static/obc/gom_25km/glorys-lag21 \
+    tools/spike/spike-rank.py <dir-of-mem###.nc>
+    tools/spike/spike-rank.py /data/ackbar/static/obc/gom_25km/glorys-lag21 \
         --merge '(\\w+)_segment_\\w+'
 
 The directory has to hold `mem000.nc` and up, which is the layout

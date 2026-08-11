@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure how much ensemble spread each spike group produced, and where.
 
-    tools/spike-spread.py --root /data/ackbar/spike/params
-    tools/spike-spread.py --root /data/ackbar/spike/params --json spread.json
+    tools/spike/spike-spread.py --root /data/ackbar/spike/params
+    tools/spike/spike-spread.py --root /data/ackbar/spike/params --json spread.json
 
 For each group of members, the spread is the standard deviation across members
 at a point, reduced over the domain by an area unweighted root mean square.

@@ -1,11 +1,11 @@
 #!/bin/bash
 # Five forecasts from one ocean state, each forced by a different GEFS member.
 #
-#   tools/spike-gefs-run.sh /data/ackbar/spike/gefs /data/ackbar/spike/forcing
+#   tools/spike/spike-gefs-run.sh /data/ackbar/spike/gefs /data/ackbar/spike/forcing
 #
 # The only thing that differs between members is the atmosphere, so the spread
 # this produces is the ocean's response to atmospheric uncertainty alone, and is
-# directly comparable to a parameter group from `tools/spike-sweep.py`: same
+# directly comparable to a parameter group from `tools/spike/spike-sweep.py`: same
 # initial condition, same length, same reduction.
 #
 # It is not comparable to the *experiment's* forcing. Every member here reads
@@ -14,7 +14,7 @@
 # and not how far apart they get, which is what is being measured.
 set -euo pipefail
 
-ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
 GEFS=${1:?usage: spike-gefs-run.sh <gefs-dir> <out-dir>}
@@ -29,7 +29,7 @@ SIS_FORCING=$ACKBAR_ROOT/config/model/mom6sis2/SIS_forcing
 for member in c00 p01 p02 p03 p04; do
     atm=$GEFS/$member/atm.nc
     [[ -s $atm ]] || {
-        echo "spike-gefs-run: $atm does not exist; run tools/spike-gefs-atm.py" >&2
+        echo "spike-gefs-run: $atm does not exist; run tools/spike/spike-gefs-atm.py" >&2
         exit 1
     }
     if compgen -G "$OUT/$member/*ocn_daily.nc" > /dev/null; then
@@ -37,7 +37,7 @@ for member in c00 p01 p02 p03 p04; do
         continue
     fi
     SPIKE_DATA_TABLE=$TABLE SPIKE_SIS=$SIS_FORCING SPIKE_LINK="atm.nc=$atm" \
-        bash "$ACKBAR_ROOT/tools/spike-forecast.sh" gom_25km "$IC" "$DAYS" "$OUT/$member"
+        bash "$ACKBAR_ROOT/tools/spike/spike-forecast.sh" gom_25km "$IC" "$DAYS" "$OUT/$member"
 done
 
 echo "spike-gefs-run: $OUT"

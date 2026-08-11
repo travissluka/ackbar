@@ -2,7 +2,7 @@
 # Pull the GEFSv12 reforecast fields needed to force MOM6-SIS2, one directory
 # per member.
 #
-#   tools/spike-gefs-fetch.sh 2015071200 /data/ackbar/spike/gefs
+#   tools/spike/spike-gefs-fetch.sh 2015071200 /data/ackbar/spike/gefs
 #
 # GEFSv12 *reforecast* rather than the operational GEFS archive that
 # soca-science' `scripts/forc/forc_gefs.py` reads. That bucket

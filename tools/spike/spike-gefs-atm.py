@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn fetched GEFSv12 reforecast GRIB into one `atm.nc` per member.
 
-    tools/spike-gefs-atm.py --gefs /data/ackbar/spike/gefs --hours 120
+    tools/spike/spike-gefs-atm.py --gefs /data/ackbar/spike/gefs --hours 120
 
 Writes `<gefs>/<member>/atm.nc` carrying the seven fields MOM6-SIS2's data
 table wants, on a box around the Gulf, named the way soca-science named them
@@ -218,7 +218,7 @@ def main():
                 field.units = units
                 field[:] = cube
 
-            out.source = "GEFSv12 reforecast, NOAA-PSL, via tools/spike-gefs-fetch.sh"
+            out.source = "GEFSv12 reforecast, NOAA-PSL, via tools/spike/spike-gefs-fetch.sh"
         print(f"{target}  {target.stat().st_size / 1e6:.1f} MB")
 
 

@@ -1,9 +1,9 @@
 #!/bin/bash
 # One free forecast per boundary member, from one shared initial condition.
 #
-#   tools/spike-obc.sh <domain> <ic-dir> <days> <out-dir> <obc-dir>
+#   tools/spike/spike-obc.sh <domain> <ic-dir> <days> <out-dir> <obc-dir>
 #
-#   tools/spike-obc.sh gom_25km \
+#   tools/spike/spike-obc.sh gom_25km \
 #       $ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00 \
 #       30 /data/ackbar/spike/obc-lag21 /data/ackbar/spike/obc-lag21/obc
 #
@@ -42,7 +42,7 @@
 # command: nothing here depends on the members having been run together.
 set -euo pipefail
 
-ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 
 DOMAIN=${1:?usage: spike-obc.sh <domain> <ic-dir> <days> <out-dir> <obc-dir>}
 IC=${2:?usage: spike-obc.sh <domain> <ic-dir> <days> <out-dir> <obc-dir>}
@@ -95,8 +95,8 @@ for path in "${boundaries[@]}"; do
     fi
     echo "spike-obc: $member <- $(basename "$path")"
     SPIKE_LINK="obc.nc=$path" \
-        "$ACKBAR_ROOT/tools/spike-forecast.sh" "$DOMAIN" "$IC" "$DAYS" "$OUT/$member"
+        "$ACKBAR_ROOT/tools/spike/spike-forecast.sh" "$DOMAIN" "$IC" "$DAYS" "$OUT/$member"
 done
 
 echo "spike-obc: $OUT"
-echo "spike-obc: tools/spike-spread.py --flat --root $OUT --json $OUT/spread.json"
+echo "spike-obc: tools/spike/spike-spread.py --flat --root $OUT --json $OUT/spread.json"

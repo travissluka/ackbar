@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Sweep the NOAA-PSL ocean stochastic physics schemes, as seed ensembles.
 
-    tools/spike-stochastic.py --out /data/ackbar/spike/stochastic
-    tools/spike-stochastic.py --list
+    tools/spike/spike-stochastic.py --out /data/ackbar/spike/stochastic
+    tools/spike/spike-stochastic.py --list
 
 Runs against the checkout's own `coupler_main`, which carries the pattern
 generator: `build-model.sh` compiles `pkg/stochastic_physics` into it, and with
 no scheme switched on the executable is bit for bit a stock build.
 
 **Every group here is five seeds of one configuration, not five values of one
-parameter.** That is the difference between this and `tools/spike-sweep.py` and
+parameter.** That is the difference between this and `tools/spike/spike-sweep.py` and
 it is the whole point: a stochastic scheme run five times with different random
 seeds is an ensemble in the sense a filter means, five draws from one
 distribution, so the standard deviation across members is a forecast spread and
@@ -29,8 +29,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-FORECAST = ROOT / "tools" / "spike-forecast.sh"
+ROOT = Path(__file__).resolve().parents[2]
+FORECAST = ROOT / "tools" / "spike" / "spike-forecast.sh"
 
 DOMAIN = "gom_25km"
 DAYS = 5
