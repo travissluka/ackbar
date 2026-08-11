@@ -6,6 +6,7 @@ with no scheduler. What Slurm actually does when handed these arguments is
 tier 2's problem, in `test_tier2.py`.
 """
 
+import subprocess
 import types
 
 import pytest
@@ -138,6 +139,66 @@ def _array(*elements):
     return f'{{"jobs": [{jobs}]}}'
 
 
+def _flaky(failures, then, returncode=1):
+    """A `run` that fails *failures* times before answering with *then*."""
+    calls = []
+
+    def run(command, check=True, stdin=None):
+        calls.append(command)
+        if len(calls) <= failures:
+            return types.SimpleNamespace(args=command, returncode=returncode,
+                                         stdout="", stderr="down")
+        return types.SimpleNamespace(args=command, returncode=0,
+                                     stdout=then, stderr="")
+
+    run.calls = calls
+    return run
+
+
+def test_a_blip_is_retried_rather_than_reported_as_a_missing_job(monkeypatch):
+    # The failure this closes: a slurmdbd restart inside a submitter's window
+    # made `state_of` answer `unknown`, which the submitter turns into a refusal
+    # to submit, stopping an overnight experiment over five seconds.
+    monkeypatch.setattr(slurm, "QUERY_BACKOFF", 0)
+    run = _flaky(2, _array((4, 1, "COMPLETED")))
+    monkeypatch.setattr(slurm, "run", run)
+    assert slurm.accounting([4])[4]["state"] == "COMPLETED"
+    assert len(run.calls) == 3
+
+
+def test_undecodable_output_is_retried_too(monkeypatch):
+    # A truncated response is the same kind of event as a refused one.
+    monkeypatch.setattr(slurm, "QUERY_BACKOFF", 0)
+    run = _flaky(1, _array((4, 1, "COMPLETED")), returncode=0)
+    monkeypatch.setattr(slurm, "run", run)
+    assert slurm.accounting([4])[4]["state"] == "COMPLETED"
+
+
+def test_an_outage_is_an_error_rather_than_an_empty_answer(monkeypatch):
+    # Silence and "these jobs do not exist" are different statements, and
+    # returning {} made them one.
+    monkeypatch.setattr(slurm, "QUERY_BACKOFF", 0)
+    monkeypatch.setattr(slurm, "run", fake("", returncode=1))
+    with pytest.raises(slurm.SlurmError, match="outage"):
+        slurm.accounting([4])
+
+
+def test_no_job_ids_is_still_not_a_query(monkeypatch):
+    # An empty result for an empty question, without touching Slurm at all.
+    def explode(*a, **k):
+        raise AssertionError("should not have run a command")
+    monkeypatch.setattr(slurm, "run", explode)
+    assert slurm.accounting([]) == {}
+
+
+def test_a_command_that_never_answers_is_not_waited_on_forever(monkeypatch):
+    def hang(command, capture_output, text, input, timeout):
+        raise subprocess.TimeoutExpired(command, timeout)
+    monkeypatch.setattr(slurm.subprocess, "run", hang)
+    with pytest.raises(slurm.SlurmError, match="did not answer"):
+        slurm.run(["squeue"])
+
+
 def test_an_array_is_keyed_on_its_base_and_not_on_whichever_element_got_that_id(
         monkeypatch):
     monkeypatch.setattr(slurm, "run", fake(
@@ -171,9 +232,19 @@ def test_a_dependency_that_can_never_be_satisfied_is_not_hidden_by_a_sibling(
     assert slurm.queue([4])[4][1] == slurm.NEVER_SATISFIED
 
 
-def test_unparseable_accounting_is_no_data_rather_than_a_crash(monkeypatch):
-    monkeypatch.setattr(slurm, "run", fake("not json"))
-    assert slurm.accounting([5]) == {}
+def test_unparseable_accounting_is_an_outage_rather_than_no_data(monkeypatch):
+    """Not a traceback: `cli` catches SlurmError and prints it.
+
+    This used to return {}, which reads as "Slurm has never heard of job 5" and
+    reaches the submitter as a refusal to submit. Retried first, so a truncated
+    response costs seconds rather than the run.
+    """
+    monkeypatch.setattr(slurm, "QUERY_BACKOFF", 0)
+    run = fake("not json")
+    monkeypatch.setattr(slurm, "run", run)
+    with pytest.raises(slurm.SlurmError, match="outage"):
+        slurm.accounting([5])
+    assert len(run.calls) == slurm.QUERY_ATTEMPTS
 
 
 # --- the state the submitter actually asks for -------------------------------

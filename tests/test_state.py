@@ -137,9 +137,20 @@ def test_the_sentinel_answers_once_accounting_has_been_purged(env):
     assert state.collect(env.paths, env.graph)["1.da"].summary == state.COMPLETE
 
 
-def test_a_purged_job_with_no_sentinel_is_not_called_complete(env):
+def test_a_purged_job_with_no_sentinel_is_broken_rather_than_pending(env):
+    """The job was submitted, is in no queue, and left no proof it worked.
+
+    This used to answer PENDING, which is the one thing it cannot be: a waiting
+    job is in `squeue` by definition. PENDING is not terminal and not broken, so
+    `status` showed a run that would never finish and `heal` had nothing to act
+    on. It has to be FAILED, which is not a claim about how it ended but a claim
+    that it did, without the artifact that proves it worked.
+    """
     record(env.paths, 1, "da", 500)
-    assert state.collect(env.paths, env.graph)["1.da"].summary == state.PENDING
+    status = state.collect(env.paths, env.graph)["1.da"]
+    assert status.summary == state.FAILED
+    assert status.broken == (None,)
+    assert "no sentinel" in status.reasons[None]
 
 
 def test_the_queue_wins_over_accounting(env):
@@ -182,13 +193,23 @@ def test_the_unstarted_remainder_of_an_array_is_expanded(env):
 
 
 def test_one_stranded_element_makes_the_node_stranded(env):
-    """A summary is the worst element, because "mostly fine" is not actionable."""
-    record(env.paths, 1, "writeback", 600, members=range(1, 21))
-    env.slurm.accounted["600_7"] = "COMPLETED"
-    env.slurm.queued["600_3"] = ("PENDING", slurm.NEVER_SATISFIED)
+    """A summary is the worst element, because "mostly fine" is not actionable.
 
-    assert state.collect(env.paths, env.graph)["1.writeback"].summary \
-        == state.STRANDED
+    Every element is accounted for, which is what a real array looks like and
+    what this test is about. Leaving eighteen of them modelled by nothing at all
+    would make the answer come from the fallback for a job nothing remembers,
+    and this would pass or fail for a reason that has nothing to do with
+    severity ordering.
+    """
+    record(env.paths, 1, "writeback", 600, members=range(1, 21))
+    env.slurm.queued["600_3"] = ("PENDING", slurm.NEVER_SATISFIED)
+    for member in range(1, 21):
+        if member != 3:
+            env.slurm.accounted[f"600_{member}"] = "COMPLETED"
+
+    status = state.collect(env.paths, env.graph)["1.writeback"]
+    assert status.summary == state.STRANDED
+    assert status.counts() == {state.STRANDED: 1, state.COMPLETE: 19}
 
 
 def test_attempts_count_ledger_rows_not_the_latest_one(env):

@@ -65,7 +65,13 @@ def env(tmp_path, config, monkeypatch):
 
     def fake_sbatch(script, **kwargs):
         issued.append(dict(kwargs, script=Path(script).name))
-        return 900 + len(issued)
+        job_id = 900 + len(issued)
+        # Queued, for the same reason `submitted` queues: a job Slurm has just
+        # accepted is in `squeue`. Without this a healed node is a ledger row
+        # nothing else knows about, which is the signature of a job that
+        # vanished, and the next heal would pick it up as broken again.
+        queued[str(job_id)] = ("PENDING", "Dependency")
+        return job_id
 
     def fake_state_of(job_ids):
         """What the submitter asks before rebuilding an edge onto a job.
@@ -103,8 +109,22 @@ def env(tmp_path, config, monkeypatch):
     })
 
 
+def _keys(env, node_id, ids, members=None):
+    node = next(n for n in env.graph.nodes if n.id == node_id)
+    for member in (members if members is not None else (node.members or (None,))):
+        key = f"{ids[node_id]}_{member}" if member is not None else str(ids[node_id])
+        yield member, key
+
+
 def submitted(env, cycle, base=100):
-    """Pretend a whole cycle was submitted, one job id per node."""
+    """Pretend a whole cycle was submitted, one job id per node.
+
+    Queued as well as recorded in the ledger, because that is what submitted
+    means: a job Slurm has accepted is in `squeue` until it runs. A fixture that
+    only writes the ledger row describes a job that was submitted and then
+    vanished, which is a real state with a real answer (`failed`, needing a
+    rerun) and not the one any test here is about.
+    """
     ids = {}
     for i, node in enumerate(n for n in env.graph.order()
                              if n.startswith(f"{cycle}.")):
@@ -114,15 +134,18 @@ def submitted(env, cycle, base=100):
         ledger.append(env.paths, cycle=cycle, task=task, members=members,
                       attempt=1, job_id=job_id, dependency="")
         ids[node] = job_id
+        for _, key in _keys(env, node, ids):
+            env.queued[key] = ("PENDING", "Dependency")
     return ids
 
 
 def complete(env, node_id, ids, members=None):
     """Mark a node COMPLETED in accounting, with its sentinel on disk."""
     cycle, _, task = node_id.partition(".")
-    node = next(n for n in env.graph.nodes if n.id == node_id)
-    for member in (members if members is not None else (node.members or (None,))):
-        key = f"{ids[node_id]}_{member}" if member is not None else str(ids[node_id])
+    for member, key in _keys(env, node_id, ids, members):
+        # Out of the queue: `sacct` is where a finished job lives, and leaving
+        # it in both makes the queue win and report it running forever.
+        env.queued.pop(key, None)
         env.accounted[key] = "COMPLETED"
         sentinel = env.paths.sentinel(int(cycle), task, member)
         sentinel.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +154,7 @@ def complete(env, node_id, ids, members=None):
 
 def fail(env, node_id, ids, member=None):
     key = f"{ids[node_id]}_{member}" if member is not None else str(ids[node_id])
+    env.queued.pop(key, None)
     env.accounted[key] = "FAILED"
 
 
@@ -310,6 +334,9 @@ def test_healing_twice_is_the_same_heal_again(env):
     # does and is the case an operator actually hits.
     new_id = next(r["job_id"] for r in ledger.read(env.paths)
                   if r["task"] == "forecast" and r["attempt"] == 2)
+    # Out of the queue as well as failed in accounting. The queue is consulted
+    # first and wins, so a job left in both is a job still running.
+    env.queued.pop(str(new_id), None)
     env.accounted[f"{new_id}_1"] = "FAILED"
     env.issued.clear()
 

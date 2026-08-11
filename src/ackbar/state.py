@@ -143,7 +143,24 @@ def _element_state(paths, node, member, job_id, live, done, done_elements):
     # if it is there the task finished no matter what accounting remembers.
     if paths.sentinel(node.cycle, node.task, member).exists():
         return COMPLETE, ""
-    return PENDING, ""
+
+    # Submitted, absent from the queue, absent from accounting, and it left no
+    # sentinel. This used to answer PENDING, which is the one thing it cannot
+    # be: a job that is waiting to run is in `squeue` by definition, and this
+    # job was submitted, because it has a ledger record with an id. So the
+    # answer meant "still queued" about something that had already stopped, and
+    # PENDING is not in TERMINAL and not in `broken`, so `status` showed a run
+    # that would never finish and `heal` found nothing to fix.
+    #
+    # FAILED is what it is: not a claim about how it ended, a claim that it did,
+    # without leaving the artifact that proves it worked. That puts it in
+    # `broken`, which is right, because the only way forward is to run it again.
+    #
+    # Safe only because `slurm.accounting` now raises when it cannot answer
+    # rather than returning nothing. Under the old behaviour a slurmdbd blip
+    # emptied `done` and this would have called every job in the experiment
+    # failed at once.
+    return FAILED, "no queue row, no accounting row, and no sentinel"
 
 
 def _queue_elements(job_ids):

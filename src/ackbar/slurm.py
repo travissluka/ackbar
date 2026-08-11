@@ -12,6 +12,7 @@ import getpass
 import json
 import shutil
 import subprocess
+import time
 
 #: The only state that means the artifact is there. Everything else that has
 #: left the queue is failed, deliberately: an unrecognized state is not good
@@ -37,11 +38,35 @@ def available():
     return shutil.which("sbatch") is not None
 
 
+#: How long any one Slurm command may take before it is treated as hung.
+#:
+#: Generous, because `sacct` over a long experiment is genuinely slow and a
+#: timeout that fires on a healthy query is worse than no timeout. The point is
+#: that a wedged slurmdbd cannot hold a job open for its whole walltime: without
+#: this, `subprocess.run` waits forever and the job dies on the Slurm time limit
+#: hours later, reported as a timeout of the science rather than of a query.
+QUERY_TIMEOUT = 120
+
+#: How many times a query that could not be answered is retried before it
+#: becomes an error, and how long to wait between attempts.
+#:
+#: For slurmdbd restarts and momentary load, which last seconds. Anything that
+#: outlives this is an outage rather than a blip and should be visible.
+QUERY_ATTEMPTS = 3
+QUERY_BACKOFF = 2.0
+
+
 def run(command, check=True, stdin=None):
     """Run one Slurm command. The single point tests replace."""
-    result = subprocess.run(
-        command, capture_output=True, text=True, input=stdin,
-    )
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, input=stdin,
+            timeout=QUERY_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise SlurmError(
+            f"{' '.join(command)} did not answer in {QUERY_TIMEOUT}s"
+        ) from error
     if check and result.returncode != 0:
         raise SlurmError(
             f"{' '.join(command)} exited {result.returncode}: "
@@ -155,17 +180,38 @@ def accounting(job_ids):
     `--json` rather than `-P`, because the parsable delimiter collides with the
     structured comment ACKBAR puts identity in, and because the default column
     widths truncate the job name.
+
+    **An unanswerable query raises rather than returning nothing.** The two are
+    not the same statement and this used to make them one: an empty result means
+    "Slurm has no record of these jobs", which `state_of` reports as `unknown`
+    and the submitter turns into a refusal to submit. So a slurmdbd that was
+    restarting for five seconds inside a submitter's window stopped an overnight
+    experiment, with a message about a dependency that was never in doubt.
+
+    Retried first, because that is what a blip deserves. What survives the
+    retries is an outage, and an outage has to be visible: reported as itself,
+    not as every job in the experiment having ceased to exist.
     """
     if not job_ids:
         return {}
     command = ["sacct", "-j", ",".join(str(i) for i in job_ids), "--json"]
-    result = run(command, check=False)
-    if result.returncode != 0 or not result.stdout.strip():
-        return {}
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
+    payload = None
+    for attempt in range(QUERY_ATTEMPTS):
+        result = run(command, check=False)
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                payload = json.loads(result.stdout)
+                break
+            except json.JSONDecodeError:
+                pass
+        if attempt + 1 < QUERY_ATTEMPTS:
+            time.sleep(QUERY_BACKOFF * (attempt + 1))
+    if payload is None:
+        raise SlurmError(
+            f"sacct could not answer for {len(job_ids)} job(s) after "
+            f"{QUERY_ATTEMPTS} attempts; treating this as an outage rather "
+            f"than as those jobs not existing"
+        )
 
     out = {}
     for job in payload.get("jobs", []):
