@@ -605,6 +605,20 @@ state it was perturbed from and nothing said so. Both now go through
 `soca.background_error`, which is the one place that decides a covariance's
 variable lists are the analysis variables.
 
+**The build order above is load-bearing, not just tidier.** With members
+recentred before the settle, an unlimited LETKF increment (`config/layers/
+da/common/limits.yaml` before it carried a bound) put 16 degC into a 1.3 mm
+layer and crashed thirteen of eighteen members on the first cycle, reported by
+MOM6 several steps downstream as `adjust_interface_motion: implied h<0`. Adding
+the soft increment bound alone brought that down to two failures, not zero: a
+bound acts per point and non-linearly, so it flattens peaks and changes the
+*shape* of the increment field, which is what the model actually responds to.
+What removed the last two failures was giving the lagged ensemble a free day
+before recentring, so the members no longer carried the cold start's
+interpolation shock into the first analysis. The bound in
+`config/layers/da/common/limits.yaml` is still worth having as a guard against a
+single wild point, but it is not a substitute for the settle step.
+
 ## Writeback
 
 A direct write into a copy of the background, because `soca_checkpoint_model.x`

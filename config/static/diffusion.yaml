@@ -83,20 +83,13 @@ horizontal:
   # is. Read by the `localization` block in `config/layers/da/hybrid.yaml` and
   # by nothing else.
   #
-  # 2.0 rather than the 1.5 it spent one round at, and it is a science call
-  # rather than a tuning sweep: it is the value the hybrid and EnVar runs are
-  # configured with, so it is the one the ensemble component's contribution will
-  # be judged at. On gom_25km it puts the median localization length over ocean
-  # at 76 km against 57 km, and the mean at 80 against 63, which is a little
-  # over three cells rather than a little over two. The floor still binds on the
-  # shelf, so the shortest scale barely moves (58 km against 56); the ceiling
-  # never binds, because two Rossby radii in the Gulf reach 119 km against a
-  # 350 km cap. The operator this builds costs 42 explicit sweeps, and that
-  # count goes as the square of the scale in grid cells, so it is the price of
-  # the multiplier and the thing to look at before raising it again. Changing
-  # it means rebuilding
-  # `loc_hz.nc` with `tools/soca-diffusion.sh`, because the multiplier lives
-  # here and the operator that reads it is a file.
+  # This is a science call rather than a tuning sweep: it is the value the
+  # hybrid and EnVar runs are configured with, so it is the one the ensemble
+  # component's contribution will be judged at. See `docs/background-error.md`
+  # for the measured localization lengths and calibration cost this produces
+  # on `gom_25km`. Changing it means rebuilding `loc_hz.nc` with
+  # `tools/soca-diffusion.sh`, because the multiplier lives here and the
+  # operator that reads it is a file.
   loc_hz:
     rossby mult: 2.0
     min grid mult: 2.0

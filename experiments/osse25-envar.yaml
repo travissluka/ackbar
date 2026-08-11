@@ -40,7 +40,7 @@
 # well enough to beat the hybrid is the question this arm answers; see
 # docs/ensemble-spread.md.
 #
-# Localization is 1.5 Rossby radii, floored at two grid cells, and not masked
+# Localization is 2.0 Rossby radii, floored at two grid cells, and not masked
 # over land: `loc_hz_open` in `config/static/diffusion.yaml`, built into
 # `loc_hz_open.nc` by `tools/soca-diffusion.sh`. Changing the multiplier means
 # rebuilding that file. The masked `loc_hz` is still calibrated and can be

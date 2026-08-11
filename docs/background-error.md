@@ -66,7 +66,14 @@ be noise and tapered away. It is deliberately wider than `hz`, at twice the
 Rossby radius against one, and the reason is that localizing tighter than the
 true correlation length throws away exactly the long range structure the
 ensemble is there to provide. That failure looks like an ensemble component
-which is not contributing rather than like a mistake. Read by
+which is not contributing rather than like a mistake.
+
+On `gom_25km`, `rossby mult: 2.0` puts the median localization length over ocean at 76 km, a
+little over three cells, and the mean at 80 km. The floor still binds on the shelf, at 58 km
+against the 56 km grid floor; the ceiling never binds, because two Rossby radii in the Gulf
+reach 119 km against a 350 km cap. The operator this builds costs 42 explicit sweeps, and
+since that count goes as the square of the scale in grid cells, it is the price of the
+multiplier and the thing to look at before raising it again. Read by
 `config/layers/da/hybrid.yaml` and by nothing else; a static 3DVar never opens
 it.
 
@@ -174,6 +181,13 @@ down the column, which is the one thing it should do. Vertical localization for
 an ensemble covariance is a different quantity again, computed by
 `soca_sqrtvertloc.x`. The argument and what the absence costs are under
 "Checking the other two covariances" below.
+
+The **level count** is the other. `domain.n_levels` in the domain layer (`gom.yaml` and
+its siblings) has to equal `NK` in `gom/common/MOM_input`, because it is the one copy of
+the level count that lives outside that file. The failure mode is not loud: SABER reads a
+calibration built for the wrong number of levels and spins at full CPU on every rank,
+writing nothing, rather than raising an error. There is no automated check for this one,
+so it is worth confirming by eye after any change to `NK`.
 
 The **filepath** is the other. saber's `filepath` is a stem: the file it opens
 is the stem plus `.nc`. `ackbar validate` knows this, which is why a calibrated

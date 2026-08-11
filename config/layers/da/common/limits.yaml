@@ -36,25 +36,16 @@ solver:
   # pass through, the tail asymptotes to the bound, and nothing is flattened
   # into a plateau. See that module for why soft rather than a clip.
   #
-  # Left unlimited, the LETKF put 16 degC into a 1.3 mm layer and killed thirteen
-  # of eighteen members on the first cycle, reported by MOM6 several steps
-  # downstream as `adjust_interface_motion: implied h<0`.
-  #
-  # **What stabilised that was not the bound.** A first pass with the bound alone
-  # took the failures from thirteen of eighteen members to two, and tightening it
-  # did not remove the last two, it only changed which members died. A bound acts
-  # per point and non-linearly, so it flattens peaks and changes the *shape* of
-  # the increment field, and shape is what the model responds to. What fixed it
-  # was the ensemble: the members had been recentred while still carrying the
-  # cold start's interpolation shock, and building them in the other order, one
-  # free day and then the recentring, is what made the increment survivable.
-  # `experiments/osse25-ensemble-settle.yaml` carries the reasoning.
-  #
-  # So these are a guard against a single wild point, not a control on the
-  # analysis. Measured over a cycle they touch 0.09% of live velocity points,
-  # with the 99.9th percentile of the increment at 0.487 m/s against the 0.5
-  # bound, so they clip the tail rather than the shoulder. That is what a limit
-  # here should cost, and it is the measurement to repeat before changing one.
+  # A guard against a single wild point, not a control on the analysis: a bound
+  # acts per point and non-linearly, so it flattens peaks and changes the
+  # *shape* of the increment field, and it is not a substitute for a
+  # dynamically settled ensemble. `docs/analysis.md` carries the finding that
+  # motivated this and why the ensemble build order (settle before recenter)
+  # matters more than the bound does. Measured over a cycle these touch 0.09%
+  # of live velocity points, with the 99.9th percentile of the increment at
+  # 0.487 m/s against the 0.5 bound, so they clip the tail rather than the
+  # shoulder. That is what a limit here should cost, and it is the measurement
+  # to repeat before changing one.
   #
   # **IAU is better than any of this**, and is not wired yet. It spreads the
   # increment across the forecast instead of applying all of it between two

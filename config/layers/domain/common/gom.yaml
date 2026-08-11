@@ -64,7 +64,7 @@ vars:
   # the level count that lives outside that file, and it does not fail loudly
   # when it disagrees: SABER reads a calibration with more levels than it was
   # told to expect and spins, at full CPU on every rank, writing nothing.
-  # Thirty-three minutes of that is how this comment got written.
+  # See `docs/background-error.md`.
   diffusion_levels: 50
 
 domain:
