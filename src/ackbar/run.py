@@ -749,6 +749,30 @@ def run_task(config, site, paths, cycle, task, member=None):
     else:
         _stub(config, paths, cycle, task, member, inputs, outputs)
 
+    # **The skip rule and the completion rule have to be the same predicate.**
+    # Above, a task is allowed to skip only when its sentinel exists *and* every
+    # declared output does; here, until now, the sentinel was written on the
+    # strength of the body having returned. So a body that returned without
+    # writing what it declared produced a state the two rules disagree about:
+    # complete enough to satisfy every downstream dependency, not complete
+    # enough to skip on a rerun. Downstream is the half that runs.
+    #
+    # Every `task_io` docstring already describes its outputs as proof rather
+    # than as a manifest, and picks them for it: writeback declares
+    # `coupler.res` because the model writes it last, `post.fcst` leaves out the
+    # lead whose product is a symlink that has not landed. That care was only
+    # ever spent on the skip check. This spends it on the claim of success too.
+    #
+    # The pre-body list, not a recomputed one, for the same reason: it is the
+    # list the skip check would use, and a rule that consults a different one
+    # reintroduces the disagreement in a subtler form.
+    missing = [p for p in outputs if not p.exists()]
+    if missing and not deferred_task(config, task):
+        raise TaskError(
+            f"{cycle}.{task}" + (f" member {member}" if member is not None else "")
+            + " returned without writing what it declares:\n"
+            + "\n".join(f"  {p}" for p in missing))
+
     _write_sentinel(sentinel, cycle, task, member, started,
                     deferred=deferred_task(config, task))
 

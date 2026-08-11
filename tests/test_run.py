@@ -139,6 +139,39 @@ def test_a_missing_input_names_the_file_its_producer_should_have_written(env):
         do(env, 3, "da")
 
 
+def test_a_body_that_writes_nothing_is_a_failure_not_a_success(env, monkeypatch):
+    # The mirror of the input check above, on the other side of the body. A
+    # producer that exits 0 having written nothing is caught here, in the job
+    # that did it, rather than one edge later in whatever tried to read it.
+    _, _, paths = env
+    monkeypatch.setattr(run, "_stub", lambda *a, **k: None)
+    with pytest.raises(run.TaskError, match="without writing what it declares"):
+        do(env, 1, "da")
+    assert not paths.sentinel(1, "da").exists()
+
+
+def test_the_skip_rule_and_the_completion_rule_agree(env, monkeypatch):
+    # The specific corruption: a task marked complete in a state where the skip
+    # rule would refuse to skip it. Downstream reads the sentinel and runs, so
+    # the disagreement is only ever resolved the wrong way.
+    _, _, paths = env
+    monkeypatch.setattr(run, "_stub", lambda *a, **k: None)
+    with pytest.raises(run.TaskError):
+        do(env, 1, "da")
+    monkeypatch.undo()
+    # Nothing was recorded, so the retry does the work rather than skipping it.
+    do(env, 1, "da")
+    assert (paths.member_out("ana", 1, 1) / "incr.stub").exists()
+
+
+def test_a_deferred_task_declares_nothing_and_so_still_completes(env):
+    # `verify` has no body yet. It must stay a success: it is a leaf that writes
+    # nothing anything reads, and failing it would stop every cycle.
+    config, _, paths = env
+    config["model"]["name"] = "mom6sis2"
+    assert run.deferred_task(config, "verify")
+
+
 def test_a_finished_task_is_skipped_rather_than_repeated(env):
     _, _, paths = env
     do(env, 1, "da")
