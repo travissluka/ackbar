@@ -293,10 +293,15 @@ poses a Rossby adjustment problem whose answer is standard. The final state is
 set by the potential vorticity, the retained fraction of the height anomaly goes
 roughly as `L^2 / (L^2 + Ld^2)`, and below the deformation radius the mass
 anomaly radiates away as gravity waves while the velocity field survives. On
-`gom_25km`, where `Ld` is about 45 km and localization is 1.5 Rossby radii, a
-written thickness increment retains about 10% of its amplitude after a day and
-its residual correlates with what was applied at **+0.04**. What survives is
-unrelated adjustment, not a damped copy.
+`gom_25km`, where `Ld` is about 45 km, `rossby mult: 1.5` puts the Gaspari-Cohn
+cutoff near 246 km, about 5.5 `Ld`: the multiple is not the cutoff in Rossby
+radii, and
+[`analysis.md`](analysis.md#the-horizontal-radius-which-is-not-the-multiple-it-reads-as)
+has the factor and the measurement behind it. That cutoff bounds the increment's
+scale rather than setting it, so what settles the question here is the
+measurement rather than the arithmetic: a written thickness increment retains
+about 10% of its amplitude after a day and its residual correlates with what was
+applied at **+0.04**. What survives is unrelated adjustment, not a damped copy.
 
 So writing `h` for an ensemble solver is not wrong, and it is not a fix either.
 It sends a third copy of information the analysis already sent twice, plus a
@@ -329,8 +334,10 @@ contention on a box that is also running an experiment.
 The controlling parameter is `L / Ld`, the increment's horizontal scale against
 the deformation radius, and it is not fixed across this project's domains.
 
-- On the regional GoM domains localization is 1.5 Rossby radii, so `L` tracks
-  `Ld` by construction and the ratio stays near one. Going from 25 km to 4 km
+- On the regional GoM domains the localization cutoff is a fixed multiple of the
+  local Rossby radius (about 5.5 of them at `rossby mult: 1.5`, not the 1.5 it
+  reads as), so `L` tracks `Ld` by construction and the ratio is set by that
+  multiple rather than by the resolution. Going from 25 km to 4 km
   resolves finer structure and pushes more of the increment below `Ld`, so more
   of the mass anomaly radiates and **the conclusion strengthens**. Sampling
   error argues the same way: twenty members against far more degrees of freedom
@@ -366,9 +373,12 @@ recording because they are departures from soca-science:
 - **`rossby mult: 1.5`**, up from 1.0, in both filter layers. At one Rossby
   radius on a domain that barely resolves one, each analysis point sees too few
   observations for a rank-limited update, and the trade against some spurious
-  long-range correlation is worth taking at these resolutions. The 500 km halo
-  still clears it by a wide margin in the Gulf and by much less near the equator,
-  so a global domain has to revisit the two together.
+  long-range correlation is worth taking at these resolutions. What the halo has
+  to clear is the cutoff the multiple produces, not the multiple: about 246 km in
+  the Gulf, so the 500 km halo clears it by a factor of two, and near the equator,
+  where the first baroclinic radius passes 200 km, the cutoff would exceed 1000 km
+  and the halo would not clear it at all. A global domain has to revisit the two
+  together.
 - **`ninner: 20`**, up from 10.
 
 Two more, from the same sweep, that bear on this run specifically:
