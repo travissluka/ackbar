@@ -57,6 +57,11 @@ OUT=$ACKBAR_STATIC_ROOT/ic/$DOMAIN/$SLUG/$STAMP
 [[ -e $OUT ]] && { echo "restamp-ic: $OUT already exists; remove it to rebuild" >&2; exit 1; }
 
 WAS=$(awk 'NR==3 {printf "%04d-%02d-%02dT%02d", $1, $2, $3, $4}' "$SOURCE/coupler.res")
+# The start time as well as the current one, because the rewrite below sets the
+# two equal and the README has to be able to say so. They differ whenever the
+# source is the output of a leg rather than an initial condition itself, which
+# is every promotion out of a run directory.
+WAS_START=$(awk 'NR==2 {printf "%04d-%02d-%02dT%02d", $1, $2, $3, $4}' "$SOURCE/coupler.res")
 
 mkdir -p "$(dirname "$OUT")"
 
@@ -96,9 +101,16 @@ mv "$OUT.partial" "$OUT"
 # second when it was the first tells the next reader an offset is deliberate
 # when there is no offset at all.
 if [[ $WAS == "$WHEN" ]]; then
-    CLOCK="whose own clock already read ${WHEN}:00:00Z, so nothing was restamped:
-tools/restamp-ic.sh made the copy and wrote this file. Every byte, coupler.res
-included, matches the source."
+    if [[ $WAS_START == "$WHEN" ]]; then
+        CLOCK="whose clock already read ${WHEN}:00:00Z in both lines, so this is a
+copy and nothing else: every byte, coupler.res included, matches the source."
+    else
+        CLOCK="whose current model time already read ${WHEN}:00:00Z, so the state
+was not moved in time, and whose fields are the source's exactly. One line of
+coupler.res still changed: the start time, ${WAS_START} in the source, is set
+equal to the current time, so that the next run reports an elapsed clock of zero
+rather than inheriting the length of the leg that produced this state."
+    fi
     MEANING="**There is no offset, and that is the point.** This is a handoff
 between stages: one run's final state, promoted out of the disposable run
 directory so that the next stage names a stable path rather than reaching inside
