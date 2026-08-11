@@ -1,0 +1,72 @@
+# Stage A2 of the Gulf of Mexico OSSE: a week of ERA5 before the nature run.
+#
+# See docs/osse.md.
+#
+# **This exists because stage A and stage B do not share an atmosphere.** The
+# spinup runs on the NCAR/CORE climatology; the nature run runs on ERA5, which
+# is what makes a skill number possible at all (see osse-truth.yaml). Handing
+# the spinup's last state straight to the nature run would start it out of
+# equilibrium with its own forcing, and the first days of truth would be the
+# surface adjusting to an atmosphere it had never seen rather than ocean worth
+# sampling observations from.
+#
+# The fix is a week, not a new spinup. The spinup's final state is rewound to
+# 06-25 by `tools/restamp-ic.sh`, this run integrates the seven days under real
+# ERA5, and it lands on 07-02, which is the date the nature run already starts
+# at and every window downstream is aligned to. Nothing downstream moves.
+#
+# **The rewind is the one fiction and it is a small one**: an ocean from 07-02
+# is called 06-25, so the state is a week off its true seasonal phase. Set
+# against a week of having felt the right weather that is a good trade, and it
+# buys the property that matters, which is that the state handed to stage B
+# carries no date offset at all. It is honestly valid when it says it is. That
+# is the opposite of what restamp-ic.sh usually builds, where the offset is the
+# initial error and is the whole point; the README beside the restamped state
+# spells out the difference.
+#
+# Not sampled and not scored. Nothing reads this run's output except stage B,
+# and only its final restart, so there are no `forecast.slots` here.
+inherit:
+  - domain/gom_12km
+  - model/mom6sis2
+  - da/none
+  - forcing/era5
+
+experiment:
+  name: osse-settle
+  description: OSSE stage A2, a week of ERA5 settling ahead of the nature run
+
+vars:
+  # The truth archive, the same one stage B reads. These seven days are the
+  # front of the nature run's forcing in everything but name, and drawing them
+  # from the experiment archive would settle the state against a GEFS forecast
+  # of the weather rather than the weather.
+  forcing_purpose: gom_truth
+
+ensemble:
+  # Not an ensemble: one run, `mem000`. The block is here because a forcing
+  # source stages its file through `ensemble.inputs`, which is the same
+  # mechanism every member of a real ensemble uses, and a single run is the
+  # control alone.
+  size: 0
+
+cycle:
+  # 06-25 to 07-02. The start is the restamped state's clock and the end is
+  # `osse-truth`'s `cycle.start`, so the length of this run is not a tuning
+  # knob: it is the distance the state was rewound.
+  start: '2015-06-25T00:00:00Z'
+  length: PT24H
+  count: 7
+
+cleanup:
+  # Seven cycles of a run whose only product is its last state. Kept whole
+  # anyway, because it is small at this length and because "did the surface
+  # actually settle" is a question about a plot of this run.
+  keep_cycles: 7
+  keep_every: P1D
+
+model:
+  # The spinup's final state, rewound a week. Built by
+  #   tools/restamp-ic.sh <spinup rst> gom_12km spinup-settle 2015-06-25T00
+  # and the README beside it records what it is a copy of.
+  initial_condition: $(static_root)/ic/gom_12km/spinup-settle/20150625T00
