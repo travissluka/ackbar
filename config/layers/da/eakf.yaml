@@ -92,13 +92,16 @@ solver:
   # `lengthscale` is a hard cutoff, not an e-folding scale: `ObsHorLocGC99.h`
   # computes `gc99(distance / lengthscale)` and returns zero for
   # `distance >= lengthscale`, so it is also the search radius. 100 km, against
-  # the roughly 67 km the Rossby method lands on in the deep Gulf, where the first
-  # baroclinic radius is about 45 km and `rossby mult` is 1.5. One fixed number
-  # has to serve the whole domain, so it is wider than Rossby over the shelf,
-  # where the radius collapses, and comparable in the basin. It is the one value
-  # in this file that is a choice rather than a transcription, and it is not
-  # calibrated: what would calibrate it is a spread-skill comparison against the
-  # LETKF on the same cycles, which is an experiment and not a default.
+  # the roughly 246 km the Rossby method lands on in the deep Gulf: the first
+  # baroclinic radius is about 45 km, `rossby mult` is 1.5, and
+  # `soca::ObsLocRossby` multiplies that by a further 2/sqrt(0.3) = 3.65 before
+  # tapering, so the two methods are not on the same scale and this one is much
+  # the tighter of them in the basin. One fixed number has to serve the whole
+  # domain, so it is wider than Rossby over the shelf, where the radius
+  # collapses. It is the one value in this file that is a choice rather than a
+  # transcription, and it is not calibrated: what would calibrate it is a
+  # spread-skill comparison against the LETKF on the same cycles, which is an
+  # experiment and not a default.
   ensemble localization:
   - localization method: Horizontal Gaspari-Cohn
     lengthscale: 100000

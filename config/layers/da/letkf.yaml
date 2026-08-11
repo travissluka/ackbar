@@ -168,18 +168,22 @@ solver:
   # Localization is added per observer. Each element names only the observer it
   # addresses; nothing else about the observer is restated.
   #
-  # `rossby mult` is the localization radius as a multiple of the first
-  # baroclinic Rossby radius, and it decides how far an observation is allowed to
-  # reach. At 1.0, on a domain that barely resolves one radius, the filter sees so
-  # few observations per analysis point that the update is rank starved before the
-  # ensemble size is even reached. 1.5 trades some spurious long-range correlation
-  # for a better conditioned local problem, which is the right side of that trade
-  # at these resolutions.
+  # `rossby mult` scales the first baroclinic Rossby radius, and it decides how
+  # far an observation is allowed to reach. At 1.0, on a domain that barely
+  # resolves one radius, the filter sees so few observations per analysis point
+  # that the update is rank starved before the ensemble size is even reached.
+  # 1.5 trades some spurious long-range correlation for a better conditioned
+  # local problem, which is the right side of that trade at these resolutions.
+  #
+  # **It is not the cutoff in Rossby radii.** `soca::ObsLocRossby` multiplies
+  # `mult * rossby_radius` by 2/sqrt(0.3) = 3.65 before Gaspari-Cohn, so the
+  # hard cutoff is 5.5 radii at this setting: about 246 km in the Gulf, where
+  # the radius is 45 km, not 67 km. `docs/analysis.md` has the measurement.
   #
   # It interacts with the halo above: `halo size` has to exceed the largest
   # localization radius anywhere on the domain or the filter solves with
-  # observations it cannot see. 500 km against 1.5 x 45 km leaves an enormous
-  # margin in the Gulf and much less of one near the equator, where the first
-  # baroclinic radius grows past 200 km. A global domain needs the halo revisited
-  # alongside this number.
+  # observations it cannot see. 500 km against 246 km leaves a factor of two in
+  # the Gulf and nothing at all near the equator, where the first baroclinic
+  # radius grows past 200 km and the cutoff would exceed 1000 km. A global
+  # domain needs the halo revisited alongside this number.
 

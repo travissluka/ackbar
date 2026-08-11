@@ -296,6 +296,29 @@ SOCA's own `test/testinput/letkf3d.yml` draws the same line between its surface
 temperature observer and its ADT observer, and it is the CI-verified schema for
 this bundle.
 
+### The horizontal radius, which is not the multiple it reads as
+
+`rossby mult` is not the localization radius in Rossby radii, and the two knobs
+in the same `$localization` list are not on the same scale.
+`soca::ObsLocRossby::computeLocalization` forms `base + mult * rossby_radius`,
+floors it by `min grid mult` cells, and then multiplies the result by
+`2/sqrt(0.3)` = 3.65 before handing it to Gaspari-Cohn as the hard cutoff
+(`ObsLocRossby.cc:57`, the "convert from gaussian to gaspari-cohn width" line).
+So `rossby mult: 1.5` where the first baroclinic Rossby radius is 36 km cuts off
+at about 198 km, five and a half Rossby radii, not at 54 km.
+
+That is a measurement as well as an arithmetic claim. A single observation
+placed in the deep central Gulf (see below) reaches to 209 km and is zero beyond
+183 km; the two numbers differ because the cutoff is recomputed at each analysis
+point from *that* point's Rossby radius rather than from the observation's, so
+the edge moves with the field.
+
+**The vertical entry carries no such factor.** `ufo::ObsVertLocalization` passes
+`vertical lengthscale` to `oops::gc99` unscaled, so there the cutoff is the
+lengthscale itself, in levels. A block that sets `rossby mult: 1.5` and
+`vertical lengthscale: 10` is asking for 3.65 times the horizontal scale it
+names and exactly the vertical one.
+
 ### The length scale, which is the least settled number here
 
 `vertical lengthscale` is in levels, and the Gulf grid is `FNC1:2,5500,4,0.01` at
@@ -304,15 +327,25 @@ ruler and the number has to be read against the grid it counts.
 
 | Level | 5 | 10 | 15 | 20 | 25 | 30 | 40 | 50 |
 |---|---|---|---|---|---|---|---|---|
-| Depth (m) | 10 | 21 | 41 | 91 | 210 | 465 | 1827 | 7643 |
+| Bottom (m) | 10 | 21 | 41 | 91 | 210 | 465 | 1827 | 7643 |
+| Centre (m) | 9 | 20 | 39 | 84 | 194 | 433 | 1721 | - |
+
+Levels are localized by their centres, which is why both rows are here: a
+lengthscale of 10 measures from level 1 to level 11, and what it reaches is
+level 11's centre, not level 10's bottom. The two differ by about 10% in the
+top hundred metres and the second row is the one to quote. Level 50's centre is
+blank because no column in this domain is 7643 m deep, so the deepest levels
+are squeezed onto the sea floor wherever they are wet.
 
 The surface families use **10**. Gaspari-Cohn on that distance is a taper to a
-hard cutoff at the scale rather than an e-folding scale, so a surface observation
-reaches roughly 21 m, at about half weight by 10 m, and reaches nothing below.
-The bundle's own test uses 5 on a 25 level grid, which on this one would confine
-a surface observation to the top 10 m.
+hard cutoff at the scale rather than an e-folding scale, so a surface
+observation reaches to 23 m, at about half weight by 10 m, and reaches nothing
+below: the increment is bitwise zero from level 11 down, which is the first
+level a distance of 10 puts at zero weight, and 23 m is where that level's
+centre sits. The bundle's own test uses 5 on a 25 level grid, which on this one
+would confine a surface observation to the top 10 m.
 
-**The direction to sweep is up, not down.** Ten levels is 21 m, and the Gulf
+**The direction to sweep is up, not down.** Ten levels is 23 m, and the Gulf
 mixed layer is deeper than that for most of the year: the water an SST
 measurement is genuinely representative of extends to the mixed layer base, which
 is levels 15 to 20 here, or 40 to 90 m. Localizing tighter than the true
@@ -356,6 +389,42 @@ sample covariance, which is the same class of spurious correlation the surface
 entries were added to remove, running the other way. That is the first thing to
 check if a near surface field stays worse than the free run while the subsurface
 improves.
+
+The size of that risk has been measured at one point rather than argued. A
+single 400 m Argo temperature observation in the deep central Gulf moves the
+surface level of its own column by 0.024 K while it moves the thermocline by
+2.11 K, so 1% of the response leaks to the surface. That is the cost of leaving
+the profiles unlocalized, on one column at one depth, and it is small enough
+that it does not by itself reopen the decision.
+
+### Testing the localization with one observation
+
+`tools/single-ob.py` is what those numbers come from. It runs
+`ackbar.soca.letkf_config` over an experiment's own layer stack with an
+observation set of exactly one row, so the operator it tests is the operator the
+experiments run rather than a second description of it, and the increment it
+writes shows the reach in metres and kilometres that the config states in levels
+and Rossby multiples. The tool's header carries how to invoke it.
+
+What it shows on `gom_25km`, at 25.12 N 90.00 W in 3506 m of water: SST tapers
+over ten levels and is bitwise zero from level 11 down; ADT and Argo, which
+carry no vertical entry, update the whole 3506 m column and both peak at level
+25, which is 194 m and is the ensemble's own thermocline response rather than
+anything the localization did.
+
+**A genuinely single ADT observation assimilates nothing, and looks like a
+localization result.** `ufo::ObsADT` subtracts the mean of `H(x) - obs` over the
+whole observation space before forming a departure, which is the same domain
+mean removal that makes an altimeter blind to a basin-wide sea level offset (see
+`docs/osse.md`). With one row in the space, that mean *is* the departure, so the
+departure is identically zero and the increment is exactly zero everywhere. The
+run reports healthy throughout, and the flat increment reads as "no vertical
+localization response" when it means "nothing was assimilated". The way around
+it is to give the altimeter company: `tools/single-ob.py` adds 99 filler rows
+whose own departure is zero, all of them beyond the horizontal cutoff, so the
+local solve at the column under test still sees exactly one observation while
+the operator has a population to take a mean over. Anyone testing altimetry one
+observation at a time will meet this first.
 
 ## The covariance, and where an ensemble comes into it
 
