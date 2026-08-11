@@ -1277,6 +1277,28 @@ def test_a_filter_reads_the_same_observers_through_a_halo(ens):
     assert space["distribution"] == {"name": "Halo", "halo size": 500000}
 
 
+def test_a_filter_cycle_with_no_observers_is_not_an_analysis(ens, paths, capsys):
+    """The same archive gap the variational solver refuses, on the filter side.
+
+    It has to be refused here rather than left to the application. The document
+    a filter builds carries a halo, and a halo is a decomposition of the
+    observations across ranks: with no observers there is nothing to decompose,
+    and every rank waits on a local solve with an empty halo. The variational
+    path is protected by its own early return and this one is the same
+    statement, so the two are asserted the same way.
+
+    `ensemble_departures` never runs in this case either, which is why the
+    merged departures are empty rather than absent: `run._ensemble_analysis`
+    skips the observer half when there is nothing to observe.
+    """
+    assert soca.letkf(ens, {}, paths, 1, "da",
+                      backgrounds=paths.cycle_out("rst", 0),
+                      observers=[], members=(1, 2, 3), departures={},
+                      target=lambda member: paths.member_out("ana", 1, member)) == []
+    assert "no observers" in capsys.readouterr().out
+    assert not paths.scratch(1, "da").exists()
+
+
 def test_hofx_takes_the_serial_distribution_too(config):
     document = soca.hofx_config(config, 1, [observer()], background=Path("/rst/0"))
     space = document["observations"]["observers"][0]["obs space"]
