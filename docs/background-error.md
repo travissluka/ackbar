@@ -167,9 +167,13 @@ together, across both layers that read a calibration. The horizontal is
 explicit, which is saber's default and is stated in neither place. The
 localization's vertical block is `strategy: duplicated`, which reads no file and
 configures no operator: the same horizontal localization applies at every level
-and nothing localizes in the vertical. That is the bundle example's arrangement
-and the honest starting point, since vertical localization for an ensemble
-covariance is a different quantity again, computed by `soca_sqrtvertloc.x`.
+and nothing localizes in the vertical. That is deliberate rather than
+unfinished: a model space localization acts on the increment as a whole and
+cannot be varied per observer, so a vertical part would also stop ADT projecting
+down the column, which is the one thing it should do. Vertical localization for
+an ensemble covariance is a different quantity again, computed by
+`soca_sqrtvertloc.x`. The argument and what the absence costs are under
+"Checking the other two covariances" below.
 
 The **filepath** is the other. saber's `filepath` is a stem: the file it opens
 is the stem plus `.nc`. `ackbar validate` knows this, which is why a calibrated
@@ -274,9 +278,38 @@ correlation is calibrated against the mixed layer, so the same dirac is down to
 part at all (`vertical: strategy: duplicated` in `da/hybrid.yaml`, which is a
 localization of one at every separation in the vertical), so the ensemble
 component is at 0.66 of its peak at 371 m and still 0.09 at 1028 m: whatever
-vertical structure the members have, an observation sees all of it. That is the
-honest starting point recorded in the layer, and it is the first thing to
-measure if a hybrid analysis turns out to be moving the deep ocean.
+vertical structure the members have, an observation sees all of it.
+
+The decision is that a model space localization **cannot be given per
+observation**. It is applied to the increment, once, after the whole cost
+function has been minimized, so every observation in the window is localized by
+the same operator and there is no place to say that one platform gets a taper
+and another does not. Turning on a vertical part would therefore taper ADT along
+with everything else, and ADT is a depth integrated quantity whose increment
+should reach the full column. So the absence follows from wanting the altimeter
+to project deeply, not from a calibration nobody has run.
+
+The ensemble filter is not in the same position, and the contrast is the point,
+because a reader who knows one solver will assume the other. A LETKF localizes in
+*observation* space, one `obs localizations` list per observer, so it can give
+ADT no vertical entry at all while giving SST a taper ten levels wide, and
+`config/layers/obs/common/{sst,sss,drifter}.yaml` do exactly that. The two
+solvers differ in what is expressible, not only in what is configured, so "the
+LETKF localizes surface platforms vertically and the EnVar does not" is a
+property of the mechanisms rather than an inconsistency to be reconciled.
+
+The second reason is the ensemble size, and it applies to both solvers.
+Vertical localization is normally turned off in an ensemble filter and an EnVar
+alike once the ensemble is large enough, 40 members or more, because localization
+exists to suppress sampling noise and more members leave less of it to suppress.
+This ensemble is 20. So the LETKF's surface entries are a compensation for a
+small sample rather than a permanent feature of the configuration, and the axis
+opposite tuning their length scale is growing the ensemble. `docs/analysis.md`
+carries that where the scale is chosen.
+
+None of which changes what to do when the numbers above look wrong: they are the
+first thing to measure if a hybrid analysis turns out to be moving the deep
+ocean.
 
 **Velocity is in the EnVar's and the hybrid's analysis variables and not in the pure
 variational one's**, which is `da/hybrid` restating both variable lists. The ensemble carries a

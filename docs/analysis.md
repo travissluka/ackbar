@@ -237,6 +237,14 @@ entries that do reach it are each observer's `$localization`, rendered to UFO's
 `obs localizations` by `soca._observers`. `docs/background-error.md` covers the
 model-space half.
 
+The consequence that matters here is that only the observation-space half can be
+told which observation it is for. A model-space localization is applied to the
+increment as a whole, so it is one operator for every platform in the window;
+this half is a list per observer. That is why the table below can give ADT and
+SST different vertical treatment while the EnVar and the hybrid give every
+observation the same, and it is why the EnVar's absent vertical localization is a
+decision rather than a gap. `docs/background-error.md` makes that argument.
+
 Three things about the observation-space half are silent when they are wrong,
 and all three are load-bearing.
 
@@ -315,6 +323,15 @@ way because the failure it replaces was an increment at one ensemble standard
 deviation from 1 m to 3400 m. Each family carries the value as a var
 (`sst_vertical_localization_levels` and its two siblings), so a sweep is three
 one-line overrides in an experiment and needs no block restated.
+
+**The other axis is the ensemble size, and it is the one that ends the tuning.**
+Vertical localization exists to suppress sampling noise, so it is normally turned
+off altogether once the ensemble is large enough, 40 members or more, in an
+ensemble filter and in an EnVar alike. This ensemble is 20, and these entries
+exist for that reason rather than because a surface observation should never
+reach below the mixed layer. Sweeping the scale is worth doing at 20 members;
+carrying whichever value wins into a larger ensemble is not, because the right
+answer there may be no entry at all.
 
 ### Why the profiles are not localized in the vertical
 

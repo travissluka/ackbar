@@ -128,10 +128,13 @@ solver:
     #
     # There is no vertical block. `strategy: duplicated` says the same
     # horizontal localization applies at every level and nothing localizes in
-    # the vertical, which is the bundle example's arrangement and is the honest
-    # starting point: vertical localization for an ensemble covariance is a
-    # different quantity again, computed by `soca_sqrtvertloc.x`, and adding it
-    # untested would be a second unmeasured knob under the first.
+    # the vertical. That is a decision, not an unfinished calibration: a model
+    # space localization applies to the increment as a whole and cannot be
+    # varied per observer, so a vertical part here would also stop ADT
+    # projecting down the column, which a depth integrated observation should
+    # do. The LETKF localizes in observation space and so can draw that line
+    # per platform, which is why its surface observers do carry one.
+    # `docs/background-error.md` has the argument and what the absence costs.
     #
     # Each group's `variables:` is absent on purpose and filled in by
     # `ackbar/soca.py`: it is the analysis variables, which are stated once.
