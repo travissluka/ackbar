@@ -401,8 +401,18 @@ other way, and that direction is silent: the venv's editable install names the s
 checkout's `src/` by absolute path and no worktree has a venv of its own, so `ackbar` run
 from a worktree imports the shared checkout's code and defaults to the shared checkout's
 `config/layers/`. A worktree's own edits to either do not apply to a run launched from it,
-and nothing warns. `--layers` can be pointed at the branch's copy, but a code change has no
-such escape: verify one by merging it, not by running from the branch.
+and nothing warns: plain `pytest` from a branch imports `main`'s code, so a green suite there
+says something about `main` and nothing about the change. `PYTHONPATH` is searched ahead of
+the `.pth`, so prepending the worktree's `src` fixes both at once, the code and the layers
+default that is derived from wherever the package was imported from:
+
+```bash
+PYTHONPATH=$PWD/src:$PYTHONPATH .venv/bin/python -m pytest
+```
+
+The trailing `:$PYTHONPATH` is load-bearing. `.venv` carries no system site packages and the
+spack stack supplies pygments, numpy and yaml through an inherited `PYTHONPATH`, so a bare
+assignment clobbers them and the suite fails to collect rather than failing to pass.
 
 ### Which kind of agent gets which work
 
