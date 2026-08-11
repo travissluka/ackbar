@@ -128,6 +128,31 @@ increment plus the model and observation bias corrections, and it hands each of
 the three its own subsection. Without the nesting the writer reports a missing
 `datadir`.
 
+## `ninner` and the gradient norm reduction target
+
+`da/variational` sets `gradient norm reduction: 1.0e-3` and `ninner: 100`: the
+target is what should stop the minimization, and the count is a backstop it
+rarely reaches. It used to be the other way round, `1.0e-10` and `ninner: 20`,
+which is unreachable in twenty iterations on this problem, so every cycle
+stopped on the count rather than the target, silently and with no message
+distinguishing the two.
+
+Measured by re-solving one 3DVar cycle (gom_25km, 2015-07-31) at nine iteration
+counts up to 200: at 20 iterations the increment differs from the 200-iteration
+solution by 38% rms in temperature, 55% in salinity, 43% in sea level, and the
+error is not just amplitude, it has a direction, the salinity increment carries
+only 67% of the amplitude it should and sea level 76%. Amplitude bias clears by
+iteration 41, pattern bias by 78. A gradient target of `1.0e-2` lands at
+iteration 41 on this cycle, `1.0e-3` at 78; `100` leaves headroom above that
+with iterations that, on this sweep, cost close to nothing (nine solves in 31
+seconds).
+
+`tools/local/var-convergence.py` reads the per-cycle solver logs and reports,
+per cycle, whether the minimization stopped on the target or on `ninner`; the
+latter is the failure mode this measurement exists to catch, and a cycle that
+still shows it after this change is worth looking at rather than assuming
+converged.
+
 ## The document `soca_letkf.x` reads
 
 **`soca_letkf.x` is the second half of `da`, not the whole of it.** The ensemble

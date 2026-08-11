@@ -246,17 +246,18 @@ solver:
           nlayers: 2
 
   variational:
-    # The iteration count and the reduction target are the two knobs to turn
-    # first if the minimization is either not converging or spending wall clock
-    # after it has. As set, every solve stops on the count; see `ninner` below.
+    # The reduction target is what should stop the minimization; `ninner` is a
+    # backstop it rarely reaches. See `docs/analysis.md` for the measurement
+    # behind these two numbers, and `tools/local/var-convergence.py` for
+    # checking which one a given cycle actually stopped on.
     minimizer:
       algorithm: RPCG
     iterations:
     - ninner: $(ninner)
-      # Written with the dot and the signed exponent, not `1e-10`: PyYAML reads
+      # Written with the dot and the signed exponent, not `1e-3`: PyYAML reads
       # YAML 1.1 and would hand eckit the string. See ackbar.config.lint, which
       # rejects the other spelling.
-      gradient norm reduction: 1.0e-10
+      gradient norm reduction: 1.0e-3
 
 vars:
   # `diffusion_levels` is the domain's, declared in the domain layer, because it
@@ -265,13 +266,7 @@ vars:
   # Inner iterations per outer loop. One outer loop, which is what `3d` means
   # here; FGAT and 4D add loops rather than iterations.
   #
-  # 20, and every solve stops here rather than on the reduction target above:
-  # 1.0e-10 is far below what RPCG reaches in any affordable number of
-  # iterations on this problem, so the target is a guard against running forever
-  # and the count is what actually terminates. That means the analysis is a
-  # truncated minimization, which is a real and ordinary choice and not a
-  # failure, but it also means this number is the cost knob and the convergence
-  # knob at once. Raise it and watch the cost function trace before reading
-  # anything into a comparison between two experiments that used different
-  # values of it.
-  ninner: 20
+  # A backstop against a solve that never reaches the reduction target above,
+  # not the number expected to bind. `docs/analysis.md` has the measurement
+  # behind the value.
+  ninner: 100
