@@ -264,6 +264,7 @@ def build_graph(config):
     _check_stochastic(config)
     _check_member_inputs(config)
     _check_hours(config)
+    _check_throttle(config)
     _check_window(config)
     _check_four_d_covariance(config)
     _check_ensemble_window(config)
@@ -474,6 +475,34 @@ def _check_hours(config):
                 f"directories to the hour, so a sub-hourly duration has no "
                 f"spelling and two of them would land in one directory."
             )
+
+
+def _check_throttle(config):
+    """Refuse a throttle the graph does not build.
+
+    `cycle.throttle` reaches the schema, the graph model, validate's queue
+    projection and the rendered summary, and nothing anywhere builds an edge for
+    it: the only cycle edges are n -> n+1, which is a throttle of 1 whatever the
+    config says. So an experiment asking for 3 got 1, and the number it asked
+    for was printed back at it by `ackbar graph` as though it had been honoured.
+
+    Refused rather than implemented, because K = 1 is a decision and not an
+    omission (see "The cycle throttle" in docs/design.md): K > 1 multiplies the
+    interaction surface with healing and cleanup, enlarges a blast radius that
+    `forecast(n) -> da(n+1)` already makes large, and buys little, since the
+    overlap that matters comes from leaves having no successors and happens at
+    any K. The key stays in the schema so that raising it is a one line change
+    when a measured queue wait argues for it, and this is what says it has not
+    happened yet.
+    """
+    throttle = config["cycle"].get("throttle", 1)
+    if throttle != 1:
+        raise GraphError(
+            f"cycle.throttle is {throttle}, and only 1 is implemented: the "
+            f"graph builds n -> n+1 cycle edges and nothing else, so a larger "
+            f"value would be silently ignored rather than honoured. See "
+            f"'The cycle throttle' in docs/design.md."
+        )
 
 
 def _check_window(config):

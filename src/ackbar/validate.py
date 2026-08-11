@@ -839,6 +839,10 @@ def _limit_step(graph, site):
         (sum(node.jobs for node in graph.cycle_nodes(c)) for c in graph.cycles),
         default=0,
     )
+    # `graph.throttle` is 1 and `graph.build` refuses anything else, so this
+    # multiplication is reachable only at 1. Kept rather than folded away
+    # because raising the throttle should be one edit and not an archaeology
+    # exercise; see "The cycle throttle" in docs/design.md.
     in_flight = per_cycle * graph.throttle
 
     limit = _as_int(site.get("max_submit_jobs"))

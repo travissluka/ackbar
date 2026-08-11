@@ -123,6 +123,11 @@ properties:
       start: { type: string, format: date-time }
       length: { type: string, pattern: '^P' }
       count: { type: integer, minimum: 1 }
+      # Only 1 is implemented, and `graph.build` refuses anything else rather
+      # than ignoring it. Left as an integer rather than pinned to a constant
+      # here so that the refusal can explain itself; a schema can say the value
+      # is wrong but not that the feature is a deliberate omission. See "The
+      # cycle throttle" in docs/design.md.
       throttle: { type: integer, minimum: 1 }
 
   # What survives the cycling. Two rules, and they answer different questions.

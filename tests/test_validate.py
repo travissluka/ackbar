@@ -707,12 +707,24 @@ class TestStep5QueueLimits:
         assert len(found) == 1
         assert "max_submit_jobs" in found[0].message
 
-    def test_the_throttle_multiplies_the_projection(self, keys, schema):
+    def test_the_projection_is_one_cycle_because_that_is_the_throttle(
+            self, keys, schema):
+        """This used to raise the throttle to 4 and watch the projection grow.
+
+        It cannot any more: `graph.build` refuses a throttle it does not build
+        edges for, so the multiplication in the projection is reachable only at
+        1. It is kept rather than folded away so that raising the throttle stays
+        a single edit, and `test_a_throttle_the_graph_does_not_build_is_refused`
+        in test_graph.py is what holds the refusal.
+        """
         config = load("letkf_om1deg", keys)
         site = {**SITE, "max_submit_jobs": "100"}
         assert [f for f in full(config, schema, site) if f.step == 5] == []
-        config["cycle"]["throttle"] = 4
-        assert [f for f in full(config, schema, site) if f.step == 5] != []
+        # One cycle's worth is the whole projection, so a limit just under the
+        # per-cycle count is what it takes to trip it.
+        tight = {**SITE, "max_submit_jobs": "40"}
+        found = [f for f in full(config, schema, tight) if f.step == 5]
+        assert len(found) == 1 and "times a throttle of 1" in found[0].message
 
     def test_an_array_over_the_sites_max_array_size_is_refused(self, keys, schema):
         site = {**SITE, "max_array_size": "10"}

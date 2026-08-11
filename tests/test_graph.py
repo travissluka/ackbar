@@ -245,6 +245,25 @@ class TestConfigurationDrivesTheTaskSet:
         assert exe("hybrid_om1deg", "da.ens").endswith("soca_letkf.x")
         assert exe("hybrid_om1deg", "recenter").endswith("soca_ensrecenter.x")
 
+    def test_a_throttle_the_graph_does_not_build_is_refused(self, keys):
+        """The key reached four places and no edge builder.
+
+        `ackbar graph` printed the number back as "throttle 3" while the graph
+        held n -> n+1 edges and nothing else, so the experiment ran at 1 and
+        said 3 everywhere anyone would look.
+        """
+        config = load("var_om1deg", keys)
+        config["cycle"]["throttle"] = 3
+        with pytest.raises(GraphError, match="only 1 is implemented"):
+            build_graph(config)
+
+    def test_a_throttle_of_one_is_still_fine_stated_or_not(self, keys):
+        config = load("var_om1deg", keys)
+        config["cycle"]["throttle"] = 1
+        assert build_graph(config).throttle == 1
+        del config["cycle"]["throttle"]
+        assert build_graph(config).throttle == 1
+
     def test_a_covariance_drawn_from_an_unmaintained_ensemble_is_refused(self, keys):
         config = load("hybrid_om1deg", keys)
         config["ensemble"]["source"] = "eda"
