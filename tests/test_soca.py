@@ -895,6 +895,114 @@ def space_localizations(document):
     return document["observations"]["observers"][0]["obs localizations"]
 
 
+# --- observation-space localization, the whole way to the document ------------
+
+def shipped_letkf_document(name="tier3_letkf.yaml"):
+    """One shipped experiment's filter document, over its own observers.
+
+    `observations.observers` is what a job calls, so the bodies here are the
+    ones an application would read rather than the fixture's stub: the archive
+    it looks in does not exist, which makes every observer absent and changes
+    nothing about the body itself.
+    """
+    from ackbar import observations
+
+    _, merged = shipped(name)
+    records = observations.observers(merged, 1)
+    departures = {record["name"]: Path(f"/scratch/1/da/departures/{record['name']}.nc4")
+                  for record in records}
+    return yaml.safe_load(yaml.safe_dump(soca.letkf_config(
+        merged, 1, records, backgrounds=Path("/out/e/rst/0"),
+        members=(1, 2, 3), departures=departures)))
+
+
+def localizations(document, name):
+    for body in document["observations"]["observers"]:
+        if body["obs space"]["name"] == name:
+            return body.get("obs localizations") or []
+    raise AssertionError(f"no observer {name!r}")
+
+
+def test_a_vertical_localization_makes_the_geometry_iterate_in_three_dimensions():
+    """The half of the pair that fails silently, and did.
+
+    `soca::Geometry` defaults `iterator dimension` to 2, and with 2
+    `soca::GeometryIterator` never advances its level index: one weight matrix
+    is solved per column from every observation inside the horizontal radius at
+    any depth, and applied to all fifty levels. A vertical entry in the document
+    is then evaluated at level one for the whole column and localizes nothing.
+    Both halves come from one derivation here so they cannot disagree.
+    """
+    document = shipped_letkf_document()
+    assert document["geometry"]["iterator dimension"] == 3
+    assert any(entry["localization method"] == soca.VERTICAL_LOCALIZATION
+               for entry in localizations(document, "sst_noaa19"))
+
+
+def test_rossby_comes_first_in_every_observer_that_has_more_than_one():
+    """Ordering is the whole correctness of the list.
+
+    `soca::ObsLocRossby::computeLocalization` caches per horizontal point and on
+    a cache hit *assigns* the cached vector into the localization vector rather
+    than multiplying into it. `oops::ObsLocalizations` walks the entries in
+    order into a vector that starts as ones, so that assignment is harmless
+    only while Rossby is the first entry. Second, it would erase the vertical
+    taper at every level of a column but the first.
+    """
+    document = shipped_letkf_document()
+    for body in document["observations"]["observers"]:
+        methods = [entry["localization method"]
+                   for entry in body.get("obs localizations") or []]
+        assert methods[:1] == ["Rossby"], body["obs space"]["name"]
+
+
+def test_a_surface_platform_localizes_on_a_level_index_and_the_altimeter_not_at_all():
+    """The two traps in the entry itself, on the document UFO reads.
+
+    `soca_geom_mod` fills the geometry's vertical coordinate with the level
+    *index*, so the lengthscale counts levels and a surface platform says which
+    level it measured with a constant coordinate of 1. Naming a depth field in
+    the ioda file instead would compare metres against level indices. And an
+    altimeter gets no vertical entry at all, because dynamic topography is
+    depth integrated and there is no level to centre a taper on.
+
+    Which platform families carry the entry is `test_experiments.py`'s, over the
+    committed arms, where the whole observing system is.
+    """
+    document = shipped_letkf_document()
+    assert localizations(document, "adt_3a") == \
+        [entry for entry in localizations(document, "adt_3a")
+         if entry["localization method"] == "Rossby"]
+
+    vertical = [entry for entry in localizations(document, "sst_noaa19")
+                if entry["localization method"] == soca.VERTICAL_LOCALIZATION]
+    assert len(vertical) == 1
+    entry, = vertical
+    assert entry["assign constant vertical coordinate to obs"] is True
+    assert entry["constant vertical coordinate value"] == 1
+    assert "ioda vertical coordinate" not in entry
+    # Levels, and this domain has fifty of them. The bound is what catches the
+    # number being reinterpreted as a depth in metres.
+    assert 1 < entry["vertical lengthscale"] <= 25
+    assert entry["localization function"] == "Gaspari Cohn"
+
+
+def test_a_filter_with_no_vertical_localization_keeps_the_cheap_iterator():
+    """`da/eakf`, and the reason the dimension is derived rather than stated.
+
+    A sequential filter overrides every observer with one horizontal
+    Gaspari-Cohn, so nothing in its document distinguishes one level from
+    another. Iterating in three dimensions there would solve the identical local
+    problem once per level and multiply the solve count by the level count for
+    an answer that cannot change.
+    """
+    document = shipped_letkf_document("tier3_eakf.yaml")
+    assert document["geometry"]["iterator dimension"] == 2
+    assert not any(entry["localization method"] == soca.VERTICAL_LOCALIZATION
+                   for body in document["observations"]["observers"]
+                   for entry in body.get("obs localizations") or [])
+
+
 def test_the_two_ensemble_solvers_differ_only_where_they_have_to():
     """The pair is what makes them comparable, so the diff is asserted.
 

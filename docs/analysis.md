@@ -224,6 +224,110 @@ last member's state in it. The type ACKBAR asks for and the type it names the
 committed file with are therefore different: once the file is in that member's
 own directory the index is redundant.
 
+## Localizing an ensemble filter, which happens in observation space
+
+**The two localizations in this workflow are different mechanisms and neither
+implies the other.** A variational solve with an ensemble covariance localizes in
+*model* space, by a Schur product with a SABER diffusion block; that block lives
+in `config/layers/da/hybrid.yaml` and reaches `soca_var.x`. An ensemble filter
+localizes in *observation* space, by tapering each observation's weight in the
+local solve at each analysis point, and it never sees a SABER block at all:
+`grep saber` over a generated `letkf.yaml` returns nothing, by construction. The
+entries that do reach it are each observer's `$localization`, rendered to UFO's
+`obs localizations` by `soca._observers`. `docs/background-error.md` covers the
+model-space half.
+
+Three things about the observation-space half are silent when they are wrong,
+and all three are load-bearing.
+
+**The geometry has to iterate in three dimensions.** `soca::Geometry` reads
+`iterator dimension` and defaults it to 2. With 2, `soca::GeometryIterator` never
+advances its level index and `soca::Increment` packs the entire column into one
+local state vector, so a single weight matrix is solved per column from every
+observation inside the horizontal radius *at any depth* and applied identically
+to all fifty levels. Vertical localization in that mode is not merely absent, it
+is unrepresentable: a vertical entry would be evaluated at level one for the
+whole column. ACKBAR does not state the dimension in a layer. It derives it, in
+`soca._iterator_dimension`, from whether any observer in that document carries a
+vertical entry, so the two halves cannot disagree. The derivation also runs the
+other way, and that direction is about cost rather than correctness: three
+dimensional iteration multiplies the number of local solves by the level count
+and buys nothing when every observer is localized horizontally only, which is
+`da/eakf`.
+
+**`Rossby` must be the first entry in an observer's list.**
+`soca::ObsLocRossby::computeLocalization` caches its result per horizontal point,
+and on a cache hit it *assigns* the cached vector into the localization vector
+rather than multiplying into it. `oops::ObsLocalizations::computeLocalization`
+walks the entries in order into one vector that starts as ones, so the assignment
+is harmless only while Rossby is the entry that sees the ones. Put a vertical
+entry first and Rossby overwrites it at every level of a column but the first,
+which is forty-nine levels in fifty, and the result is exactly the unlocalized
+column the entry was added to prevent.
+
+**The vertical coordinate is a model level index, not a depth in metres.**
+`soca_geom_mod` fills the geometry's `vert_coord` with `real(jz)`, so the
+iterator's third coordinate at level k is k and a `vertical lengthscale` counts
+levels. A surface platform therefore says which level it measured with
+`assign constant vertical coordinate to obs: true` and
+`constant vertical coordinate value: 1`. Pointing at a depth field instead
+(`ioda vertical coordinate: depth`) would compare metres against level indices,
+so a 175 m observation would sit 175 levels from every level of the column,
+localize to zero everywhere, and be assimilated by nothing, while the run
+reported healthy.
+
+Which family gets what:
+
+| Family | Vertical entry | Why |
+|---|---|---|
+| `sst_*`, `sss_*`, `drifter_*` | constant coordinate 1 | one level measured, and it is the top one |
+| `adt_*` | none | depth integrated, so there is no level to centre a taper on |
+| `argo_*`, `glider_*` | none, for now | depths are metres; see below |
+
+SOCA's own `test/testinput/letkf3d.yml` draws the same line between its surface
+temperature observer and its ADT observer, and it is the CI-verified schema for
+this bundle.
+
+### The length scale, which is the least settled number here
+
+`vertical lengthscale` is in levels, and the Gulf grid is `FNC1:2,5500,4,0.01` at
+NK=50: 2 m at the surface, stretching downward. So the levels are not a uniform
+ruler and the number has to be read against the grid it counts.
+
+| Level | 5 | 10 | 15 | 20 | 25 | 30 | 40 | 50 |
+|---|---|---|---|---|---|---|---|---|
+| Depth (m) | 10 | 21 | 41 | 91 | 210 | 465 | 1827 | 7643 |
+
+The surface families use **10**. Gaspari-Cohn on that distance is a taper to a
+hard cutoff at the scale rather than an e-folding scale, so a surface observation
+reaches roughly 21 m, at about half weight by 10 m, and reaches nothing below.
+The bundle's own test uses 5 on a 25 level grid, which on this one would confine
+a surface observation to the top 10 m.
+
+**The direction to sweep is up, not down.** Ten levels is 21 m, and the Gulf
+mixed layer is deeper than that for most of the year: the water an SST
+measurement is genuinely representative of extends to the mixed layer base, which
+is levels 15 to 20 here, or 40 to 90 m. Localizing tighter than the true
+correlation length throws away signal the ensemble was there to provide, and
+restratifies a layer the model has mixed. Ten is the conservative end of a range
+whose upper end is a physical argument rather than a guess, and it is chosen that
+way because the failure it replaces was an increment at one ensemble standard
+deviation from 1 m to 3400 m. Each family carries the value as a var
+(`sst_vertical_localization_levels` and its two siblings), so a sweep is three
+one-line overrides in an experiment and needs no block restated.
+
+### What is not localized in the vertical yet
+
+The profiles. A cast reports depth in metres, and converting those to fractional
+level indices against the background's own thicknesses is work nothing here does,
+so `argo_*` and `glider_*` update the whole column. That is the conservative
+error in this configuration rather than the dangerous one: a profile is the only
+thing in the network that sees the vertical structure at all, so an
+over-reaching profile spreads real information too far, while an over-reaching
+surface observation spreads a surface signal into water it never touched. It is
+still worth building, and the shape it would take is a converted `MetaData` field
+written by the observer, not a UFO option.
+
 ## The covariance, and where an ensemble comes into it
 
 `solver.covariance` was validated and unread until phase 8. It now decides what

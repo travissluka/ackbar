@@ -57,6 +57,13 @@ observation bodies:
     # The scale is a var so that an experiment can move it without restating the
     # block, which is what an ensemble smaller than this one needs: fewer members
     # means more sampling noise at range and a tighter radius.
+    #
+    # **Horizontal only.** The surface families localize in the vertical too
+    # (`obs/common/sst.yaml`); an altimeter must not, because dynamic topography
+    # is an integral over the whole water column and there is no level to centre
+    # a taper on. SOCA's own `letkf3d.yml` makes the same distinction, giving its
+    # sea surface temperature observer a vertical entry and its ADT observer
+    # none.
     $localization:
     - localization method: Rossby
       rossby mult: $(adt_localization_scale)

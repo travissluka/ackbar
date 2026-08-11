@@ -28,6 +28,17 @@ observation bodies:
 
   profile_t:
 
+    # **Horizontal only, and that is a decision rather than an omission.** The
+    # surface families localize in the vertical as well
+    # (`obs/common/sst.yaml`), and a profile cannot copy them: their entry
+    # declares a constant coordinate because they measure one level, while a
+    # cast reports a depth in metres and the geometry's vertical coordinate is a
+    # *level index*. `ioda vertical coordinate: depth` would compare the two, so
+    # a 175 m observation would read as 175 levels away, localize to zero
+    # everywhere, and delete the only subsurface information the network has.
+    # Localizing a cast in the vertical needs its depths converted to levels
+    # against the background's own thicknesses, which is work nothing here does
+    # yet; until then a cast updates the whole column. See `docs/analysis.md`.
     $localization:
     - localization method: Rossby
       rossby mult: $(profile_localization_scale)
@@ -83,6 +94,7 @@ observation bodies:
 
   profile_s:
 
+    # Horizontal only, for the reason `profile_t` above gives.
     $localization:
     - localization method: Rossby
       rossby mult: $(profile_localization_scale)

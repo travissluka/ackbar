@@ -213,6 +213,39 @@ def test_a_solver_analyses_no_more_than_it_reads(configs):
         )
 
 
+#: Which observer localizes in the vertical, by the prefix of its name. A
+#: surface platform measures one level and can declare it; an altimeter is depth
+#: integrated and has no level to centre a taper on; a cast reports metres, and
+#: the geometry's vertical coordinate is a level index, so localizing one needs a
+#: conversion nothing here does yet and it updates the whole column until then.
+#: `config/layers/obs/common/sst.yaml` carries the long version.
+VERTICALLY_LOCALIZED = ("sst_", "sss_", "drifter_")
+WHOLE_COLUMN = ("adt_", "argo_", "glider_")
+
+
+def test_the_surface_platforms_localize_in_the_vertical_and_nothing_else_does(configs):
+    """Across the whole observing system, which no fixture carries.
+
+    The failure this exists for is a platform added later that inherits the
+    wrong `obs/common/` family: a cast with a surface platform's entry is
+    localized to a constant coordinate of 1, so a 1000 m observation updates the
+    surface and nothing else, and an altimeter with one loses the depth
+    integrated signal it exists to provide. Neither says anything in any output.
+    """
+    for name in ARMS:
+        for entry in configs[name].get("observations") or ():
+            platform = entry["obs space"]["name"]
+            methods = [item["localization method"]
+                       for item in entry.get("$localization") or ()]
+            if platform.startswith(VERTICALLY_LOCALIZED):
+                assert methods == ["Rossby", "Vertical localization"], \
+                    f"{name}: {platform}"
+            else:
+                assert platform.startswith(WHOLE_COLUMN), \
+                    f"{name}: {platform} is in neither family"
+                assert methods == ["Rossby"], f"{name}: {platform}"
+
+
 def test_every_definition_is_reachable_from_the_readme():
     """A file nobody lists is one nobody maintains.
 

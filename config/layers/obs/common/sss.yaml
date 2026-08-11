@@ -14,16 +14,28 @@ vars:
   # a 25 km infrared superob and this is where that is said.
   sss_localization_scale: 2.0
 
+  # How far down a surface measurement reaches, in **model levels**, not metres.
+  # `obs/common/sst.yaml` carries the unit and the reasoning; the value is the
+  # same there and in `obs/common/drifter.yaml`, because all three measure the
+  # surface and a sweep moves them together.
+  sss_vertical_localization_levels: 10
+
 observation bodies:
 
   sss:
 
     # See `obs/common/adt.yaml` for what this is and why it is not spelled
-    # `obs localizations`.
+    # `obs localizations`, and `obs/common/sst.yaml` for why Rossby is first and
+    # why the vertical lengthscale is counted in levels.
     $localization:
     - localization method: Rossby
       rossby mult: $(sss_localization_scale)
       min grid mult: 1.0
+    - localization method: Vertical localization
+      vertical lengthscale: $(sss_vertical_localization_levels)
+      assign constant vertical coordinate to obs: true
+      constant vertical coordinate value: 1
+      localization function: Gaspari Cohn
 
     obs space:
       simulated variables: [seaSurfaceSalinity]

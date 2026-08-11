@@ -56,6 +56,14 @@ from .mom6sis2 import (OVERRIDE, SOCA_OVERRIDE, ModelError, keep_traces,
                        link_override)
 from .observations import LOCALIZATION
 
+#: UFO's name for observation-space localization in the vertical, and the string
+#: `_iterator_dimension` looks for. `ufo::instantiateObsLocFactory` registers it
+#: under exactly this spelling, and UFO refuses a name it does not know, so a
+#: layer that misspells it fails loudly. What this constant guards is the other
+#: half: the geometry has to iterate in three dimensions for such an entry to
+#: mean anything, and that half fails silently.
+VERTICAL_LOCALIZATION = "Vertical localization"
+
 #: The document templates, in the checkout. `create` freezes a copy into the
 #: experiment's own `cfg/soca/`, and that is the copy a job reads; this is the
 #: fallback for the tools and tests that have no experiment directory.
@@ -827,17 +835,51 @@ def build_document(name, config, cycle, slots, *, templates=None):
     return fill(skeleton, slots, source=str(source))
 
 
-def _geometry(model):
+def _geometry(model, *, iterator_dimension=None):
     """The one geometry every application here is given.
 
     `geom_grid_file` is relative because it is linked into the run directory by
     `stage`; the other two are absolute paths the model layer names.
+
+    *iterator_dimension* is stated only by the ensemble filter, which is the
+    only application that iterates over the geometry at all. See
+    `_iterator_dimension`.
     """
-    return {
+    geometry = {
         "geom_grid_file": f"{GRIDSPEC}",
         "mom6_input_nml": _require(model, "namelist"),
         "fields metadata": _require(model, "fields metadata"),
     }
+    if iterator_dimension is not None:
+        geometry["iterator dimension"] = iterator_dimension
+    return geometry
+
+
+def _iterator_dimension(bodies):
+    """2 or 3, from whether any observer localizes in the vertical.
+
+    `soca::Geometry` reads `iterator dimension` and defaults it to 2, and with 2
+    `soca::GeometryIterator` never advances its level index: one weight matrix
+    is solved per *column*, from every observation inside the horizontal radius
+    at any depth, and applied identically to all fifty levels. Vertical
+    localization is then not merely off, it is unrepresentable, and an
+    observer's vertical entry is evaluated at level one for every level of the
+    column. That is the arrangement `osse25-4dletkf` ran: a sea surface
+    temperature increment of about one ensemble standard deviation at 3400 m,
+    and a spread collapse to match.
+
+    So the two are derived together rather than stated separately. The rule the
+    other way round matters as much: 3D iteration multiplies the number of local
+    solves by the level count, and buys nothing at all unless something in the
+    document distinguishes one level from another. `da/eakf` is that case. It
+    overrides every observer with one horizontal Gaspari-Cohn under
+    `solver.ensemble localization`, so every level of a column would solve the
+    same problem fifty times over and reach the same answer.
+    """
+    vertical = any(entry.get("localization method") == VERTICAL_LOCALIZATION
+                   for body in bodies
+                   for entry in body.get("obs localizations") or ())
+    return 3 if vertical else 2
 
 
 def _basename(path):
@@ -1228,13 +1270,20 @@ def letkf_config(config, cycle, observers, *, backgrounds, members,
         variables=_require(solver, "background variables"),
     )
 
+    bodies = _solver_observers(
+        observers, departures,
+        _require(solver, "ensemble distribution"),
+        solver.get("ensemble localization"))
+
     return build_document("letkf", config, cycle, {
-        "GEOMETRY": _geometry(model),
+        # The one application whose geometry is iterated over, and the only one
+        # that states a dimension for it. Derived from the observers rather than
+        # stated in a layer, because the two answers have to agree and neither
+        # of them says so when they do not: see `_iterator_dimension`.
+        "GEOMETRY": _geometry(model,
+                              iterator_dimension=_iterator_dimension(bodies)),
         "MEMBER_BACKGROUNDS": states,
-        "OBSERVERS": _solver_observers(
-            observers, departures,
-            _require(solver, "ensemble distribution"),
-            solver.get("ensemble localization")),
+        "OBSERVERS": bodies,
         "LOCAL_ENSEMBLE_DA": _require(solver, "local ensemble DA"),
         "ANALYSIS_OUTPUT": _written(ANALYSIS, type=ENSEMBLE_TYPE, date=date),
         "INCREMENT_OUTPUT": _written(INCREMENT, date=date),

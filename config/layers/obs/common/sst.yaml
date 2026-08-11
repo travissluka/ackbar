@@ -14,16 +14,57 @@ vars:
   # this is the knob that says so.
   sst_localization_scale: 1.5
 
+  # How far down a surface measurement reaches, in **model levels**. See the
+  # `$localization` block below for the unit, which is not metres, and
+  # `docs/analysis.md` for how the number was chosen. `obs/common/sss.yaml` and
+  # `obs/common/drifter.yaml` carry the same value for the same reason: they all
+  # measure the surface, so a sweep moves all three together.
+  sst_vertical_localization_levels: 10
+
 observation bodies:
 
   sst:
 
     # See `obs/common/adt.yaml` for what this is and why it is not spelled
-    # `obs localizations`.
+    # `obs localizations`. This is the family that carries the vertical half as
+    # well, and the two entries below are the reference copy: `obs/common/sss`
+    # and `obs/common/drifter` restate them and point here.
+    #
+    # **Rossby stays first, and it is not a matter of taste.**
+    # `soca::ObsLocRossby::computeLocalization` caches its result per horizontal
+    # point, and on a cache hit *assigns* the cached vector rather than
+    # multiplying into it. `oops::ObsLocalizations` applies the entries in order
+    # into one vector that starts as ones, so the assignment is only harmless
+    # while Rossby is the entry that sees the ones. With the vertical entry
+    # first, Rossby overwrites it at every level of a column but the first,
+    # which on this grid is forty-nine levels in fifty.
     $localization:
     - localization method: Rossby
       rossby mult: $(sst_localization_scale)
       min grid mult: 1.0
+
+    # **The vertical coordinate is a model level index, not a depth in metres.**
+    # `soca_geom_mod.F90` fills the geometry's `vert_coord` with `real(jz)`, so
+    # the geometry iterator's third coordinate at level k is k, and the
+    # lengthscale here counts levels. A surface platform therefore declares a
+    # constant coordinate of 1 instead of naming a field in the ioda file:
+    # `ioda vertical coordinate: depth` would compare metres against level
+    # indices, so a 175 m observation would read as 175 levels away, localize to
+    # zero everywhere, and be assimilated by nothing.
+    #
+    # Gaspari-Cohn on that distance, which is a taper to a hard cutoff at the
+    # lengthscale rather than an e-folding scale. `docs/analysis.md` carries what
+    # the level count is in metres on the Gulf grid and why this number is the
+    # least settled thing in the block.
+    #
+    # It only reaches the analysis if the geometry iterates in three dimensions,
+    # which `ackbar/soca.py:_iterator_dimension` derives from this entry's
+    # presence rather than leaving to a second statement in a layer.
+    - localization method: Vertical localization
+      vertical lengthscale: $(sst_vertical_localization_levels)
+      assign constant vertical coordinate to obs: true
+      constant vertical coordinate value: 1
+      localization function: Gaspari Cohn
 
     # Everything in `obs space` that is not this platform's identity. What a
     # platform layer is left holding is its name and the two paths that name

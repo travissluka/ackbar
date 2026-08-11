@@ -18,14 +18,28 @@ vars:
   # use rather than either satellite's.
   drifter_localization_scale: 1.0
 
+  # How far down a surface measurement reaches, in **model levels**, not metres.
+  # `obs/common/sst.yaml` carries the unit and the reasoning; the value is the
+  # same there and in `obs/common/sss.yaml`. A drifter hull sits at fifteen
+  # centimetres, which is the same level a radiometer's skin value lands in, so
+  # the vertical reach is the one thing here a drifter does not differ in.
+  drifter_vertical_localization_levels: 10
+
 observation bodies:
 
   drifter_sst:
 
+    # See `obs/common/sst.yaml` for why Rossby is first and why the vertical
+    # lengthscale is counted in model levels rather than in metres.
     $localization:
     - localization method: Rossby
       rossby mult: $(drifter_localization_scale)
       min grid mult: 1.0
+    - localization method: Vertical localization
+      vertical lengthscale: $(drifter_vertical_localization_levels)
+      assign constant vertical coordinate to obs: true
+      constant vertical coordinate value: 1
+      localization function: Gaspari Cohn
 
     obs space:
       simulated variables: [seaSurfaceTemperature]
@@ -63,6 +77,11 @@ observation bodies:
     - localization method: Rossby
       rossby mult: $(drifter_localization_scale)
       min grid mult: 1.0
+    - localization method: Vertical localization
+      vertical lengthscale: $(drifter_vertical_localization_levels)
+      assign constant vertical coordinate to obs: true
+      constant vertical coordinate value: 1
+      localization function: Gaspari Cohn
 
     obs space:
       simulated variables: [seaSurfaceSalinity]

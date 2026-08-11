@@ -102,15 +102,33 @@ class TestLetkfLayerAddressesOneObserverAtATime:
             body = observer(config, name)
             # The merged config, before substitution, so the scale is still the
             # symbol an experiment overrides. `TestResolvedPort` pins the number.
-            assert body["$localization"] == [
-                {"localization method": "Rossby",
-                 "rossby mult": "$(adt_localization_scale)"
-                                if name.startswith("adt") else
-                                "$(sst_localization_scale)",
-                 "min grid mult": 1.0}]
+            assert body["$localization"][0] == {
+                "localization method": "Rossby",
+                "rossby mult": "$(adt_localization_scale)"
+                               if name.startswith("adt") else
+                               "$(sst_localization_scale)",
+                "min grid mult": 1.0}
             # Never UFO's key in the merged config: that would reach every
             # application, including the ones that do not localize.
             assert "obs localizations" not in body
+
+    def test_only_the_surface_platforms_localize_in_the_vertical(self, letkf):
+        """And the altimeter must not, whatever else changes.
+
+        `absoluteDynamicTopography` is an integral over the whole water column,
+        so there is no level to centre a taper on; SOCA's own `letkf3d.yml`
+        draws the line in the same place. The radiometer gets the vertical
+        entry, and it comes second, because `soca::ObsLocRossby` assigns a
+        cached vector rather than multiplying into one and would erase anything
+        already there. `test_soca.py` holds the ordering rule on the built
+        document as well, where UFO reads it.
+        """
+        _, config = letkf
+        methods = {name: [entry["localization method"]
+                          for entry in observer(config, name)["$localization"]]
+                   for name in ("adt_3a", "sst_noaa19")}
+        assert methods == {"adt_3a": ["Rossby"],
+                           "sst_noaa19": ["Rossby", "Vertical localization"]}
 
     def test_no_solver_layer_states_a_localization_except_the_one_that_means_to(self):
         """`solver.ensemble localization` overrides every observer at once.
