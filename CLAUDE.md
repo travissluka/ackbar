@@ -362,6 +362,42 @@ Closed, and recorded here because the reasoning is easy to reopen by mistake:
   `sea_water_cell_thickness` to every solver's writeback, is wrong; `docs/osse.md` and
   `docs/design.md` say which solver needs what and why.
 
+## Parallel agents and git
+
+Several agents work this repo at once, each in its own worktree under `.claude/worktrees/`,
+on its own branch. That is the intended shape. What follows is how their work reaches `main`,
+because the failure modes are not obvious and the history has already been made unreadable
+by all three of them at least once.
+
+**`main` is fast-forward only.** `git config merge.ff only` is set locally. An agent rebases
+its branch onto `main` before handing off, and the merge is then a fast-forward. The log gets
+one entry per unit of work, no merge bubbles, and the shape of history stops depending on
+which agent happened to land first. Do not reach for `--no-ff` to defeat this; if a merge will
+not fast-forward, the branch is stale and wants a rebase.
+
+**A merge never restates its branch's commit subject.** The prose belongs in the branch
+commit. A merge that needs a message at all takes `Merge <topic>`, never a copy of the tip.
+Reusing the subject is what puts every feature in `git log --oneline` twice, once as the
+branch commit and once as the merge, and the reader cannot tell the pair from a real revert
+and reland.
+
+**A branch is merged when its agent has finished, not while it is still working.** Merging a
+running agent lands a partial change under a subject that then reappears when the rest
+arrives, and the intervening merge carries nothing a reader can act on.
+
+**Merge and cleanup are one action**: fast-forward `main`, `git worktree remove`,
+`git branch -d`, and delete the remote branch if it was pushed. A merged branch left behind
+is indistinguishable from an unfinished one a week later.
+
+**Branch names carry a topic slug**, `worktree-<topic>`. A name like
+`worktree-agent-a2f2092c880882cb8` says nothing about what is in it once the session is gone.
+
+Two hazards that follow from the worktrees rather than from git. Agents on separate worktrees
+can edit the same file; a branch that has not rebased since the last merge is the one that
+finds out by conflict, so rebase before continuing rather than before handing off. And
+`src/ackbar` is an editable install shared by every worktree's runs (see Environment above),
+so a fast-forward lands under any experiment that is mid-flight.
+
 ## Conventions
 
 - Do not modify `~/work/jedi/bundle/*` from this project; SOCA changes belong in the JEDI
