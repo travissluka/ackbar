@@ -8,6 +8,12 @@ flaw is that everything ensemble-related is a serial `for` loop.** v3 has a bett
 but never grew an ensemble at all, so it is not a solution to v2's problem, only a different
 starting point.
 
+This file is written for someone deciding what ACKBAR should do.
+[`from-soca-science.md`](from-soca-science.md) is the other direction, written for a
+soca-science user who has to run ACKBAR tomorrow: what an experiment definition looks like
+now, what each step of the old cycle became, which habits are errors here, and what is
+honestly still missing.
+
 ## v2: soca-science
 
 Bash. Officially end of life, last commit 2024-08. Entry point
