@@ -123,11 +123,9 @@ the increment for the cells whose path to the dirac crosses land against +0.1 to
 cent for cells in clear water. `site/monitor/dirac-locmask/` carries the tables and the
 figures, and `site/monitor/dirac-velocity/` is the run that found the bug.
 
-Both entries were recalibrated together. `loc_hz` came back bit identical to the file it
-replaced, which says the change reaches only the field that asked not to be masked and that
-the randomization is repeatable at a fixed rank count. Every EnVar and hybrid result
-produced before that recalibration was localized by the masked field whatever its `cfg/`
-says it read.
+Both entries are calibrated together, and `loc_hz` comes back bit identical whether or not
+`loc_hz_open` is rebuilt beside it, which says the unmasked scale reaches only the field that
+asked for it and that the randomization is repeatable at a fixed rank count.
 
 **How an experiment chooses.** `da/hybrid` declares a var:
 
@@ -307,11 +305,16 @@ variable and point pairs, and to 1e-11 in the twentieth, and the
 high-side slice is wrong by 36 to 110 per cent of it. `site/monitor/dirac-velocity/` is the
 page.
 
-The last row is the configuration `8b71c18` fixed, and it is not "unlocalized":
-a localization over an empty variable list is the identity, which collapses
-`sum_m X_m . L(X_m . dx)` to the ensemble variance times the input. One cell, one
-level, one variable. Every EnVar and hybrid result produced before that commit
-had a diagonal ensemble component.
+The last row is not "unlocalized": **a localization over an empty variable list
+is the identity**, which collapses `sum_m X_m . L(X_m . dx)` to the ensemble
+variance times the input. One cell, one level, one variable, which is a diagonal
+ensemble covariance rather than a weakly localized one.
+
+That is why a diffusion group states its `variables:` and why
+`tests/test_tier3_envar.py`, `test_tier3_4denvar.py` and `test_tier3_hybrid.py`
+each assert that every group names what it localizes. The failure has no symptom
+of its own: the run completes, the increment is the wrong shape, and nothing in
+the output says which.
 
 ## Iteration count
 

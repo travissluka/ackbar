@@ -38,7 +38,7 @@ The FGAT and 4D rows are pairs on one question, whether the covariance gets a ti
 asked once over a pure ensemble and once over a hybrid. A 3D ensemble filter is deliberately
 absent: it is known to trail the 4D one, which costs almost nothing more.
 
-The three arms with an ensemble inherit `ensemble/perturbed-inputs`, which gives every member
+The five arms with an ensemble inherit `ensemble/perturbed-inputs`, which gives every member
 its own atmosphere and its own open boundary. Without it the prior's spread decays every cycle
 and no relaxation coefficient stops it; [`../docs/ensemble-spread.md`](../docs/ensemble-spread.md)
 is the reference.

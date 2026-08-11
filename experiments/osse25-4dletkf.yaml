@@ -1,10 +1,8 @@
 # The quarter degree OSSE's 4D LETKF.
 #
-# `osse25-letkf` with the window changed and nothing else, in the same sense
-# that `osse25-3dfgat` is `osse25-3dvar` with the window changed: same domain,
-# same dates, same control initial condition, same ensemble initial condition,
-# same thirteen observers and the same observation archive. The two LETKFs are a
-# paired difference on departure timing alone.
+# The matrix's ensemble filter, at a 4D window, and the only one in it: a 3D
+# LETKF is deliberately absent, because it is known to trail the 4D one and
+# the 4D one costs almost nothing more.
 #
 # **What changes, and it is one word.** A 3D LETKF compares every observation in
 # a 24 hour window against one background at the window's centre. The
@@ -29,9 +27,32 @@
 # observer adds one hofx per member per cycle, which at `gom_25km` is seconds
 # and on a real domain is the item to watch.
 #
-# The ensemble, its provenance, and why there is no `da/corr_vt_cycled` are all
-# in `osse25-letkf.yaml`, which this is otherwise a copy of. Read that file
-# first; nothing about the ensemble is restated here.
+# **No `da/corr_vt_cycled`.** That layer rebuilds the *static* B's vertical
+# correlation each cycle against the experiment's own background, and an
+# ensemble filter has no static B to rebuild. Its absence is not a setting left
+# out.
+#
+# **The ensemble is real ocean states, not perturbations.** One GLORYS year per
+# member, 1993 to 2013 and 2016, each integrated a day under this domain's own
+# boundary and forcing, settled by one more free day, then recentred onto the
+# control. `tools/ensemble-ic-lagged.sh` says why that beats drawing from the
+# static background error, and the short version is two-fold: static
+# perturbations carry B's correlation scales rather than the ocean's flow
+# structure, and B says nothing about velocity at all, so every member would
+# have an identical current field.
+#
+# Twenty two years are drawn for twenty members, because the settle drops the
+# ones the model will not integrate freely, and 2014 and 2015 are skipped: the
+# first is the control's own year and the second is the nature run's. A dropped
+# member is not repaired, since a member is a sample and there is nothing to
+# recover from one the model rejects. `provenance.txt` beside the ensemble maps
+# each number back to the year behind it.
+#
+# **Settle first, recentre last, and both halves of that are load bearing.** A
+# member arrives from the 24 hour cold start still carrying the interpolation
+# shock and cannot take an analysis increment until it has shed it; recentring
+# afterwards would leave the ensemble mean a free day ahead of the control
+# rather than on it. `osse25-ensemble-settle.yaml` is that run.
 inherit:
   - domain/gom_25km
   - model/mom6sis2
@@ -58,7 +79,7 @@ experiment:
 cycle:
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  # The comparison length, identical across all six experiments in it.
+  # The comparison length, identical across all eight experiments in it.
   count: 20
 
 solver:
@@ -75,7 +96,7 @@ forecast:
   # Four states inside the 24 hour window, plus the background at its start.
   slots: PT6H
 
-  # Identical to the other four experiments'. The comparison at each lead is a
+  # Identical to every other arm's. The comparison at each lead is a
   # paired difference, so the launches and the valid times have to match.
   extended:
     length: P5D

@@ -318,17 +318,11 @@ moved, and the thickness-weighted column mean does not move at all, which is
 worth knowing because the column mean is what `tools/local/letkf-spread.py`
 reports and it called the whole thing a null result.
 
-That run's truth is still climatology-forced, so it measures spread and not
-skill. Nothing here has been run on another domain, with stochastic physics, or
-with per-member boundaries.
+That run's truth was climatology-forced, so it measures spread and not skill.
+Nothing here has been run on another domain, with stochastic physics, or with
+per-member boundaries.
 
 ## Not built yet
 
-- The deterministic-GEFS source layer. `forcing/gefs-ensemble` and
-  `forcing/era5` are the two in the tree.
-- The ERA5-forced truth run, without which there is no skill number. The archive
-  and the layer both exist now; `experiments/osse-truth.yaml` still inherits no
-  forcing source, so it runs on the CORE climatology until it inherits
-  `forcing/era5` and sets `forcing_purpose: gom_truth`.
 - The lagged-difference scheme, for member counts above what a ladder holds.
 - The two middle GEFS eras.

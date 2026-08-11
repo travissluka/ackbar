@@ -605,11 +605,12 @@ kind, perturbing one state through the static B, and is what tier 3 uses.
 **An experiment that inherits no forcing layer has every member forced by the
 same atmosphere**, and each cycle they are pushed towards a common solution by
 the surface fluxes they share. `ensemble.inputs` gives a member its own `atm.nc`
-the same way it gives it its own `obc.nc`, and the archive exists for
-`gom_25km` on the GEFS reforecast era: [`forcing.md`](forcing.md) says how it is
-built and Domains in [`design.md`](design.md) ranks what it is worth. The gap
-that remains is the truth run, which is still climatology-forced, so what is
-measured today is spread rather than skill.
+the same way it gives it its own `obc.nc`: [`forcing.md`](forcing.md) says how
+the archive is built and Domains in [`design.md`](design.md) ranks what it is
+worth. The archives are keyed by purpose rather than by domain, so the nature
+run reads ERA5 and the experiments a GEFS forecast of it, which is the pairing
+that makes the difference between the two a skill number rather than a spread
+one.
 
 The members no longer differ *only* in their ocean state, which is the part of
 this caveat that has moved. `ensemble.stochastic` gives each its own model

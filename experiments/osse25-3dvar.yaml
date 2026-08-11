@@ -56,7 +56,7 @@ cycle:
   # before its analysis time.
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  # The comparison length, and identical across all six experiments in it: a
+  # The comparison length, and identical across all eight experiments in it: a
   # paired difference at each lead needs the same valid times everywhere. The
   # ceiling is the truth archive, which has to cover the last cycle's window
   # (it closes after its analysis time) and every extended forecast lead.

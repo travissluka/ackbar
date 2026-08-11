@@ -28,7 +28,7 @@
 # `fgat`.
 #
 # **The ensemble is real ocean states, not perturbations.** The same time-lagged
-# GLORYS ensemble `osse25-letkf` uses, and that file carries how it was built
+# GLORYS ensemble `osse25-4dletkf` uses, and that file carries how it was built
 # and why it beats drawing from the static B. The members are then recentred on
 # the variational analysis every cycle, so the ensemble follows the run being
 # reported.
@@ -75,7 +75,7 @@ experiment:
 cycle:
   start: '2015-07-12T00:00:00Z'
   length: PT24H
-  # The comparison length, identical across all six experiments in it.
+  # The comparison length, identical across all eight experiments in it.
   count: 20
 
 solver:
@@ -95,7 +95,7 @@ forecast:
   # the disk cost of this experiment over the deterministic ones.
   slots: PT6H
 
-  # Identical to the other four experiments'. The comparison at each lead is a
+  # Identical to every other arm's. The comparison at each lead is a
   # paired difference, so the launches and the valid times have to match.
   extended:
     length: P5D
