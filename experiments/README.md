@@ -43,6 +43,13 @@ its own atmosphere and its own open boundary. Without it the prior's spread deca
 and no relaxation coefficient stops it; [`../docs/ensemble-spread.md`](../docs/ensemble-spread.md)
 is the reference.
 
+## Sweeps beside the matrix
+
+`osse25-4dletkf-vloc15` is not a ninth arm. It is `osse25-4dletkf` with the surface platforms'
+vertical localization raised from ten model levels to fifteen, and it is scored against that
+arm rather than against the matrix, which is why the arm itself is never edited. Its header
+carries the mixed layer measurement the number comes from and what Gaspari-Cohn does with it.
+
 ## Copying one
 
 `osse25-3dvar.yaml` for a variational experiment, `osse25-4dletkf.yaml` for an ensemble filter.
