@@ -140,8 +140,8 @@ distinguishing the two.
 Measured by re-solving one 3DVar cycle (gom_25km, 2015-07-31) at nine iteration
 counts up to 200: at 20 iterations the increment differs from the 200-iteration
 solution by 38% rms in temperature, 55% in salinity, 43% in sea level, and the
-error is not just amplitude, it has a direction, the salinity increment carries
-only 67% of the amplitude it should and sea level 76%. Amplitude bias clears by
+shortfall is systematic rather than random: the salinity increment carries only
+67% of the amplitude it should and sea level 76%. Amplitude bias clears by
 iteration 41, pattern bias by 78. A gradient target of `1.0e-2` lands at
 iteration 41 on this cycle, `1.0e-3` at 78; `100` leaves headroom above that
 with iterations that, on this sweep, cost close to nothing (nine solves in 31
