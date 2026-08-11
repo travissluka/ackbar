@@ -1426,31 +1426,34 @@ regional last.
   member is recentred onto. The graph carries this as `ensemble.control`, defaulting to true.
   What is still open is EDA, where every member is a deterministic analysis of perturbed
   observations and the control is one more of them or none of them.
-- ~~**Where the analysis time sits in the window.**~~ **Settled in phase 9, in the other
-  direction: centred is not a choice.** This section used to say placement would become a
-  configured property of the solver. It cannot be. `CostFctFGAT::doLinearize` saves the state
-  at `timeWindow_.midpoint()` and `finishLinearize` replaces the background with it, so an
-  off-centre window writes an analysis valid at a time no cycle starts from. The window is
-  `window_bounds` in `src/ackbar/config/jobtime.py`, the analysis time plus and minus half the
-  *window* length, which is `solver.window.length` and falls back to the cycle length. The
-  second implicit equality named here is gone with it: `W` and `C` are now independent, and
-  `graph.build._check_window` refuses each way they can fail to fit, by name.
-- ~~**`da` is not necessarily one node.**~~ **Settled in phase 8: two tasks, and the first kept
-  its name.** `da` is the analysis that produces the *control's* answer, whichever solver that
-  is; `da.ens` is what maintains the ensemble a hybrid's covariance is drawn from, and exists
-  only where `ensemble.source` says something in this cycle has to. Two nodes rather than one
-  parameterized by instance, because they are different applications with different configs,
-  different resources and different member cardinality, and because `soca_letkf.x` running
-  under a name that says `var` is the first thing to confuse anyone reading a queue. Keeping
-  `da` for the first of them meant no existing shape's graph, paths or sentinels moved. The
-  edge between them is an ordering rather than a data dependency: exactly one job may apply the
-  divergence policy, since `replace_from_mean` rebuilds a member's restart set.
-- ~~**Which application calibrates vertical B per cycle.**~~ **Settled: it is
-  `soca_error_covariance_toolbox.x`, as `b.corr_vt`.** An experiment opts in with
-  `config/layers/da/corr_vt_cycled.yaml`, which rebuilds the vertical scales from that cycle's
-  own background and blends them into a rolling average; without it the offline calibration
-  seeds every cycle. `soca_sqrtvertloc.x` was never it: that is vertical *localization* for an
-  ensemble covariance, a different quantity from the static B's correlation scales.
+
+### Settled, and listed here because the reasoning is easy to reopen
+
+**Where the analysis time sits in the window: centred, and not a choice.** The obvious proposal
+is to make placement a configured property of the solver, and `oops` refuses it.
+`CostFctFGAT::doLinearize` saves the state at `timeWindow_.midpoint()` and `finishLinearize`
+replaces the background with it, so an off-centre window writes an analysis valid at a time no
+cycle starts from. The window is `window_bounds` in `src/ackbar/config/jobtime.py`, the analysis
+time plus and minus half the *window* length, which is `solver.window.length` and falls back to
+the cycle length. `W` and `C` are independent, and `graph.build._check_window` refuses each way
+they can fail to fit, by name.
+
+**`da` is two nodes, and the first kept its name.** `da` is the analysis that produces the
+*control's* answer, whichever solver that is; `da.ens` is what maintains the ensemble a hybrid's
+covariance is drawn from, and exists only where `ensemble.source` says something in this cycle
+has to. Two nodes rather than one parameterized by instance, because they are different
+applications with different configs, different resources and different member cardinality, and
+because `soca_letkf.x` running under a name that says `var` is the first thing to confuse anyone
+reading a queue. Keeping `da` for the first of them meant no existing shape's graph, paths or
+sentinels moved. The edge between them is an ordering rather than a data dependency: exactly one
+job may apply the divergence policy, since `replace_from_mean` rebuilds a member's restart set.
+
+**The vertical B is calibrated per cycle by `soca_error_covariance_toolbox.x`, as `b.corr_vt`.**
+An experiment opts in with `config/layers/da/corr_vt_cycled.yaml`, which rebuilds the vertical
+scales from that cycle's own background and blends them into a rolling average; without it the
+offline calibration seeds every cycle. `soca_sqrtvertloc.x` is not it: that is vertical
+*localization* for an ensemble covariance, a different quantity from the static B's correlation
+scales.
 
 ## Not carried forward
 

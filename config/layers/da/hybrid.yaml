@@ -164,38 +164,30 @@ solver:
   # somewhere new each cycle is one whose covariance stops describing anything.
   #
   # `rtps` alone, at the same 0.95 `da/letkf` uses, and for the reasons recorded
-  # there. Equal on purpose: `osse-letkf` and `osse-hybrid` are meant to differ
-  # by their covariance and by nothing else, and an ensemble inflated differently
-  # between the two makes the pair uninterpretable.
+  # there. Equal on purpose: a filter experiment and a hybrid one are compared
+  # to isolate the covariance, so they must differ by that and by nothing else,
+  # and an ensemble inflated differently between the two makes the pair
+  # uninterpretable.
   local ensemble DA:
     solver: Deterministic LETKF
     inflation:
       rtps: 0.95
   ensemble distribution: {name: Halo, halo size: 500000}
 
-  # **Every observer, not a list of them.** `ackbar/soca.py:_observers` attaches
-  # this to each observer the filter is given, exactly as it attaches the
-  # distribution above, and for the same reason plus one: it belongs to all of
-  # them, and a merged configuration can only say that by naming them one at a
-  # time. This was an `observations:` list with a stanza per platform, which
-  # left any platform not named here with no localization at all and invented a
-  # phantom observer for every platform named here that the experiment did not
-  # carry. An observer may still override it by stating its own
-  # `obs localizations`.
-  #
-  #
-  # Localization, per observer, for `da.ens`. The same values `da/letkf` uses,
-  # including the 1.5 Rossby multiplier and the reasoning for it recorded there:
-  # this is the observation-space localization the filter applies, and it is a
-  # different mechanism from the model-space localization of the covariance above,
-  # which is why both exist and neither implies the other.
-  #
-  # This used to be stated here and in `da/letkf`, with a note that the two had
-  # to stay equal: `osse-letkf` and `osse-hybrid` differ by their covariance and
-  # are meant to differ by nothing else, so a filter that localized differently
-  # between them made the pair uninterpretable. Both are gone and the observer
-  # bodies hold it, so the two now read the same numbers by construction rather
-  # than by a comment asking someone to keep them in step.
+  # **Observation-space localization is not stated here at all.** It lives in
+  # the observer body, under `$localization`, which `ackbar/soca.py:_observers`
+  # attaches to each observer the filter is given, exactly as it attaches the
+  # distribution above. A solver layer can only say it wrongly: written as an
+  # `observations:` list with a stanza per platform, it leaves every platform it
+  # does not name with no localization at all and invents a phantom observer for
+  # every platform it names that the experiment does not carry. Written in both
+  # this file and `da/letkf`, with a note asking that the two be kept equal, it
+  # is one edit away from making a comparison uninterpretable: the pair is set
+  # against each other to isolate the covariance, and a filter that localized
+  # differently between them differs by two things. From the observer body both
+  # read the same numbers by construction. It is also a different mechanism from
+  # the model-space localization of the covariance above, which is why both
+  # exist and neither implies the other.
 
 ensemble:
   # What updates the members. `letkf` runs a filter beside the deterministic

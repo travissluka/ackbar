@@ -168,16 +168,16 @@ larger questions.
   **every SSH increment a variational analysis here produces is balanced**: it
   is the steric height implied by the temperature and salinity increment through
   `ksshts`, and there is no unbalanced part.
-- ~~**`sst: {fixed value: 1.0}`**~~ **Settled: a derived field.**
+- **Sea surface temperature background error** is *settled*: a derived field.
   `config/layers/da/variational.yaml` reads `$(domain_static)/sst_bgerr.nc`,
   built for the domain by `tools/sst-bgerr.py`, rather than a flat constant.
-- ~~**`ninner: 10`**~~ **Settled: 20.** The `1.0e-10` reduction target still
+- **`ninner`** is *settled* at 20. The `1.0e-10` reduction target still
   never fires, so every solve stops on the count and the analysis is a truncated
   minimization. That is a choice rather than a fault, but it makes `ninner` the
   cost knob and the convergence knob at once, so two experiments compared across
   different values of it are not comparable.
-- ~~**LETKF inflation**~~ **Settled: `rtps: 0.95` alone**, in both `da/letkf`
-  and `da/hybrid`, replacing the bundle unit test's three simultaneous
+- **LETKF inflation** is *settled*: `rtps: 0.95` alone, in both `da/letkf` and
+  `da/hybrid`, rather than the bundle unit test's three simultaneous
   mechanisms. With no perturbed forcing and a time-lagged ensemble, relaxation
   to the prior spread is the only thing holding the spread up at all.
 
