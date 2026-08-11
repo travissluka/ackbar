@@ -121,7 +121,7 @@ vars:
   # experiment in the comparison reads. Two archives sampled from different
   # nature runs must never be mixed, because nothing downstream reads the
   # provenance and the mixture would score as ordinary observation error.
-  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
 
 ensemble:
   size: 20

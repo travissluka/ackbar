@@ -63,14 +63,23 @@ cycle:
   count: 20
 
 vars:
-  # Sampled from the promoted 12km truth run at each observation's own time by
-  # `tools/obs-archive-osse.py --truth-run`, which is why the slug names the
-  # nature run's grid and not this experiment's. Every experiment in the
-  # comparison reads this one directory: the observations are of the ocean, not
-  # of a model, and two archives sampled from different nature runs must never
-  # be mixed, because nothing downstream reads the provenance and the mixture
-  # would score as ordinary observation error.
-  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+  # **Both halves of that name matter.** `gom12` is where the observations were
+  # sampled from, the promoted 12km nature run, at each observation's own time
+  # (`tools/obs-archive-osse.py --truth-run`); the truth is finer than the
+  # analysis on purpose, so the analysis cannot fit it perfectly. `gom_25km` is
+  # the cull (`tools/obs-cull-domain.py`), which removes the points outside this
+  # experiment's grid so that a `Domain Check` rejection means an observation the
+  # analysis could not use rather than one that was never here.
+  #
+  # Every experiment in the comparison reads this one directory: the observations
+  # are of the ocean, not of a model, and two archives sampled from different
+  # nature runs must never be mixed, because nothing downstream reads the
+  # provenance and the mixture would score as ordinary observation error. That is
+  # why this is a new name rather than the old one rebuilt in place: the archive
+  # it replaces was sampled from a nature run on the unsmoothed bathymetry, and
+  # leaving it readable under the name every arm already pointed at is how half a
+  # comparison ends up scored against a different ocean.
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
 
 forecast:
   # Five day forecasts off every cycle, which is the lead axis the cycling

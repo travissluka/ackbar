@@ -81,7 +81,7 @@ forecast:
     slots: PT6H
 
 vars:
-  obs_dir: $(static_root)/obs/gom12-osse-2015-full/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
 
 cleanup:
   keep_cycles: 1
