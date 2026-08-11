@@ -414,13 +414,16 @@ about the code: a subagent inherits its parent's working directory, needs no bra
 own, and returns a conclusion rather than a commit. Nothing has to be merged afterwards,
 which is what makes it the cheap option.
 
-**Writing work that needs its own branch goes to a peer session.** A peer is a separate
-Claude session, so it takes its own worktree and its own branch, and its work reaches `main`
-by the fast-forward route above. A subagent inherits its parent's working directory, so one
-spawned from a session pinned to the shared checkout is pinned there too and cannot write
-either. The Agent tool advertises an `isolation: "worktree"` option that would give a
-subagent a worktree of its own; that is untested here, so do not route writing work through
-it without checking it first.
+**Writing work that needs its own branch goes to a peer session, or to an isolated
+subagent.** A peer is a separate Claude session, so it takes its own worktree and its own
+branch, and its work reaches `main` by the fast-forward route above. A subagent spawned with
+the Agent tool's `isolation: "worktree"` option does the same, and this was measured rather
+than assumed: from a parent standing in the shared checkout, such a subagent got a worktree
+and a branch of its own and committed in them. The catch is the name. That branch is
+`worktree-agent-<id>`, exactly the shape the slug rule above exists to prevent, and it
+outlives the subagent, so whoever spawned it inherits the merge and the cleanup. A subagent
+without that option inherits its parent's working directory and is pinned wherever the parent
+is standing, which is why a session driving experiments cannot get writes out through one.
 
 **A session driving experiments cannot write at all.** This is the case that forces the rule
 rather than merely recommending it. `ackbar create` and `ackbar start` have to run from the
