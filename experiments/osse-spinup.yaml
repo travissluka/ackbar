@@ -15,10 +15,14 @@
 # mixed layer coming into equilibrium with the surface forcing. Those are days,
 # not months. Thirty is generous.
 #
-# There is also a reason not to run longer even if it were free. The atmosphere
-# is still NCAR/CORE climatology, so the longer this integrates the further it
-# drifts toward the model's own climate under an atmosphere with no weather in
-# it. The realistic state decays with time here rather than improving.
+# **Forced by ERA5, the same archive the nature run reads**, so the state this
+# hands to stage B is already in equilibrium with the atmosphere stage B will
+# drive it with. A spinup on the CORE climatology cannot do that: the surface
+# would spend the first days of the nature run adjusting to weather it had never
+# seen, and those days are sampled for observations and scored like any other.
+# It also removes the reason to run this short. Under a climatology the longer
+# this integrates the further it drifts toward the model's own climate; under
+# real weather it is integrating the ocean that actually happened.
 #
 # Cycled rather than run as one 30 day forecast, because a single job that long
 # has one failure mode and no checkpoint, and the restart handoff is worth
@@ -27,10 +31,19 @@ inherit:
   - domain/gom_12km
   - model/mom6sis2
   - da/none
+  - forcing/era5
 
 experiment:
   name: osse-spinup
   description: OSSE stage A, gom_12km spinup from the GLORYS initial condition
+
+vars:
+  # The truth archive, not the experiment one, because this run is the front of
+  # the nature run's trajectory in everything but name. Settling the state
+  # against a GEFS forecast of the weather and then handing it to a run driven
+  # by the weather would put the discontinuity back one stage rather than
+  # remove it.
+  forcing_purpose: gom_truth
 
 cycle:
   # The valid time of the initial condition below: GLORYS 2015-06-01 plus the

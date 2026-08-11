@@ -85,12 +85,17 @@ cleanup:
   keep_every: P10D
 
 model:
-  # The end of the spinup. Naming another experiment's restart set directly is
-  # what `cleanup.keep_every` exists to make safe; see the schema.
+  # The end of the spinup, promoted to the initial condition stage rather than
+  # named where it landed:
   #
-  # **The directory is the cycle's start, the state is valid at its end.** This
-  # is the spinup's last cycle, which began on 06-27 and ran P5D, so the restart
-  # under it carries 2015-07-02 in `coupler.res` and that is what `cycle.start`
-  # below has to match. Naming `20150702T000000Z` here reads correctly and does
-  # not exist.
-  initial_condition: $(output_root)/osse-spinup/run/20150627T000000Z/rst/mem000
+  #   tools/restamp-ic.sh $ACKBAR_OUTPUT_ROOT/osse-spinup/run/20150627T000000Z/rst/mem000 \
+  #                       gom_12km spinup-era5 2015-07-02T00
+  #
+  # The date is the state's own, so nothing is restamped in the sense that tool
+  # usually means; it is being used for the copy and the README it writes.
+  #
+  # **This used to name the spinup's run directory directly**, which made the
+  # nature run the one experiment seeding from inside another's `run/` tree, the
+  # disposable tier that `cleanup.keep_cycles` prunes. It survived only because
+  # of a retention setting and a cleanup pass that remembered the exception.
+  initial_condition: $(static_root)/ic/gom_12km/spinup-era5/20150702T00
