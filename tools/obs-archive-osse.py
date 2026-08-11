@@ -3,9 +3,18 @@
 
     .venv/bin/python tools/obs-archive-osse.py --domain gom_25km \\
         --state $ACKBAR_STATIC_ROOT/ic/gom_25km/glorys-smoke/20150711T00 \\
-        --start 2015-07-11T00:00:00Z --length PT12H --count 4 \\
+        --start 2015-07-11T00:00:00Z --bin PT12H --count 4 \\
         --platforms adt_3a sst_noaa19 \\
         --out $ACKBAR_STATIC_ROOT/obs/gom-osse-smoke/2015
+
+**The archive knows nothing about the assimilation cycle.** It is written in
+fixed time bins, one directory per platform and one file per bin named by the
+bin's start, and `--bin` is a property of the archive rather than of any
+experiment that reads it. `stage.obs` joins the bins a window touches and lets
+ioda make the single cut. `src/ackbar/obsarchive.py` is the reference for the
+layout and for the bug that produced it: an archive cut at the window boundary
+loses every observation that lands on one, because a window is `(begin, end]`
+and the file holding that instant is filed under the window that excludes it.
 
 `--platforms` is not optional under `--state`, and this example omitted it until
 the profile platforms landed in the default set. A single state carries a two
@@ -40,7 +49,7 @@ tier 3 archive is built with, and it stays because those tests are pinned to it.
 
     .venv/bin/python tools/obs-archive-osse.py --domain gom_25km \\
         --truth-run $ACKBAR_STATIC_ROOT/truth/gom_25km/osse-2015 \\
-        --start 2015-07-14T00:00:00Z --length PT24H --count 21 \\
+        --start 2015-07-14T00:00:00Z --bin P1D --count 21 \\
         --out $ACKBAR_STATIC_ROOT/obs/gom-osse-2015/2015
 
 `--truth-run` is the real thing: a free run promoted by `tools/local/promote-truth.sh`,
@@ -71,7 +80,8 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from ackbar.duration import parse_duration, parse_instant  # noqa: E402
+from ackbar import obsarchive  # noqa: E402
+from ackbar.duration import format_duration, parse_duration, parse_instant  # noqa: E402
 
 #: Where the truth's anomaly comes from. `amplitude` is the peak surface
 #: temperature anomaly and `bumps` how many of them; half are cool.
@@ -474,9 +484,11 @@ def main(argv=None):
     parser.add_argument("--gridspec", type=Path,
                         help="overrides the path derived from --domain")
     parser.add_argument("--start", required=True,
-                        help="the first cycle's analysis time, ISO 8601")
-    parser.add_argument("--length", required=True, help="cycle length, ISO 8601")
-    parser.add_argument("--count", type=int, required=True, help="how many cycles")
+                        help="the first bin's start, ISO 8601")
+    parser.add_argument("--bin", required=True, dest="span",
+                        help="time bin the archive is filed in, ISO 8601. P1D "
+                             "for the OSSE; nothing downstream depends on it")
+    parser.add_argument("--count", type=int, required=True, help="how many bins")
     parser.add_argument("--out", required=True, type=Path,
                         help="the archive directory: obs/<source>/<period>")
     parser.add_argument("--platforms", nargs="*", default=sorted(PLATFORMS),
@@ -555,39 +567,52 @@ def main(argv=None):
                 PLATFORMS[name]["_truth"] = truth
 
     start = parse_instant(args.start)
-    length = parse_duration(args.length)
+    span = parse_duration(args.span)
+    write_readme(args.out, start, span, args.count, args.platforms)
     for index in range(args.count):
-        analysis = start + index * length
-        # The same window the workflow computes: centred on the analysis time
-        # and as long as the cycle, so consecutive windows tile without gap.
-        begin = analysis - length / 2
-        target = args.out / analysis.strftime("%Y%m%d%H")
-        target.mkdir(parents=True, exist_ok=True)
-        # Per cycle, so that consecutive windows do not observe the same
-        # points. An archive that samples one fixed set of locations lets an
-        # analysis converge onto them and look better than it is.
-        rng = np.random.default_rng([args.seed, index])
+        # Bins tile the period, `[begin, begin + span)`, so the archive is
+        # contiguous by construction: every instant in the period is in exactly
+        # one bin, and `ackbar.obsarchive` relies on that and on nothing else.
+        # No window, no analysis time, and no cycle appears here or in the path
+        # anything is written to.
+        begin = start + index * span
+        # Keyed on the bin's own start rather than on a position in this run, so
+        # that a given bin is the same file whether it was asked for on its own
+        # or as one of forty five, and so that extending an archive does not
+        # redraw what is already in it. Seconds since `EPOCH`, which is an exact
+        # integer for any bin and any start.
+        #
+        # One generator for the bin and not one per platform, which is the
+        # tempting version and is wrong: two platforms of the same shape drawing
+        # from generators seeded alike would draw the same noise, and an
+        # observing system whose errors are correlated across platforms for no
+        # physical reason is worse than one whose draw order depends on the
+        # platform list.
+        rng = np.random.default_rng(
+            [args.seed, int((begin - EPOCH).total_seconds())])
         for platform in args.platforms:
+            target = args.out / platform
+            target.mkdir(parents=True, exist_ok=True)
             spec = PLATFORMS[platform]
             # Draw order is load bearing: locations and times inside `observe`,
-            # then errors, all off one generator per cycle. A change anywhere in
+            # then errors, all off one generator per bin. A change anywhere in
             # that sequence shifts every draw after it, so the guarantee here is
             # narrow and worth stating exactly: **the same command at the same
             # commit reproduces the same files.** It is not that an archive
             # survives a change to this tool: any such change moves tier 3's
             # pinned numbers when the smoke archive is rebuilt, which is
             # expected rather than a bug to hunt elsewhere.
-            lon, lat, when, depth = observe(grid, spec, begin, begin + length, rng)
-            path = target / f"{platform}.{begin.strftime('%Y%m%d%H')}.nc4"
+            lon, lat, when, depth = observe(grid, spec, begin, begin + span, rng)
+            path = target / obsarchive.name(begin)
             if lon.size == 0:
-                # A satellite that did not pass over the domain this cycle. No
-                # file, rather than a file with no locations in it: ACKBAR
-                # already drops an observer whose window is missing from the
-                # archive, and `ackbar validate` says so in as many words, while
-                # an ioda file with a zero length `Location` dimension is
-                # something the observer has to survive and nothing promises it
-                # will. CryoSat-2 does this about once in forty five cycles,
-                # which is what a 369 day repeat over a small domain looks like.
+                # A satellite that did not pass over the domain during this bin.
+                # No file, rather than a file with no locations in it: a bin
+                # with no file is a bin that was empty, which `obsarchive`'s
+                # selection rule already handles, while an ioda file with a zero
+                # length `Location` dimension is something the observer has to
+                # survive and nothing promises it will. CryoSat-2 does this about
+                # once in forty five days, which is what a 369 day repeat over a
+                # small domain looks like.
                 print(f"obs-archive-osse: {platform} does not pass over the "
                       f"domain during {begin:%Y-%m-%d %H:%M}, no file written")
                 continue
@@ -2012,6 +2037,48 @@ def errors(spec, depth):
         return np.full(np.shape(depth) if depth is not None else (), spec["error"])
     table = np.array(spec["error by depth"], dtype=float)
     return np.interp(depth, table[:, 0], table[:, 1])
+
+
+def write_readme(out, start, span, count, platforms):
+    """The note that says what the layout is, beside the archive it describes.
+
+    An archive outlives the command that made it and is read by people who did
+    not run it, and the one thing they have to know is not in any filename: that
+    the bins tile the period, so that the file with the largest start at or
+    before an instant is the file that instant is in. Everything `stage.obs`
+    does rests on that sentence.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "README.md").write_text(f"""\
+# Observation archive
+
+Written by `tools/obs-archive-osse.py`. Synthetic: nothing in here is a
+measurement of the ocean.
+
+    <platform>/<bin start>.nc4
+
+One directory per platform, one ioda file per time bin, named by the ISO
+timestamp of the bin's start in UTC. Nothing about an assimilation cycle is in
+the layout, on purpose: an archive cut at window boundaries loses every
+observation that lands on one, and pins the window length of every experiment
+that reads it.
+
+**The bins tile the period and do not overlap.** Bin `k` holds exactly the
+observations whose time falls in `[start + k*bin, start + (k+1)*bin)`. A bin
+with no observations has no file, which is not a gap in the tiling: it means
+that bin was empty.
+
+    start   {start.strftime('%Y-%m-%dT%H:%M:%SZ')}
+    bin     {format_duration(span)}
+    bins    {count}
+    end     {(start + count * span).strftime('%Y-%m-%dT%H:%M:%SZ')}
+
+Platforms: {', '.join(sorted(platforms))}.
+
+`stage.obs` joins the bins a window touches and lets ioda apply its own half
+open `(begin, end]` cut to the result. `src/ackbar/obsarchive.py` is the
+reference for the selection rule and for why this layout exists.
+""")
 
 
 def write_obs(path, spec, lon, lat, values, begin, offsets, depth=None,

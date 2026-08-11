@@ -37,7 +37,7 @@ def refuse(platforms, tmp_path):
         [sys.executable, str(TOOL),
          "--domain", "gom_25km",
          "--state", str(tmp_path / "there-is-no-state-here"),
-         "--start", "2015-01-05T01:00:00Z", "--length", "PT12H", "--count", "1",
+         "--start", "2015-01-05T00:00:00Z", "--bin", "P1D", "--count", "1",
          "--platforms", *platforms,
          "--out", str(tmp_path / "out")],
         capture_output=True, text=True,

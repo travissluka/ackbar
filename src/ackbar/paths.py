@@ -78,7 +78,13 @@ from .duration import parse_instant
 #: cycle. A product and not an intermediate: the next cycle's rolling average
 #: reads the previous cycle's, and a run's series of them is the only record of
 #: what the vertical correlation did over time. See `run.vertical_correlation_record`.
-SUBDIRS = ("cfg", "ana", "bkg", "corr_vt", "fcst", "obs_out", "run")
+#: `obs_in` holds what each cycle actually handed its observers: the bins of the
+#: archive that touch the window, joined into one file per platform. Kept rather
+#: than reaped, and at the top level beside `obs_out` rather than under `run/`,
+#: because it is the input side of the same product: what was assimilated is not
+#: answerable from the archive alone once the archive is window agnostic, and
+#: these are kilobytes beside the states `run/` holds.
+SUBDIRS = ("cfg", "ana", "bkg", "corr_vt", "fcst", "obs_in", "obs_out", "run")
 
 #: What a cycle's `run/` directory holds that `cleanup` may delete, and how many
 #: cycles earlier than the shared horizon each one may go. Everything else under
@@ -322,6 +328,15 @@ class Paths:
         Kilobytes beside gigabytes, and only one of the two is worth keeping.
         """
         return self.sub("ana") / self.date(cycle) / "members.json"
+
+    def obs_in(self, cycle):
+        """Where `stage.obs` joins this cycle's observations for the observers.
+
+        One directory per cycle holding one file per platform, named without a
+        date: the cycle is the directory and the observer layer's `obsdatain`
+        names this path. Nothing reads the archive directly.
+        """
+        return self.sub("obs_in") / self.date(cycle)
 
     def obs_summary(self, cycle):
         """One cycle's observation-space statistics. See `ackbar/post.py`.

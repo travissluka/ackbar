@@ -83,6 +83,48 @@ PATHS_CYCLE = {
 }
 
 
+def write_bin(directory, start, times, *, variable="seaSurfaceTemperature",
+              longitude=-90.0, latitude=25.0):
+    """One time bin of an observation archive, as a small but real ioda file.
+
+    *times* are instants, and they are written the way ioda writes them and the
+    way `stage.obs` has to read them back: integer offsets against an epoch
+    named in `MetaData/dateTime`'s `units`, which here is the bin's own start.
+    That per file epoch is the reason the join has to rebase rather than
+    concatenate, so a fixture that skipped it would not exercise the thing most
+    likely to be wrong.
+
+    Returns the path, named by the bin's start under `ackbar.obsarchive`'s
+    convention.
+    """
+    import netCDF4
+    import numpy as np
+
+    from ackbar import obsarchive
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / obsarchive.name(start)
+    with netCDF4.Dataset(path, "w") as data:
+        data.createDimension("Location", len(times))
+        data.createVariable("Location", "i4", ("Location",))[:] = \
+            np.arange(len(times))
+        meta = data.createGroup("MetaData")
+        when = meta.createVariable("dateTime", "i8", ("Location",))
+        when.units = f"seconds since {start.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        when[:] = np.array([int((moment - start).total_seconds())
+                            for moment in times], dtype="i8")
+        meta.createVariable("longitude", "f4", ("Location",))[:] = \
+            np.full(len(times), longitude)
+        meta.createVariable("latitude", "f4", ("Location",))[:] = \
+            np.full(len(times), latitude)
+        for group in ("ObsValue", "ObsError", "PreQc"):
+            data.createGroup(group).createVariable(
+                variable, "f4", ("Location",))[:] = np.zeros(len(times))
+        data._ioda_layout = "ObsGroup"
+    return path
+
+
 def experiment_paths(name, site):
     """`Paths` for a committed test experiment, created or not.
 

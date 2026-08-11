@@ -1457,8 +1457,13 @@ def _stage_obs(config, site, paths, cycle, task, member):
     print(f"ackbar: cycle {cycle} staged "
           f"{sum(1 for r in records if r['present'])}/{len(records)} observer(s) "
           f"-> {paths.observer_list(cycle)}")
+    for record in records:
+        if record["present"]:
+            print(f"ackbar:   {record['name']}: {record.get('rows', 0)} row(s) "
+                  f"from {len(record['sources'])} archive bin(s) "
+                  f"-> {record['input']}")
     for name in dropped:
-        print(f"ackbar:   dropped {name}, no input file for this window")
+        print(f"ackbar:   dropped {name}, no archive bin covers this window")
 
 
 def _hofx_ext(config, site, paths, cycle, task, member):

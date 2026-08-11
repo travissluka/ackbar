@@ -14,10 +14,17 @@ inherit:
 observations:
 - obs space:
     name: adt_saral
+    # Where this platform's bins are in the archive. ACKBAR's own key, like
+    # `$required`: `stage.obs` joins the bins this cycle's window touches into
+    # the `obsdatain` file below, and JEDI is never shown either the archive or
+    # this key. The archive is filed in fixed time bins that know nothing about
+    # the cycle, so there is no per cycle path here to name.
+    # See `src/ackbar/obsarchive.py`.
+    $archive: $(obs_dir)/adt_saral
     obsdatain:
       engine:
         type: H5File
-        obsfile: $(obs_dir)/{{current_cycle:%Y%m%d%H}}/adt_saral.{{window_begin:%Y%m%d%H}}.nc4
+        obsfile: $(obs_in_dir)/{{current_cycle:%Y%m%dT%H%M%SZ}}/adt_saral.nc4
     obsdataout:
       engine:
         type: H5File

@@ -1,10 +1,18 @@
 """Which observers actually ran, and where their files came from.
 
 The in-cycle observation step is deliberately small. There is no downloading and
-no conversion: an archive built offline already holds one file per platform per
-window, and this reduces to finding the file this window needs and noticing when
-it is not there. See Observations in `docs/design.md` for why that is the whole
-job.
+no conversion: an archive built offline already holds every observation, filed
+in fixed time bins that know nothing about any cycle, and this reduces to
+joining the bins this window touches and noticing when there are none. See
+Observations in `docs/design.md` for why that is the whole job, and
+`ackbar/obsarchive.py` for the layout, the selection rule, and the bug that
+produced both.
+
+The join is the one piece of real work here, and it is the reason the archive is
+allowed to be window agnostic. The alternative, an archive already cut into
+windows, put a file boundary exactly where an observation could fall through:
+ioda keeps `(begin, end]`, so an observation at the instant a window opens is
+dropped by that window and was in no other window's file.
 
 What is *not* small is the consequence of a file being absent. An observer whose
 input is missing is dropped and the cycle continues, which is the right
@@ -23,7 +31,7 @@ rather than absent from it.
 cycle, which is what an experiment says when the platform is the reason the
 experiment exists.
 
-What is *not* a gap is a window in which no observer at all has a file. Nothing
+What is *not* a gap is a window in which no observer at all has anything. Nothing
 downstream can tell that cycle from a healthy one: the analysis is skipped
 because there is nothing to assimilate, the writeback copies the background
 forward, and `post.obs` writes a document of zeros and passes. So `realize`
@@ -34,7 +42,14 @@ whose other windows are on disk to be compared against. See `_archive_covers`.
 import json
 from pathlib import Path
 
-from .config.jobtime import render, symbols
+from . import obsarchive
+from .config.jobtime import render, symbols, window_bounds
+
+#: Where this platform's bins live: a directory of the observation archive, one
+#: level down from what an experiment sets `obs_dir` to. ACKBAR's own key, for
+#: the reason `REQUIRED` is: JEDI is handed the joined file and never the
+#: archive, so a key naming the archive must not reach it.
+ARCHIVE = "$archive"
 
 #: Whether a missing input file fails the cycle. See the module docstring.
 #:
@@ -51,7 +66,7 @@ REQUIRED = "$required"
 #: being rejected for a value that was never meant to leave here is a bad way to
 #: lose a cycle. `LOCALIZATION` is not among them: it sits at the top of an
 #: observer rather than inside `obs space`, and `soca._observers` consumes it.
-OWN_KEYS = (REQUIRED,)
+OWN_KEYS = (REQUIRED, ARCHIVE)
 
 #: An observer's own observation-space localization, which only an ensemble
 #: filter reads. ACKBAR's key rather than UFO's `obs localizations`, because the
@@ -73,21 +88,44 @@ def observers(config, cycle):
 
     Returns a list of records in configuration order. `present` is the answer to
     the only question this module asks the filesystem, and it is asked once,
-    here, rather than by each of the things that later want to know.
+    here, rather than by each of the things that later want to know. It is a
+    question about the *archive*, not about the staged file: the staged file is
+    this cycle's own output and does not exist until `realize` has written it,
+    so asking after it would make every observer absent until the moment it is
+    not.
+
+    `sources` is the bins the join will read, in time order, and it is carried
+    on the record rather than recomputed by the staging step so that the
+    decision and the work cannot disagree about what the window touches.
+
+    **What makes an observer present is an observation in the window, not a file
+    on disk.** Under a window agnostic archive those are different questions: the
+    selection rule reaches back to the last bin at or before the window, so a
+    file is nearly always found, and an archive that stopped half way through an
+    experiment would otherwise keep every observer for every later cycle, hand
+    each one a file with nothing inside its window, and record a full observing
+    system that assimilated nothing. So the times are read and counted, which is
+    what `window rows` is.
     """
     table = symbols(config, cycle)
+    begin, end = table["window_begin"], table["window_end"]
     records = []
     for entry in config.get("observations") or ():
         rendered = render(entry, table)
         space = rendered.get("obs space") or {}
         name = space.get("name", "")
-        source = _obsfile(space, "obsdatain")
+        archive = space.get(ARCHIVE) or ""
+        sources = obsarchive.window(archive, begin, end) if archive else []
+        found = obsarchive.count_inside(sources, begin, end) if sources else 0
         records.append({
             "name": name,
             "required": bool(space.get(REQUIRED)),
-            "input": source,
+            "archive": archive,
+            "sources": [str(path) for path in sources],
+            "input": _obsfile(space, "obsdatain"),
             "output": _obsfile(space, "obsdataout"),
-            "present": bool(source) and _exists(source),
+            "window rows": found,
+            "present": bool(found),
             "config": strip_own_keys(rendered),
         })
     return records
@@ -95,10 +133,6 @@ def observers(config, cycle):
 
 def _obsfile(space, side):
     return ((space.get(side) or {}).get("engine") or {}).get("obsfile", "")
-
-
-def _exists(path):
-    return Path(path).exists()
 
 
 def strip_own_keys(entry):
@@ -112,24 +146,58 @@ def strip_own_keys(entry):
 
 
 def realize(config, paths, cycle):
-    """Decide the cycle's observer set and write the list. Returns the records.
+    """Stage the cycle's observations, decide the observer set, write the list.
 
-    Raises if a required observer's file is missing, which is the one case where
-    a gap in the archive is an error rather than a fact about the archive, and
-    if no observer has a file at all. See `_no_observations` for why those are
+    Raises if a required observer has nothing in this window, which is the one
+    case where a gap in the archive is an error rather than a fact about it, and
+    if no observer has anything at all. See `_no_observations` for why those are
     different questions.
+
+    The join happens before the list is written, so the list never claims an
+    observer is present on the strength of a file the join then failed to
+    produce.
     """
+    begin, end = window_bounds(config, cycle)
     records = observers(config, cycle)
+    nameless = [r for r in records if not r["archive"]]
+    if nameless:
+        raise ObservationError(
+            f"{len(nameless)} observer(s) name no {ARCHIVE} for cycle {cycle}: "
+            + ", ".join(r["name"] for r in nameless)
+            + f". Every observer layer names the archive directory its platform's "
+            f"time bins are in; see src/ackbar/obsarchive.py."
+        )
     missing = [r for r in records if r["required"] and not r["present"]]
     if missing:
         raise ObservationError(
-            f"{len(missing)} required observer(s) have no input file for cycle "
-            f"{cycle}: " + ", ".join(f"{r['name']} ({r['input']})" for r in missing)
+            f"{len(missing)} required observer(s) have no observation in the "
+            f"window of cycle {cycle}: "
+            + ", ".join(f"{r['name']} ({r['archive']})" for r in missing)
         )
     if records and not any(r["present"] for r in records):
         raise ObservationError(_no_observations(config, cycle, records))
+    for record in records:
+        if record["present"]:
+            stage(record, begin, end)
     write(paths, cycle, records)
     return records
+
+
+def stage(record, begin, end):
+    """Join one observer's bins into the file its `obsdatain` names.
+
+    Sets `rows`, the size of the staged file, which is larger than `window rows`
+    on purpose: a bin is not cut to fit a window, so the staged file is a little
+    wider than the window at each end and ioda makes the single cut. Cutting
+    here as well would put the half open rule in two places, and the second copy
+    is the one that would be wrong.
+    """
+    try:
+        record["rows"] = obsarchive.concatenate(record["sources"],
+                                                Path(record["input"]))
+    except obsarchive.ArchiveError as error:
+        raise ObservationError(f"{record['name']}: {error}") from error
+    return record
 
 
 def _no_observations(config, cycle, records):
@@ -151,16 +219,16 @@ def _no_observations(config, cycle, records):
     path that resolves to nothing. `_archive_covers` asks which.
 
     Deliberately no way to say "an empty cycle is fine here". The case does not
-    exist yet: every archive this runs on is generated per window by
-    `tools/obs-*`, so an empty window is a hole in a thing that was supposed to
-    be complete. An experiment that genuinely wants to assimilate nothing for a
+    exist yet: every archive this runs on is generated by `tools/obs-*` over a
+    period it covers completely, so a window with nothing in it is a hole in a
+    thing that was supposed to be whole. An experiment that genuinely wants to assimilate nothing for a
     stretch says so by not configuring observers, or by not running those cycles.
     """
     names = ", ".join(record["name"] for record in records)
     elsewhere = _archive_covers(config, cycle)
     if elsewhere is None:
         return (
-            f"cycle {cycle} has no observation file for any of its "
+            f"cycle {cycle} has no observation for any of its "
             f"{len(records)} observers ({names}), and neither does any other "
             f"cycle of this experiment. That is a path that resolves to nothing "
             f"or an offline stage that never ran, not a gap in the archive. "
@@ -168,8 +236,8 @@ def _no_observations(config, cycle, records):
             f"submitted; reaching it here means the archive moved after the "
             f"experiment was created.")
     return (
-        f"cycle {cycle} has no observation file for any of its {len(records)} "
-        f"observers ({names}), while cycle {elsewhere} has one. A platform goes "
+        f"cycle {cycle} has no observation for any of its {len(records)} "
+        f"observers ({names}), while cycle {elsewhere} has some. A platform goes "
         f"down on its own and the rest of the archive answers; all of them at "
         f"one instant is a window that was never built, or an experiment whose "
         f"period runs past the archive it names. Left to run, this cycle "
@@ -180,13 +248,14 @@ def _no_observations(config, cycle, records):
 def _archive_covers(config, cycle):
     """Another cycle of this experiment whose window some observer has a file for.
 
-    None when there is none. Rendering every cycle's paths and statting them is
-    the same question `validate._observation_step` asks up front, asked again
-    here because an archive can be moved or half-rebuilt after an experiment is
+    None when there is none. Asking every cycle's window of the archive is the
+    same question `validate._observation_step` asks up front, asked again here
+    because an archive can be moved or half-rebuilt after an experiment is
     created, and because `ackbar validate --offline` never asked it at all.
 
-    Only on the way to failing, so its cost is a few hundred `stat` calls in a
-    cycle that is about to stop.
+    Only on the way to failing, and the archive's times are cached by
+    `obsarchive`, so its cost is reading each bin once in a cycle that is about
+    to stop.
     """
     for other in range(1, int(config["cycle"]["count"]) + 1):
         if other == cycle:

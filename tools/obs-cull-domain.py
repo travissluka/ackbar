@@ -103,6 +103,7 @@ radius than redefining absence.
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -234,14 +235,18 @@ def _copy_variable(name, variable, target, keep):
     out[...] = np.compress(keep, np.asarray(variable[...]), axis=axis)
 
 
-def platform_of(path):
-    """The observer a file belongs to, which is its name before the date.
+def platform_of(relative):
+    """The observer a file belongs to: the directory it is filed under.
 
-    `adt_j2.2015071206.nc4` is `adt_j2`. Used only to total the report by
-    platform, so a naming scheme this does not recognize degrades to a coarser
-    report rather than to an error.
+    `adt_j2/20150716T000000Z.nc4` is `adt_j2`. *relative* is the path below the
+    archive root, so a file sitting at the root has no platform to report and
+    falls back to its own stem. Used only to total the report by platform, so a
+    layout this does not recognize degrades to a coarser report rather than to
+    an error.
     """
-    return path.name.split(".")[0]
+    if relative.parent != Path("."):
+        return relative.parts[0]
+    return relative.name.split(".")[0]
 
 
 def main():
@@ -280,15 +285,24 @@ def main():
         sys.exit(f"obs-cull-domain: {args.source} holds no .nc4 files, so there "
                  f"is no archive here to cull")
 
+    # The note that says what the layout is travels with the archive. A culled
+    # archive is the one an experiment actually reads, so it is the copy whose
+    # reader most needs to be told that the bins tile the period.
+    readme = args.source / "README.md"
+    if readme.exists():
+        args.out.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(readme, args.out / readme.name)
+
     totals = {}
     empties = 0
     for path in files:
-        target = args.out / path.relative_to(args.source)
+        relative = path.relative_to(args.source)
+        target = args.out / relative
         try:
             kept, total = cull_file(path, target, box)
         except CullError as error:
             sys.exit(f"obs-cull-domain: {path} {error}")
-        count = totals.setdefault(platform_of(path),
+        count = totals.setdefault(platform_of(relative),
                                   {"kept": 0, "total": 0, "files": 0})
         count["kept"] += kept
         count["total"] += total

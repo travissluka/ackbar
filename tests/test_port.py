@@ -261,10 +261,17 @@ class TestResolvedPort:
         # lets a hybrid give one answer to the solve and another to the filter.
         assert "distribution" not in observer(resolved, "sst_noaa19")["obs space"]
 
-    def test_input_paths_come_from_the_archive_and_output_from_the_layout(self, resolved):
+    def test_the_archive_is_named_apart_from_what_the_observer_reads(self, resolved):
+        """Two paths, and the observer's input is not in the archive.
+
+        `$archive` is where this platform's time bins are; `obsdatain` is the
+        file `stage.obs` joins them into, under the experiment. The archive
+        knows nothing about a cycle, so its path carries no date at all.
+        """
         space = observer(resolved, "adt_3a")["obs space"]
+        assert space["$archive"] == "/archive/obs/osse_2018/adt_3a"
         assert space["obsdatain"]["engine"]["obsfile"].startswith(
-            "/archive/obs/osse_2018/"
+            "/out/letkf_om1deg/obs_in/"
         )
         assert space["obsdataout"]["engine"]["obsfile"].startswith(
             "/out/letkf_om1deg/obs_out/"
@@ -272,9 +279,10 @@ class TestResolvedPort:
 
     def test_job_time_tokens_survive_the_experiment_time_pass(self, resolved):
         space = observer(resolved, "adt_3a")["obs space"]
-        obsfile = space["obsdatain"]["engine"]["obsfile"]
-        assert "{{current_cycle:%Y%m%d%H}}" in obsfile
-        assert "{{window_begin:%Y%m%d%H}}" in obsfile
+        assert "{{current_cycle:%Y%m%dT%H%M%SZ}}" in \
+            space["obsdatain"]["engine"]["obsfile"]
+        assert "{{window_begin:%Y%m%d%H}}" in \
+            space["obsdataout"]["engine"]["obsfile"]
         assert space["obs perturbations seed"] == "{{seed}}"
 
     def test_nothing_is_left_unsubstituted(self, resolved):

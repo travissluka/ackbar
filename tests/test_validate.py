@@ -8,6 +8,7 @@ is not there.
 """
 
 import stat
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import netCDF4
@@ -15,8 +16,12 @@ import numpy as np
 import pytest
 import yaml
 
+from conftest import write_bin
+
 from ackbar.cli import main
-from ackbar.config.jobtime import render, symbols
+from ackbar.duration import parse_instant
+from ackbar import obsarchive
+from ackbar.config.jobtime import render, symbols, window_bounds
 from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
@@ -71,6 +76,12 @@ def steps(findings):
     return sorted({f.step for f in findings})
 
 
+#: A cycle a day, for the tables the cycle step reads. Any instants would do:
+#: what the step reads is which windows have an observation in them.
+CYCLE_ONE = parse_instant("2018-04-15T00:00:00Z")
+DAY = timedelta(days=1)
+
+
 #: Step 4 checks the `soca_*.x` the graph names, and a checkout with no built
 #: bundle reports every one of them. That is step 4 working, but it lands in the
 #: finding list the step 3 tests assert on, so nine tests fail for a reason that
@@ -123,37 +134,50 @@ def stage(findings):
             target.mkdir(parents=True, exist_ok=True)
 
 
-def observation_files(config):
-    """Every observation file the experiment will look for, over every cycle.
+def observation_bins(config):
+    """Every archive time bin the experiment's windows will reach for.
+
+    One bin per observer per cycle, starting at that cycle's window, which is
+    the smallest archive that covers the experiment: the selection rule takes
+    the last bin at or before the window's start, so a bin starting exactly
+    there is the one it finds. The archive could equally be daily and the
+    experiment would not know, which is the point of it.
 
     Rendered the way validate renders it rather than globbed off disk, because
     the point of these tests is what the configuration asks for.
     """
     found = set()
     for cycle, member in job_time_context(config, build_graph(config)):
+        begin, _ = window_bounds(config, cycle)
         rendered = render(config, symbols(config, cycle, member))
         for entry in rendered.get("observations") or ():
             space = entry.get("obs space") or {}
-            engine = (space.get("obsdatain") or {}).get("engine") or {}
-            if engine.get("obsfile"):
-                found.add(Path(engine["obsfile"]))
+            if space.get("$archive"):
+                found.add(Path(space["$archive"]) / obsarchive.name(begin))
     return sorted(found)
 
 
 def stage_observations(config, skip=()):
-    """Create the archive, optionally leaving some files out.
+    """Create the archive, optionally leaving some bins out.
+
+    Real ioda files rather than empty ones, because what decides whether an
+    observer runs is no longer whether a file is there: the selection rule
+    reaches back to the last bin at or before a window, so the question is
+    whether any observation in the bins is inside the window, and validate reads
+    the times to answer it. Each bin holds one observation, an hour in.
 
     A skip that matches nothing is an error rather than a no-op: a test that
     means to leave a gap and leaves none passes for the wrong reason, and the
-    windows here are dates that are easy to mistype.
+    stamps here are dates that are easy to mistype.
     """
     left_out = 0
-    for path in observation_files(config):
+    for path in observation_bins(config):
         if any(part in str(path) for part in skip):
             left_out += 1
             continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+        start = datetime.strptime(path.stem, obsarchive.STAMP).replace(
+            tzinfo=timezone.utc)
+        write_bin(path.parent, start, [start + timedelta(hours=1)])
     assert not skip or left_out, f"nothing matched {skip}"
 
 
@@ -277,7 +301,7 @@ class TestStep3InputPaths:
     def test_an_unreadable_input_is_rejected_too(self, staged, schema, local_site):
         stage(full(staged, schema, site=local_site))
         stage_observations(staged)
-        target = observation_files(staged)[0]
+        target = observation_bins(staged)[0]
         target.chmod(0)
         try:
             found = full(staged, schema, site=local_site)
@@ -301,7 +325,7 @@ class TestStep3InputPaths:
         empty cycle below.
         """
         stage(full(staged, schema, site=local_site))
-        stage_observations(staged, skip=("adt_3a.2018041512",))
+        stage_observations(staged, skip=("adt_3a/20180415T120000Z",))
         assert full(staged, schema, site=local_site) == []
 
     @needs_build
@@ -317,10 +341,10 @@ class TestStep3InputPaths:
         be rebuilt.
         """
         stage(full(staged, schema, site=local_site))
-        stage_observations(staged, skip=("2018041600",))
+        stage_observations(staged, skip=("20180416T120000Z",))
         found = full(staged, schema, site=local_site)
         assert [f.where for f in found] == ["observations"]
-        assert "no observation file for any observer" in found[0].message
+        assert "no observation at all" in found[0].message
 
     @needs_build
     def test_an_observer_with_no_file_in_any_cycle_is_a_typo_and_is_reported(
@@ -343,10 +367,11 @@ class TestStep3InputPaths:
         # the check reverts to file by file.
         staged["observations"][0]["obs space"]["$required"] = True
         stage(full(staged, schema, site=local_site))
-        stage_observations(staged, skip=("adt_3a.2018041512",))
+        stage_observations(staged, skip=("adt_3a/20180415T120000Z",))
         found = full(staged, schema, site=local_site)
-        assert [f.where.endswith("2018041512.nc4") for f in found] == [True]
+        assert [f.where.endswith("adt_3a") for f in found] == [True]
         assert "required" in found[0].message
+        assert "2018-04-15T12:00:00Z" in found[0].message
 
     def test_a_saber_filepath_is_a_stem_and_the_file_it_names_ends_in_nc(
         self, keys, schema
@@ -409,17 +434,26 @@ class TestStep3ACycleWithNoObservationsAtAll:
     """
 
     def archive(self, tmp_path, present):
-        """`{observer: {cycle: [files]}}`, creating the ones marked present."""
+        """`{observer: {cycle: covered}}`, as a real archive of one bin a cycle.
+
+        A bin per cycle window, holding one observation inside it where the
+        cycle is marked covered and one an hour before the window opens where it
+        is not. Both cases have a file: under a window agnostic archive that is
+        no longer what decides, and a fixture that left the file out would pass
+        against a check that only asked whether one existed.
+        """
         observations = {}
         for name, cycles in present.items():
-            record = {"required": False, "paths": set(), "by_cycle": {}}
-            for cycle, exists in cycles.items():
-                path = tmp_path / f"{cycle}" / f"{name}.nc4"
-                if exists:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.touch()
+            record = {"required": False, "archive": str(tmp_path / name),
+                      "paths": set(), "by_cycle": {}}
+            for cycle, covered in cycles.items():
+                begin = CYCLE_ONE + (cycle - 1) * DAY
+                end = begin + DAY
+                when = begin + timedelta(hours=1) if covered \
+                    else begin - timedelta(hours=1)
+                path = write_bin(tmp_path / name, begin, [when])
                 record["paths"].add(str(path))
-                record["by_cycle"][cycle] = {str(path)}
+                record["by_cycle"][cycle] = (begin, end, [str(path)])
             observations[name] = record
         return observations
 
@@ -430,7 +464,7 @@ class TestStep3ACycleWithNoObservationsAtAll:
         }))
         assert [f.step for f in found] == [3]
         assert "1 of 3 cycle(s)" in found[0].message
-        assert "Cycle 1 has one" in found[0].message
+        assert "Cycle 1 has some" in found[0].message
 
     def test_one_observer_surviving_the_window_is_a_gap(self, tmp_path):
         # The case the whole observation path is built around, and the reason
@@ -688,7 +722,7 @@ class TestStep3ObservationsAreInTheDomain:
             for name, values in (("lon", lon), ("lat", lat)):
                 data.createVariable(name, "f8", ("time", "y", "x"))[:] = values[None]
 
-        for target in observation_files(config):
+        for target in observation_bins(config):
             target.parent.mkdir(parents=True, exist_ok=True)
             with netCDF4.Dataset(target, "w") as data:
                 data.createDimension("Location", 1)

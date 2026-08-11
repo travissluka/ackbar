@@ -30,7 +30,8 @@ import pytest
 from conftest import experiment_paths
 import yaml
 
-from ackbar import slurm
+from ackbar import obsarchive, slurm
+from ackbar.config.jobtime import window_bounds
 from ackbar.cli import main
 from ackbar.site import load_site
 
@@ -83,10 +84,15 @@ def archive(tmp_path_factory):
     source = yaml.safe_load(EXPERIMENT.read_text())["vars"]["obs_dir"]
     root = tmp_path_factory.mktemp("obs") / "archive"
     shutil.copytree(resolve_static(source), root)
-    # The archive is keyed by date, not by cycle number, and the cycle
-    # directories sort in time order, so this is the gap cycle's file.
-    missing = sorted(root.rglob(f"*/{GAP_OBSERVER}.*.nc4"))[GAP_CYCLE - 1]
-    missing.unlink()
+    # Every time bin the gap cycle's window touches, which is what it takes to
+    # leave that window with nothing: the archive is filed in bins that know
+    # nothing about a cycle, so how many files that is depends on the archive's
+    # own cadence and not on anything here. The cycles either side lose part of
+    # their window and keep the rest, which is what they assert.
+    config = yaml.safe_load(EXPERIMENT.read_text())
+    begin, end = window_bounds(config, GAP_CYCLE)
+    for missing in obsarchive.window(root / GAP_OBSERVER, begin, end):
+        missing.unlink()
     return root
 
 

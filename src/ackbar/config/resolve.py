@@ -66,7 +66,7 @@ def builtin_symbols(config, site):
     # here because they are not experiment-time directories at all: they live
     # under `run/<date>/`, so there is no one path a layer could be given, and
     # publishing one meant publishing a directory nothing creates.
-    for sub in ("cfg", "ana", "bkg", "corr_vt", "fcst", "obs_out", "run"):
+    for sub in ("cfg", "ana", "bkg", "corr_vt", "fcst", "obs_in", "obs_out", "run"):
         symbols[f"{sub}_dir"] = f"{experiment_dir}/{sub}"
 
     # The roots a layer needs in order to name a file that is not the

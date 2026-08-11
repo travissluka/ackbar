@@ -56,6 +56,7 @@ import yaml
 
 from ackbar import slurm
 from ackbar.cli import main
+from ackbar.duration import parse_duration, parse_instant
 from ackbar.site import load_site
 
 from test_tier2 import _purge, wait_for_quiet
@@ -128,13 +129,22 @@ def build_archive(source, root):
     """
     platforms = [layer.split("/", 1)[1] for layer in source["inherit"]
                  if layer.startswith("obs/")]
+    # Bins of one cycle length, starting where the first window starts, so the
+    # archive covers every window and one bin lines up with each. That is a
+    # choice this fixture makes and not something the workflow knows: the
+    # archive is filed in time bins that know nothing about a cycle, and
+    # `stage.obs` joins whichever of them a window touches. A daily archive
+    # would run this experiment identically, and lining the two up is only so
+    # that the gap below can be punched by removing one file.
+    length = parse_duration(source["cycle"]["length"])
+    start = parse_instant(source["cycle"]["start"]) - length / 2
     subprocess.run(
         [sys.executable, str(REPO / "tools" / "obs-archive-osse.py"),
          "--domain", DOMAIN,
          "--state", str(initial_condition()),
-         "--start", source["cycle"]["start"],
-         "--length", source["cycle"]["length"],
-         "--count", str(source["cycle"]["count"]),
+         "--start", start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+         "--bin", source["cycle"]["length"],
+         "--count", str(source["cycle"]["count"] + 1),
          "--platforms", *platforms,
          "--out", str(root)],
         check=True, capture_output=True,
@@ -154,7 +164,13 @@ def archive(tmp_path_factory):
     """
     source = yaml.safe_load((REPO / "tests/experiments/tier3_var.yaml").read_text())
     root = build_archive(source, tmp_path_factory.mktemp("obs"))
-    sorted(root.rglob(f"*/{GAP_OBSERVER}.*.nc4"))[GAP_CYCLE - 1].unlink()
+    # One bin per cycle, in time order, so the gap cycle's bin is its index.
+    # Removing it leaves that window with the bin before it, which holds
+    # nothing inside the window, and the bin after it, whose only instant
+    # inside the window is its first: these platforms draw their times at
+    # random and never land there. So the observer is dropped, and the cycles
+    # either side keep their own bins whole.
+    sorted((root / GAP_OBSERVER).glob("*.nc4"))[GAP_CYCLE - 1].unlink()
     return root
 
 

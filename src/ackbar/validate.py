@@ -25,7 +25,8 @@ import netCDF4
 import numpy as np
 import yaml
 
-from .config.jobtime import SYMBOL_NAMES, JobTimeError, render, symbols
+from .config.jobtime import (SYMBOL_NAMES, JobTimeError, render, symbols,
+                             window_bounds)
 from .config.jobtime import TOKEN as JOBTIME_TOKEN
 from .config.jobtime import unresolved as unresolved_jobtime
 from .config.lint import ambiguous_numbers
@@ -39,6 +40,8 @@ from .gridspec import (STAGGER_ATTR, STAGGER_VALUE, STAGGER_VALUE_GENERATED,
 from .soca import GRIDSPEC
 from .graph import GraphError, build_graph, job_time_context, member_set
 from .graph.build import extended_cycles
+from . import obsarchive
+from .observations import ARCHIVE as OBS_ARCHIVE
 from .observations import REQUIRED as OBS_REQUIRED
 
 #: The steps, in the order they run. Reported individually so that "what was
@@ -225,7 +228,7 @@ def _jobtime_step(config, graph):
             findings.append(Finding(
                 2, where, f"cycle {cycle}: token survived substitution: {value!r}"
             ))
-        _take_observation_inputs(rendered, observations, cycle)
+        _take_observation_inputs(config, cycle, rendered, observations)
         findings.extend(_forcing_pair(rendered))
         findings.extend(_forcing_table_files(rendered))
         _collect_paths(rendered, paths)
@@ -331,31 +334,43 @@ def _forcing_table_files(rendered):
     return findings
 
 
-def _take_observation_inputs(rendered, observations, cycle):
-    """Move each observer's input file out of the general path set.
+def _take_observation_inputs(config, cycle, rendered, observations):
+    """Move each observer's archive out of the general path set.
 
-    An observation file is the one input an experiment is allowed to be missing,
-    so it cannot be checked by the rule that governs every other path. Removed
-    from the tree rather than filtered afterwards, because the paths there are a
-    flat set of strings by then and nothing distinguishes an archive file from a
-    grid file.
+    Two things are removed rather than checked by the rule that governs every
+    other path, and for opposite reasons. The `obsdatain` file is this cycle's
+    *output*: `stage.obs` writes it by joining the archive bins the window
+    touches, so at validate time it does not exist and never should. The
+    archive directory is the real input, and it is the one input an experiment
+    is allowed to be partly missing, because an archive has gaps.
 
-    Kept by cycle as well as in one set, because the two observation steps ask
-    the same files two different questions: one is about an observer across the
+    Removed from the tree rather than filtered afterwards, because the paths
+    there are a flat set of strings by then and nothing distinguishes an
+    archive file from a grid file.
+
+    What is recorded per observer is one entry per cycle: that cycle's window
+    and the bins the window selects, computed by `obsarchive` so that the check
+    and `stage.obs` cannot disagree about what an archive covers. Kept by cycle
+    rather than in one set, because the two observation steps ask the same
+    archive two different questions: one is about an observer across the
     experiment, the other about a cycle across the observers.
     """
+    begin, end = window_bounds(config, cycle)
     for entry in rendered.get("observations") or ():
         space = entry.get("obs space") or {}
         engine = (space.get("obsdatain") or {}).get("engine") or {}
-        path = engine.pop("obsfile", None)
-        if not path:
-            continue
+        engine.pop("obsfile", None)
+        archive = space.pop(OBS_ARCHIVE, None)
         record = observations.setdefault(
             space.get("name", ""), {"required": bool(space.get(OBS_REQUIRED)),
-                                    "paths": set(), "by_cycle": {}},
+                                    "archive": archive, "by_cycle": {},
+                                    "paths": set()},
         )
-        record["paths"].add(path)
-        record["by_cycle"].setdefault(cycle, set()).add(path)
+        if not archive:
+            continue
+        bins = [str(path) for path in obsarchive.window(archive, begin, end)]
+        record["by_cycle"][cycle] = (begin, end, bins)
+        record["paths"].update(bins)
 
 
 #: Keys whose value is a filename with the extension left off. saber writes and
@@ -625,6 +640,11 @@ def _stamp(fields):
     return ("{0:04d}-{1:02d}-{2:02d}T{3:02d}:{4:02d}:{5:02d}Z").format(*fields)
 
 
+def _instant(when):
+    """A `datetime` as the findings spell one. See `_stamp` for the cftime case."""
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _observation_step(observations):
     """Observation files, which are the one input allowed to be absent.
 
@@ -639,45 +659,89 @@ def _observation_step(observations):
     expensive way to discover a typo. So the rule is by proportion rather than
     by count: some missing is the archive, all missing is the configuration.
 
-    A `required` observer is checked file by file, since the experiment has
+    A `required` observer is checked window by window, since the experiment has
     already said that its absence is not acceptable.
+
+    The unit is a window rather than a file, because the archive is not filed in
+    windows and a file is no longer the evidence. The selection rule reaches back
+    to the last bin at or before a window, so some file is nearly always found;
+    what settles the question is whether any observation in those bins is inside
+    the window, which is what `_covered` counts. Asking only whether a file
+    exists would make this step fire on nothing at all.
     """
     findings = []
     for name in sorted(observations):
         record = observations[name]
-        absent = sorted(p for p in record["paths"] if not os.path.exists(p))
+        if not record.get("archive"):
+            findings.append(Finding(3, f"observations.{name}", (
+                f"names no {OBS_ARCHIVE}, so nothing says where its "
+                f"observations are. Every observer layer names the archive "
+                f"directory its platform's time bins are in."
+            )))
+            continue
+        if not os.path.isdir(record["archive"]):
+            findings.append(Finding(3, record["archive"], (
+                f"observer {name} reads this archive directory and it does not "
+                f"exist"
+            )))
+            continue
         # A file that is there and cannot be read is not an archive gap. Nothing
-        # downstream treats it as one either: `stage.obs` asks whether the file
-        # exists, keeps the observer, and hofx fails on it.
+        # downstream treats it as one either: `stage.obs` joins what it finds
+        # and the application fails on it.
         findings += [
             Finding(3, path, "observation file is not readable")
-            for path in sorted(record["paths"] - set(absent))
-            if not os.access(path, os.R_OK)
+            for path in sorted(record["paths"])
+            if os.path.exists(path) and not os.access(path, os.R_OK)
         ]
-        if not absent:
+        empty = [(begin, end) for cycle, (begin, end, _) in
+                 sorted(record["by_cycle"].items()) if not _covered(record, cycle)]
+        if not empty:
             continue
         if record["required"]:
             findings += [
-                Finding(3, path, f"observer {name} is required and this file "
-                                 f"does not exist")
-                for path in absent
+                Finding(3, record["archive"],
+                        f"observer {name} is required and has no observation "
+                        f"in the window {_instant(begin)} to {_instant(end)}")
+                for begin, end in empty
             ]
-        elif len(absent) == len(record["paths"]):
+        elif len(empty) == len(record["by_cycle"]):
             findings.append(Finding(3, f"observations.{name}", (
-                f"no observation file exists for any of the {len(absent)} "
-                f"cycle(s) configured, for example {absent[0]}. One missing "
-                f"window is an archive gap and is dropped at run time; all of "
-                f"them is a wrong path."
+                f"nothing in {record['archive']} falls inside any of the "
+                f"{len(empty)} window(s) configured, the first of them "
+                f"{_instant(empty[0][0])} to {_instant(empty[0][1])}. "
+                f"One uncovered window is an archive gap and is dropped at run "
+                f"time; all of them is a wrong path or an archive built over "
+                f"another period."
             )))
     return findings
+
+
+def _covered(record, cycle):
+    """How many of one observer's observations fall in one cycle's window.
+
+    The archive's own answer to "does this observer run in this cycle", asked
+    the same way `observations.observers` asks it and off the same cache, so the
+    check before submission and the decision at run time cannot disagree.
+
+    A bin that cannot be read counts as nothing here and is reported separately
+    as unreadable: refusing outright would turn one corrupt file into a finding
+    about the archive's coverage, which sends the reader to the wrong place.
+    """
+    begin, end, bins = record["by_cycle"][cycle]
+    readable = [path for path in bins
+                if os.path.exists(path) and os.access(path, os.R_OK)]
+    try:
+        return obsarchive.count_inside(readable, begin, end)
+    except obsarchive.ArchiveError:
+        return 0
 
 
 def _observation_cycle_step(observations):
     """The same proportion rule as `_observation_step`, on the other axis.
 
-    That one reads down a column: an observer with no file in any cycle is a
-    wrong path. This one reads across a row: a cycle with no file for any
-    observer is a window the archive does not have.
+    That one reads down a column: an observer with nothing in any window is a
+    wrong path. This one reads across a row: a window with nothing for any
+    observer is a window the archive does not cover.
 
     **It is the failure nothing downstream can see.** The cycle runs to
     completion assimilating nothing, and every task in it succeeds: `stage.obs`
@@ -697,24 +761,25 @@ def _observation_cycle_step(observations):
     cycles = sorted({cycle for record in observations.values()
                      for cycle in record["by_cycle"]})
     empty = [cycle for cycle in cycles
-             if not any(os.path.exists(path)
-                        for record in observations.values()
-                        for path in record["by_cycle"].get(cycle, ()))]
+             if not any(_covered(record, cycle) for record in observations.values()
+                        if cycle in record["by_cycle"])]
     if not empty or len(empty) == len(cycles):
         return []
-    example = sorted(path for record in observations.values()
-                     for path in record["by_cycle"].get(min(empty), ()))
     covered = min(cycle for cycle in cycles if cycle not in empty)
+    when = next(record["by_cycle"][min(empty)]
+                for record in observations.values()
+                if min(empty) in record["by_cycle"])
     return [Finding(3, "observations", (
-        f"{len(empty)} of {len(cycles)} cycle(s) have no observation file for "
-        f"any observer: {', '.join(str(c) for c in empty[:8])}"
-        f"{' ...' if len(empty) > 8 else ''}. Cycle {covered} has one, so the "
+        f"{len(empty)} of {len(cycles)} cycle(s) have no observation at all, "
+        f"for any observer: {', '.join(str(c) for c in empty[:8])}"
+        f"{' ...' if len(empty) > 8 else ''}. Cycle {covered} has some, so the "
         f"archive exists and does not cover these windows. Each of them would "
         f"run to completion, assimilate nothing, and report success: there is "
         f"no output whose absence would say otherwise. Build the missing "
         f"windows, or run the cycles the archive covers. One platform missing "
         f"from a window is a gap and is dropped at run time; all of them is a "
-        f"window that is not there. For example {example[0]} does not exist."
+        f"window that is not there. The first is {_instant(when[0])} to "
+        f"{_instant(when[1])}."
     ))]
 
 
