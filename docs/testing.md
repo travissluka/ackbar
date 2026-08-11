@@ -39,6 +39,15 @@ ACKBAR_UPDATE_GOLDENS=1 .venv/bin/python -m pytest tests/test_graph.py
 and read the diff rather than accepting it. A golden that changed for a reason nobody can state
 is a graph change nobody intended.
 
+`tests/test_obs_order.py` pins the other kind of join, the one between two tasks: every
+observation file a graph's tasks hand to an observer has to be staged by a task that is an
+ancestor of the reader, or by the reader itself. It exists because a tier 0 and tier 1 suite
+that was entirely green missed `hofx.ext` reading windows that no cycle had staged yet, on
+every cycle of every experiment with an extended forecast. Nothing there was wrong about
+`stage.obs`; the gap was that every test of the observation paths was a test of a task reading
+its own cycle's window. A test written against one task's paths would miss the next one of
+these, so this one is written against the graph.
+
 `tests/test_templates.py` pins both halves of the join between `config/soca/` and
 `ackbar/soca.py`: a slot in a template with nothing to fill it is an application that dies on a
 config value, and a value computed for a slot the template does not have is a block that has

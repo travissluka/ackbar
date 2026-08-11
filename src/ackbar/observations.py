@@ -37,6 +37,20 @@ because there is nothing to assimilate, the writeback copies the background
 forward, and `post.obs` writes a document of zeros and passes. So `realize`
 refuses it, and the reason it can is that the archive is an offline product
 whose other windows are on disk to be compared against. See `_archive_covers`.
+
+**A lead window is not a cycle for that purpose.** `hofx.ext` reads the windows
+of the cycles its forecast reaches, several of them at once, and one of them
+having nothing costs a score at one lead and changes nothing else: there is no
+state to carry forward wrongly, no analysis to skip, and every experiment in a
+comparison reads the same archive, so the same lead is missing from all of them
+or from none. The refusal exists for the failure that is *invisible*, and this
+one is a departure file that is not there. So `stage_lead` drops an empty lead
+window and says so, and `realize` is the only thing that refuses.
+
+`$required` is read the same way and for the same reason. It says this platform
+is why the experiment exists, which is a statement about what gets assimilated,
+so it fails a cycle and not a lead: a verification stopped because an altimeter
+has a gap on day four costs the score at every other lead as well.
 """
 
 import json
@@ -195,6 +209,51 @@ def stage(record, begin, end):
     try:
         record["rows"] = obsarchive.concatenate(record["sources"],
                                                 Path(record["input"]))
+    except obsarchive.ArchiveError as error:
+        raise ObservationError(f"{record['name']}: {error}") from error
+    return record
+
+
+def redirect_input(record, path):
+    """Point one observer at a file the reading task stages for itself.
+
+    The sibling of `soca._redirect_output`, and here rather than there because
+    `input` is this module's key: the record and the document JEDI is handed
+    have to name one file, and a caller that set only one of them would leave
+    the other pointing at a path nothing writes.
+    """
+    record["input"] = str(path)
+    record["config"]["obs space"]["obsdatain"]["engine"]["obsfile"] = str(path)
+    return record
+
+
+def stage_lead(record, begin, end):
+    """Join and cut one lead window's observations into `record["input"]`.
+
+    What `stage.obs` does for its own cycle, done by a task that needs a window
+    which is not its own. `hofx.ext` is the only caller and the reason is the
+    ordering: it evaluates a five day forecast against the windows of the cycles
+    that forecast reaches, and those cycles have not run, so `obs_in/<T>` for
+    every one of them is a directory that does not exist yet. Cycle 1's F048
+    window is staged by cycle 3.
+
+    So this task stages what it reads, into its own working directory, and the
+    repeated work is the price of a task whose inputs are a function of that
+    task alone. See `run._hofx_ext_observers`.
+
+    **Cut to the window, unlike `stage.obs`'s join.** The application is given
+    one window covering the whole forecast, so ioda does not separate one lead
+    window's rows from the next one's, and an uncut file would hand two adjacent
+    observers the same rows. `obsarchive.concatenate` says the rest.
+
+    `record["input"]` already names the task's own file, because
+    `redirect_input` is what decides the observer set rather than what stages
+    it: the decision has to be visible to the task's declared io, which runs
+    before any staging.
+    """
+    try:
+        record["rows"] = obsarchive.concatenate(
+            record["sources"], Path(record["input"]), window=(begin, end))
     except obsarchive.ArchiveError as error:
         raise ObservationError(f"{record['name']}: {error}") from error
     return record

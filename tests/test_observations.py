@@ -20,7 +20,7 @@ import pytest
 
 from conftest import PATHS_CYCLE, write_bin
 
-from ackbar import observations
+from ackbar import observations, obsarchive
 from ackbar.duration import parse_instant
 from ackbar.paths import Paths
 
@@ -256,3 +256,67 @@ def test_hofx_without_a_staged_list_says_which_task_should_have_written_it(env):
     config, paths, _ = env
     with pytest.raises(observations.ObservationError, match="stage.obs"):
         observations.selected(config, paths, 1)
+
+
+# --- a task that stages a window which is not its own ------------------------
+
+def test_a_lead_window_is_staged_into_the_directory_the_reader_names(env,
+                                                                    tmp_path):
+    """`hofx.ext` reads windows whose own `stage.obs` has not run yet.
+
+    Cycle 1's F048 window is staged by cycle 3, so an observer left pointing at
+    `obs_in/<T>` is pointing at a directory that does not exist. The reading
+    task therefore names a file of its own and joins into it, and both the
+    record and the document JEDI is handed have to follow, or the run reads one
+    file and the log reports another.
+    """
+    config, _, archive = env
+    stage_archive(archive, 2)
+    record = observations.observers(config, 2)[0]
+    target = tmp_path / "task" / "obs_in" / "20180416T000000Z" / "adt.nc4"
+    observations.redirect_input(record, target)
+    assert record["input"] == str(target)
+    assert record["config"]["obs space"]["obsdatain"]["engine"]["obsfile"] \
+        == str(target)
+
+    begin = FIRST + DAY / 2
+    observations.stage_lead(record, begin, begin + DAY)
+    assert target.exists()
+    assert record["rows"] == 1
+
+
+def test_a_lead_window_is_cut_to_itself_and_not_left_bin_wide(env, tmp_path):
+    """The cut `stage.obs` must not make and this one must.
+
+    An application evaluating several windows at once cannot have ioda separate
+    one window's rows from the next one's, so an uncut file hands two adjacent
+    observers the same rows. `obsarchive` owns the rule; this is that the
+    staging path uses it.
+    """
+    config, _, archive = env
+    for cycle in (1, 2):
+        stage_archive(archive, cycle)
+
+    record = observations.observers(config, 2)[0]
+    observations.redirect_input(record, tmp_path / "cut.nc4")
+    begin = FIRST + DAY + timedelta(hours=-12)
+    observations.stage_lead(record, begin, begin + DAY)
+    # Two bins reached, one row kept: the other bin's observation is a day
+    # earlier and belongs to the lead window before this one.
+    assert len(record["sources"]) == 2
+    assert record["rows"] == 1
+    assert obsarchive.concatenate(record["sources"],
+                                  tmp_path / "uncut.nc4") == 2
+
+
+def test_a_lead_window_with_nothing_in_it_is_never_staged(env):
+    """It drops, and it is not the refusal `realize` makes for a whole cycle.
+
+    A cycle that assimilates nothing is indistinguishable from a healthy one
+    downstream, which is why `realize` refuses it. A lead window with nothing
+    costs one score at one lead, it is missing from every experiment in a
+    comparison at once, and it is visible as a departure file that is not there.
+    """
+    config, _, archive = env
+    stage_archive(archive, 1)
+    assert not any(record["present"] for record in observations.observers(config, 9))

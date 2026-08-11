@@ -527,6 +527,48 @@ def task_io(config, paths, task, cycle, member):
     return kind_of(config, task).io(config, paths, task, cycle, member)
 
 
+def observation_inputs(config, paths, cycle, task, member=None):
+    """Every observation file this task hands to one of its observers.
+
+    Separate from `task_io`, which is about the files a job may skip or fail on,
+    and deliberately not folded into it: a staged observation file is a job's
+    own intermediate, so it belongs in neither half of that answer. This is the
+    other question, the one the ordering rests on, and it is asked by the same
+    call the body makes so that the two cannot drift.
+
+    Presence is not consulted. What is wanted is which *path* an observer would
+    be pointed at, which is a property of the configuration alone; whether the
+    archive has anything to put in it is a different question and one that a
+    check on ordering must not depend on, or an experiment whose archive is
+    missing would pass by having nothing to check.
+    """
+    kind = kind_of(config, task).name
+    if kind == "hofx.ext":
+        return [Path(record["input"])
+                for record in _hofx_ext_observers(config, paths, cycle, member)]
+    if kind in ("analysis", "hofx"):
+        return [Path(record["input"])
+                for record in observations.observers(config, cycle)]
+    return []
+
+
+def observation_staging(config, paths, cycle, task, member=None):
+    """Every observation file this task joins out of the archive for itself.
+
+    The producer side of `observation_inputs`, and the pair is what makes
+    "is every observation file written before it is read" a question with an
+    answer. Two tasks stage: `stage.obs`, for its own cycle's window, and
+    `hofx.ext`, for the lead windows of cycles that have not run.
+    """
+    kind = kind_of(config, task).name
+    if kind == "stage.obs":
+        return [Path(record["input"])
+                for record in observations.observers(config, cycle)]
+    if kind == "hofx.ext":
+        return observation_inputs(config, paths, cycle, task, member)
+    return []
+
+
 def _forecast_io(config, paths, task, cycle, member):
     """What a forecast reads and writes: a restart set, and the states after it."""
     stamp = restart_stamp(config)
@@ -727,30 +769,76 @@ def _stage_obs_io(config, paths, task, cycle, member):
     return [], [paths.observer_list(cycle)]
 
 
-def _hofx_ext_io(config, paths, task, cycle, member):
-    """What the long forecast's observer reads and writes.
+def covered_cycle(config, cycle, lead):
+    """Which cycle's window a lead of the long forecast lands in.
 
-    It reads several cycles' observer lists and redirects every one of them
-    under `fcst/`, so neither half of `hofx`'s answer describes it: its inputs
-    are the long forecast's trajectory and its outputs are nowhere near
-    `obs_out/`. Declaring `hofx`'s would make a manual rerun that deleted the
-    forecast departures skip, on the strength of cycling departures it never
-    wrote.
+    Whole cycles by construction: `_check_extended` refuses a kept lead that
+    does not land on an analysis time, which is what lets a lead be scored
+    against some cycle's observers rather than against a window nothing else
+    uses.
+    """
+    return cycle + int(lead.total_seconds()
+                       // cycle_length(config).total_seconds())
+
+
+def _hofx_ext_observers(config, paths, cycle, member):
+    """Every observer `hofx.ext` evaluates, with both its files redirected.
+
+    One per platform per covered cycle, carrying that cycle's window, its own
+    staged input under this task's scratch, and its output under `fcst/`.
+
+    **Both redirections are the point, and they are here rather than in the body
+    so that what the task declares and what it runs cannot differ.** The input
+    is redirected because `obs_in/<T>` is written by cycle T's own `stage.obs`,
+    and every window this reads belongs to a cycle that has not run: cycle 1's
+    F048 window is staged by cycle 3. Leaving the observer layer's path alone is
+    what made every `hofx.ext` fail on an input file that does not exist yet.
+    The output is redirected because the observer layer's `obsdataout` is
+    `obs_out/<T>/`, rendered at the cycle being evaluated, so leaving *it* alone
+    would have a five day forecast overwrite the cycling departures of every
+    cycle it reaches.
+
+    Presence comes from the archive, which is offline and complete before the
+    experiment starts, and not from the covered cycle's realized list, which is
+    that cycle's output and does not exist yet either. That is what the
+    `forecast.ext -> hofx.ext` edge in `graph/tasks.py` already says this task
+    does: read the archive directly, because the observations it needs are valid
+    days ahead of its own cycle.
     """
     length = extended_length(config)
     section = paths.fcst_obs(cycle, length, member)
-    inputs, outputs = [], []
+    staging = paths.scratch(cycle, "hofx.ext", member) / "obs_in"
+    records = []
     for lead in extended_lead_cycles(config):
-        covered = cycle + int(lead.total_seconds()
-                              // cycle_length(config).total_seconds())
-        if not paths.observer_list(covered).exists():
-            continue
-        inputs.append(paths.observer_list(covered))
-        outputs.extend(section / Path(record["output"]).name
-                       for record in observations.read(paths, covered)
-                       if record["present"])
-    inputs.extend(paths.fcst_out(cycle, member, lead) / restart_stamp(config)
-                  for lead in extended_slots(config))
+        covered = covered_cycle(config, cycle, lead)
+        begin, end = window_bounds(config, covered)
+        for record in observations.observers(config, covered):
+            record["window"] = (begin, end)
+            record["output"] = str(section / Path(record["output"]).name)
+            observations.redirect_input(
+                record,
+                staging / paths.date(covered) / Path(record["input"]).name)
+            records.append(record)
+    return records
+
+
+def _hofx_ext_io(config, paths, task, cycle, member):
+    """What the long forecast's observer reads and writes.
+
+    Its inputs are the long forecast's trajectory and nothing else: the
+    observations it reads are staged by this task, into its own scratch, so
+    naming them here would be a task declaring its own intermediate output as a
+    precondition of running.
+
+    Its outputs are under `fcst/`, so neither half of `hofx`'s answer describes
+    it. Declaring `hofx`'s would make a manual rerun that deleted the forecast
+    departures skip, on the strength of cycling departures it never wrote.
+    """
+    outputs = [Path(record["output"])
+               for record in _hofx_ext_observers(config, paths, cycle, member)
+               if record["present"]]
+    inputs = [paths.fcst_out(cycle, member, lead) / restart_stamp(config)
+              for lead in extended_slots(config)]
     return inputs, outputs
 
 
@@ -1483,11 +1571,19 @@ def _hofx_ext(config, site, paths, cycle, task, member):
     Comparing a lead against the cycling background at the same instant is the
     comparison that has to know this.
 
-    Their output is redirected under
-    `fcst/`, and that is not tidiness. The observer layer's `obsdataout` is
-    `obs_out/<T>/...`, rendered at the cycle being evaluated, so leaving it
-    alone would have a five day forecast overwrite the cycling departures of
-    every cycle it reaches.
+    **It stages what it reads.** Every window it evaluates belongs to a cycle
+    that has not run, so `obs_in/<T>` for each of them is a directory that does
+    not exist yet, and the archive is the only thing that can answer. So this
+    task joins the bins for its own lead windows, into its own scratch, cut to
+    the window each belongs to. `_hofx_ext_observers` is where both of that and
+    the output redirection live, and `observations.stage_lead` says why the cut
+    is here and not in ioda.
+
+    A lead window with nothing in it drops that observer for that lead and says
+    so, the same as an archive gap in a cycle. It is not the whole-cycle refusal
+    `realize` makes: the cost is a score at one lead, which is missing from every
+    experiment in a comparison at once, and it is visible as a departure file
+    that is not there.
 
     Departures are not split by lead here. Each observation carries its own
     time, so lead is `time - initialized` and the split is a grouping the
@@ -1497,18 +1593,24 @@ def _hofx_ext(config, site, paths, cycle, task, member):
     length = extended_length(config)
     section = paths.fcst_obs(cycle, length, member)
 
-    observers = []
-    for lead in extended_lead_cycles(config):
-        for record in observations.observers(config, cycle + int(
-                lead.total_seconds() // cycle_length(config).total_seconds())):
-            if not record["present"]:
-                continue
-            record["output"] = str(section / Path(record["output"]).name)
-            observers.append(record)
-
+    observers, dropped = [], []
     states = {start + lead: paths.fcst_out(cycle, member, lead)
               for lead in extended_slots(config)}
     try:
+        for record in _hofx_ext_observers(config, paths, cycle, member):
+            if not record["present"]:
+                dropped.append((record["name"], record["window"]))
+                continue
+            observations.stage_lead(record, *record["window"])
+            observers.append(record)
+            print(f"ackbar:   {record['name']} "
+                  f"{format_instant(record['window'][1])}: {record['rows']} "
+                  f"row(s) from {len(record['sources'])} archive bin(s) "
+                  f"-> {record['input']}")
+        for name, window in dropped:
+            print(f"ackbar:   dropped {name} at {format_instant(window[1])}, "
+                  f"nothing in the archive falls in that lead window")
+
         written = soca.hofx4d(
             config, site, paths, cycle, task,
             initial=restart_source(config, paths, cycle, member),

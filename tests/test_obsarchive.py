@@ -260,3 +260,88 @@ def test_files_of_different_shapes_are_refused_rather_than_joined(tmp_path):
     with pytest.raises(obsarchive.ArchiveError, match="one platform"):
         obsarchive.concatenate(
             obsarchive.window(directory, START, START + DAY), tmp_path / "x.nc4")
+
+
+# --- the cut, for the one caller whose window is not the file's window -------
+
+def cut(archive, begin, end, target):
+    """What `hofx.ext` does: join the bins a window touches, and cut to it."""
+    obsarchive.concatenate(obsarchive.window(archive, begin, end), target,
+                           window=(begin, end))
+    return obsarchive.read_times(target)
+
+
+def test_a_cut_file_holds_the_window_and_nothing_either_side_of_it(archive,
+                                                                  tmp_path):
+    """The same sample the observer would have kept, decided before it runs.
+
+    The uncut join is deliberately wider than the window at both ends, which is
+    what lets ioda make the single cut. A caller whose application window is not
+    this window gets no such cut, so it asks for one here and must get exactly
+    what ioda would have kept.
+    """
+    begin = START + DAY
+    assert cut(archive, begin, begin + DAY, tmp_path / "cut.nc4") == \
+        [begin + timedelta(hours=h) for h in (6, 12, 18, 24)]
+
+
+def test_adjacent_cut_windows_share_no_observation(archive, tmp_path):
+    """The failure the cut exists for, and it is not visible in one file.
+
+    `hofx.ext` hands one application a separate observer per cycle its forecast
+    reaches, under a single time window spanning the whole forecast, so ioda
+    keeps every row of every one of those files. Two adjacent windows join
+    overlapping bins, so uncut they carry the same rows twice and every
+    observation in the overlap is counted twice in the departures. Cut, they
+    tile.
+    """
+    windows = [(START + n * DAY, START + (n + 1) * DAY) for n in range(3)]
+    seen = []
+    for index, (begin, end) in enumerate(windows):
+        seen += cut(archive, begin, end, tmp_path / f"cut{index}.nc4")
+    assert len(set(seen)) == len(seen)
+    assert sorted(seen) == [START + timedelta(hours=h) for h in range(6, 73, 6)]
+
+    uncut = []
+    for index, (begin, end) in enumerate(windows):
+        obsarchive.concatenate(obsarchive.window(archive, begin, end),
+                               tmp_path / f"raw{index}.nc4")
+        uncut += obsarchive.read_times(tmp_path / f"raw{index}.nc4")
+    assert len(set(uncut)) < len(uncut)
+
+
+def test_a_lead_window_with_nothing_in_it_stages_an_empty_file(archive,
+                                                              tmp_path):
+    """Absence is data, and it is not an error here any more than in a cycle.
+
+    `adt_c2` has no file at all on the days CryoSat-2's repeat misses the
+    domain, and a window inside such a gap reaches back to an older bin whose
+    rows are all outside it. The caller decides what to do about a count of
+    zero; the join does not refuse.
+    """
+    directory = tmp_path / "adt_c2"
+    write_bin(directory, START, when(1))
+    begin = START + 2 * DAY
+    assert cut(directory, begin, begin + DAY, tmp_path / "cut.nc4") == []
+
+
+def test_a_file_with_no_times_can_be_joined_but_not_cut(tmp_path):
+    """`Location` alone is a valid ioda file, and an uncuttable one.
+
+    Keeping all of its rows would put observations outside the window into a
+    file whose whole purpose is that they are not there, so this refuses rather
+    than guessing.
+    """
+    import netCDF4
+
+    directory = tmp_path / "timeless"
+    directory.mkdir()
+    with netCDF4.Dataset(directory / obsarchive.name(START), "w") as data:
+        data.createDimension("Location", 2)
+        data.createVariable("Location", "i4", ("Location",))[:] = [0, 1]
+
+    sources = obsarchive.window(directory, START, START + DAY)
+    assert obsarchive.concatenate(sources, tmp_path / "joined.nc4") == 2
+    with pytest.raises(obsarchive.ArchiveError, match="cannot be cut"):
+        obsarchive.concatenate(sources, tmp_path / "cut.nc4",
+                               window=(START, START + DAY))

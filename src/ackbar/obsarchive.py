@@ -50,6 +50,20 @@ this uses it: the rule only ever needs the bin a given instant falls in to be
 the last one at or before it, and a missing file means that bin was empty, so
 nothing is lost by reaching further back.
 
+## Who cuts, and the one caller that has to cut for itself
+
+Normally nobody here does. `stage.obs` joins the bins and ioda applies the
+window the application was given, so the staged file is a little wider than the
+window at each end and no rule is written twice.
+
+The exception is an application evaluating several windows at once.
+`hofx.ext` scores a five day forecast under a single time window spanning the
+whole of it, with one observer per cycle the forecast reaches, and under one
+wide window ioda keeps every row of every one of those files. The slop that is
+harmless in a cycling window then belongs to two adjacent observers and is
+counted twice. So that one caller asks `concatenate` for a window and gets its
+rows cut to it, which is exactly the sample the pre-cut archive used to hand it.
+
 ## Times survive concatenation
 
 ioda stores a time as an integer offset against an epoch named in
@@ -129,7 +143,7 @@ def window(directory, begin, end):
     return covering(bins(directory), begin, end)
 
 
-def concatenate(sources, target):
+def concatenate(sources, target, window=None):
     """Join *sources* along `Location` into *target*. Returns the row count.
 
     Structure preserving, like `tools/obs-cull-domain.py` and for the same
@@ -139,6 +153,24 @@ def concatenate(sources, target):
 
     Written to a temporary name and renamed, so an interrupted stage leaves no
     half file that the next thing to read it would take for a whole one.
+
+    **`window` is the cut, and the ordinary caller must not pass one.** A bin is
+    not cut to fit a window, so the joined file is a little wider than the
+    window at each end and ioda makes the single cut against the window the
+    application was given. That is the whole reason the archive can be window
+    agnostic, and doing it here as well would put the half open rule in two
+    places.
+
+    The exception is an application whose window is *not* the window the file
+    was staged for. `hofx.ext` is the one: it evaluates a five day forecast
+    under a single time window spanning the whole of it, and hands that one
+    application a separate observer per cycle the forecast reaches. Under one
+    wide window ioda keeps every row of every one of those files, so the bin
+    slop that is harmless in a cycling window becomes rows shared between two
+    adjacent observers and counted twice. So that caller asks for its rows cut
+    to the window they belong to, and gets exactly the sample a pre-cut archive
+    used to hand it. The rule itself is still in one place: the cut is `inside`,
+    the same sentence the presence count is asked with.
     """
     import netCDF4
     import numpy as np
@@ -162,12 +194,15 @@ def concatenate(sources, target):
                 raise ArchiveError(
                     f"{path} has no {LOCATION} dimension, so it is not an ioda "
                     f"observation file this can join")
-        rows = [len(data.dimensions[LOCATION]) for data in handles]
+        masks = _masks(sources, handles, window, np)
+        rows = [len(data.dimensions[LOCATION]) for data in handles] \
+            if masks is None else [int(mask.sum()) for mask in masks]
         epoch = _epoch(sources, handles)
 
         try:
             with netCDF4.Dataset(temp, "w") as out:
-                _join_group(sources, handles, out, sum(rows), epoch, np)
+                _join_group(sources, handles, out, sum(rows), epoch, np,
+                            masks=masks)
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
@@ -176,6 +211,33 @@ def concatenate(sources, target):
         for data in handles:
             data.close()
     return sum(rows)
+
+
+def _masks(sources, handles, window, np):
+    """Which rows of each source survive the cut, or None when there is none.
+
+    A file with no `MetaData/dateTime` is joinable and is not cuttable: there is
+    nothing in it to compare against a window, and silently keeping all of its
+    rows would put observations outside the window into a file whose whole
+    purpose is that they are not there.
+    """
+    if window is None:
+        return None
+    begin, end = window
+    masks = []
+    for path, data in zip(sources, handles):
+        rows = len(data.dimensions[LOCATION])
+        if _time_variable(data) is None:
+            raise ArchiveError(
+                f"{path} has no {METADATA}/{TIME}, so its rows cannot be cut "
+                f"to the window {begin} to {end}")
+        mask = np.asarray(inside(times([path]), begin, end), dtype=bool)
+        if mask.size != rows:
+            raise ArchiveError(
+                f"{path} has {rows} row(s) and {mask.size} time(s), so it "
+                f"cannot be cut to a window")
+        masks.append(mask)
+    return masks
 
 
 def _epoch(sources, handles):
@@ -230,7 +292,7 @@ def _instant(path, text):
                        f"an instant this can read")
 
 
-def _join_group(sources, handles, out, rows, epoch, np, path=()):
+def _join_group(sources, handles, out, rows, epoch, np, path=(), masks=None):
     """One group of every source, joined into *out*.
 
     The first source decides the structure and the rest are checked against it.
@@ -251,7 +313,8 @@ def _join_group(sources, handles, out, rows, epoch, np, path=()):
                 raise ArchiveError(
                     f"{source} has no {'/'.join(path + (name_,))} and "
                     f"{sources[0]} does, so these are not files of one platform")
-        _join_variable(name_, sources, handles, out, rows, epoch, np, path)
+        _join_variable(name_, sources, handles, out, rows, epoch, np, path,
+                       masks)
 
     for name_ in first.groups:
         for source, data in zip(sources[1:], handles[1:]):
@@ -260,10 +323,12 @@ def _join_group(sources, handles, out, rows, epoch, np, path=()):
                     f"{source} has no {'/'.join(path + (name_,))} group and "
                     f"{sources[0]} does, so these are not files of one platform")
         _join_group(sources, [data.groups[name_] for data in handles],
-                    out.createGroup(name_), rows, epoch, np, path + (name_,))
+                    out.createGroup(name_), rows, epoch, np, path + (name_,),
+                    masks)
 
 
-def _join_variable(name_, sources, handles, out, rows, epoch, np, path):
+def _join_variable(name_, sources, handles, out, rows, epoch, np, path,
+                   masks=None):
     variable = handles[0].variables[name_]
     attributes = variable.ncattrs()
     fill = variable.getncattr("_FillValue") if "_FillValue" in attributes else None
@@ -287,12 +352,14 @@ def _join_variable(name_, sources, handles, out, rows, epoch, np, path):
 
     axis = variable.dimensions.index(LOCATION)
     pieces = []
-    for source, data in zip(sources, handles):
+    for index, (source, data) in enumerate(zip(sources, handles)):
         values = np.asarray(data.variables[name_][...])
         if path == (METADATA,) and name_ == TIME and epoch is not None:
             shift = (_units_epoch(source, data.variables[name_])
                      - epoch).total_seconds()
             values = values + int(round(shift))
+        if masks is not None:
+            values = np.compress(masks[index], values, axis=axis)
         pieces.append(values)
     joined = np.concatenate(pieces, axis=axis) if pieces else np.empty(0)
     if path == (METADATA,) and name_ == TIME and epoch is not None:

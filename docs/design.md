@@ -342,6 +342,25 @@ Rules that fall out of this:
   `fcst/<init>/obs/F###/mem###/`, keyed by the end of the section evaluated: today that is one
   section covering the whole forecast, and a larger domain that has to evaluate a day at a time
   needs no path change.
+- **And its inputs never come out of `obs_in/`.** `obs_in/<T>` is written by cycle T's own
+  `stage.obs`, and every window the long forecast scores belongs to a cycle that has not run:
+  cycle 1's F048 window is staged by cycle 3. So `hofx.ext` joins the bins for its own lead
+  windows, into its own scratch, which is what the `forecast.ext -> hofx.ext` edge has always
+  said it does and is what makes the task's inputs a function of that task alone. The repeated
+  work is a few seconds per window against a five day integration, and the alternative, a shared
+  staging area any task fills if it is absent, buys nothing back: it races, it is
+  skip-if-exists, and the file it would share is the wrong file anyway. The cycling join is
+  deliberately a little wider than its window, because ioda makes the cut against the window the
+  application was given; `hofx.ext` gives one application a window spanning the whole forecast
+  and one observer per cycle inside it, so ioda separates nothing and its files have to arrive
+  already cut, or the bin overlap between two adjacent lead windows is counted twice.
+- **A lead window with nothing in it is a dropped observer, not a refused cycle.** `realize`
+  refuses a *cycle* in which no observer has anything, because that cycle is indistinguishable
+  from a healthy one downstream. A lead window is not that kind of object: the cost is one score
+  at one lead, every experiment in a comparison reads the same archive so the same lead is
+  missing from all of them at once, and the absence is visible as a departure file that is not
+  there. `adt_c2` genuinely has no file on the days CryoSat-2's repeat misses the domain, and
+  those days are lead windows for five initializations each.
 - **A member directory under `ana/` is a restart set and nothing else.** Writeback fills it by
   copying every file of the background's, `model: persistence` fills the next cycle's by
   copying every file of this one, and the forecast links all of them into `INPUT/`. So what the
@@ -1126,6 +1145,12 @@ every later cycle and record a full observing system that assimilated nothing.
 The joined file is the experiment's own, at `obs_in/<date>/<platform>.nc4`, and it is kept
 rather than reaped: it is what was actually handed to the observers, which the archive alone no
 longer answers.
+
+**One file, one writer, and a reader that needs a window someone else owns stages it itself.**
+`obs_in/<T>` is cycle T's `stage.obs`'s output, so a task in cycle 1 that reads `obs_in/<T+2>`
+is reading a file no job has been ordered to write yet. `hofx.ext` is the one task that wants
+such a window, and it joins its own; see the long forecast's entry in On-disk layout above for
+why it also has to cut, which `stage.obs` must not.
 
 Because that makes the observation set vary silently, **the realized observer list is written
 per cycle** and diffed by the comparison tooling. Two experiments differing in which observers
