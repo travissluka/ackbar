@@ -3,13 +3,26 @@
 #
 #   source site/activate.sh
 #
-# Picks site/$ACKBAR_SITE.sh, defaulting to the short hostname. Every value it
-# defines is exported, so job scripts and the workflow see the same settings the
-# build used. See "The site layer" in docs/design.md.
+# Picks site/$ACKBAR_SITE.sh, defaulting to the short hostname, or the file
+# itself if ACKBAR_SITE contains a slash. Every value it defines is exported, so
+# job scripts and the workflow see the same settings the build used. See "The
+# site layer" in docs/design.md.
 
 ACKBAR_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ACKBAR_SITE=${ACKBAR_SITE:-$(hostname -s)}
-_site_file=$ACKBAR_ROOT/site/$ACKBAR_SITE.sh
+
+# A name selects a committed site file; a path selects one anywhere. The second
+# form exists so that a tool can be exercised against scratch data roots without
+# a throwaway site file being committed to `site/`. Exporting a root directly
+# does not work and must not start working: every tool sources this file, which
+# assigns the roots unconditionally, and making those assignments defer to the
+# environment would let one stale export silently redirect a real experiment's
+# output. Overriding the whole site file is the deliberate act; overriding one
+# variable is the accident.
+case $ACKBAR_SITE in
+    */*) _site_file=$ACKBAR_SITE ;;
+    *)   _site_file=$ACKBAR_ROOT/site/$ACKBAR_SITE.sh ;;
+esac
 
 if [[ ! -f $_site_file ]]; then
     echo "ackbar: no site file for '$ACKBAR_SITE' ($_site_file)" >&2
