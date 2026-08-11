@@ -45,10 +45,13 @@ is the reference.
 
 ## Sweeps beside the matrix
 
-`osse25-4dletkf-vloc15` is not a ninth arm. It is `osse25-4dletkf` with the surface platforms'
-vertical localization raised from ten model levels to fifteen, and it is scored against that
-arm rather than against the matrix, which is why the arm itself is never edited. Its header
-carries the mixed layer measurement the number comes from and what Gaspari-Cohn does with it.
+`osse25-4dletkf-vloc15` and `osse25-4dletkf-vloc20` are not ninth and tenth arms. Each is
+`osse25-4dletkf` with the surface platforms' vertical localization raised from ten model
+levels, to fifteen and to twenty, and they are scored against that arm and against each other
+rather than against the matrix, which is why the arm itself is never edited. Their headers
+carry the mixed layer measurement the numbers come from and what Gaspari-Cohn does with it:
+fifteen reaches the mixed layer base, twenty weights it, and the pair is run to say which
+reading the filter prefers.
 
 ## Copying one
 

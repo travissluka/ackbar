@@ -1,0 +1,187 @@
+# The quarter degree OSSE's 4D LETKF, with the vertical localization raised from
+# ten levels to twenty.
+#
+# **This is `osse25-4dletkf` with three vars changed and nothing else.** That arm
+# at ten levels is the reference this is measured against, so it is left alone;
+# read its header for everything about the solver, the window, the ensemble and
+# the forecast, all of which are identical here. The `vars:` block at the bottom
+# carries the only difference, and the reasoning for the number is there with it.
+#
+# It is the second point of the sweep `osse25-4dletkf-vloc15` opened, and the two
+# are run against each other. Neither is a guess the other improves on: fifteen
+# and twenty are two readings of the same instruction, "large enough to cover the
+# mixed layer", one taken as reach and one taken as weight.
+#
+# The matrix's ensemble filter, at a 4D window, and the only one in it: a 3D
+# LETKF is deliberately absent, because it is known to trail the 4D one and
+# the 4D one costs almost nothing more.
+#
+# **What changes, and it is one word.** A 3D LETKF compares every observation in
+# a 24 hour window against one background at the window's centre. The
+# observations in this archive are not at the centre: they carry their own
+# times, spread across the whole window, and the Loop Current moves under them.
+# 3D-FGAT bought the variational pair its largest single result on exactly that
+# axis, so this is the experiment that says whether an ensemble filter gets the
+# same thing.
+#
+# **What it does not change is what the solver reads.** A 4D-LETKF's four
+# dimensions live entirely in the departures: the weights are solved in ensemble
+# space against observations evaluated at their own times, and applied to the
+# ensemble perturbations at the analysis time. So `soca_letkf.x` reads one state
+# per member here exactly as it does in the 3D experiment, and there is one
+# analysis to write back rather than one per sub-window. What carries the extra
+# dimension is the observer, which runs `soca_hofx.x` over each member's
+# trajectory before the solver starts. `docs/design.md` has the split.
+#
+# **What it costs is the forecast, not the analysis.** Half of a centred window
+# lies after the next analysis time, so the cycling forecast overshoots by
+# twelve hours and that half is re-integrated next cycle: 1.5x the model. The
+# observer adds one hofx per member per cycle, which at `gom_25km` is seconds
+# and on a real domain is the item to watch.
+#
+# **No `da/corr_vt_cycled`.** That layer rebuilds the *static* B's vertical
+# correlation each cycle against the experiment's own background, and an
+# ensemble filter has no static B to rebuild. Its absence is not a setting left
+# out.
+#
+# **The ensemble is real ocean states, not perturbations.** One GLORYS year per
+# member, 1993 to 2013 and 2016, each integrated a day under this domain's own
+# boundary and forcing, settled by one more free day, then recentred onto the
+# control. `tools/ensemble-ic-lagged.sh` says why that beats drawing from the
+# static background error, and the short version is two-fold: static
+# perturbations carry B's correlation scales rather than the ocean's flow
+# structure, and B says nothing about velocity at all, so every member would
+# have an identical current field.
+#
+# Twenty two years are drawn for twenty members, because the settle drops the
+# ones the model will not integrate freely, and 2014 and 2015 are skipped: the
+# first is the control's own year and the second is the nature run's. A dropped
+# member is not repaired, since a member is a sample and there is nothing to
+# recover from one the model rejects. `provenance.txt` beside the ensemble maps
+# each number back to the year behind it.
+#
+# **Settle first, recentre last, and both halves of that are load bearing.** A
+# member arrives from the 24 hour cold start still carrying the interpolation
+# shock and cannot take an analysis increment until it has shed it; recentring
+# afterwards would leave the ensemble mean a free day ahead of the control
+# rather than on it. `osse25-ensemble-settle.yaml` is that run.
+inherit:
+  - domain/gom_25km
+  - model/mom6sis2
+  - da/letkf
+  - ensemble/perturbed-inputs
+  - obs/adt_j2
+  - obs/adt_saral
+  - obs/adt_c2
+  - obs/adt_hy2a
+  - obs/sst_metopb
+  - obs/sst_npp
+  - obs/sss_smap
+  - obs/drifter_sst
+  - obs/drifter_sss
+  - obs/argo_t
+  - obs/argo_s
+  - obs/glider_t
+  - obs/glider_s
+
+experiment:
+  name: osse25-4dletkf-vloc20
+  description: OSSE, gom_25km 4D LETKF with a 20 level vertical localization
+
+cycle:
+  start: '2015-07-12T00:00:00Z'
+  length: PT24H
+  # The comparison length, identical across all eight experiments in it.
+  count: 20
+
+solver:
+  window:
+    type: '4d'
+
+forecast:
+  # Six hourly, the same cadence and for the same reason as `osse25-3dfgat`:
+  # the truth the observations were drawn from is six hourly, and the archive
+  # samples the nearest state rather than interpolating, so no trajectory
+  # resolved finer than that can remove the representativeness error already in
+  # the observations. That file carries the full argument.
+  #
+  # Four states inside the 24 hour window, plus the background at its start.
+  slots: PT6H
+
+  # Identical to every other arm's in cadence, length and retention. The
+  # comparison at each lead is a paired difference, so the launches and the
+  # valid times have to match across arms.
+  #
+  # `members` is the one axis that may differ, because it changes who is
+  # launched and not when: the control's launches and valid times are the same
+  # whether it flies alone or with company. A handful of members fly with it
+  # here so that ensemble spread against ensemble mean error is answerable at
+  # lead, which is the diagnostic that says whether a filter is consistent
+  # rather than merely running; the control's own forecast can only ever give
+  # the error half of it. `mem000` is the control, since a run with a control
+  # numbers its members from zero.
+  #
+  # A subset rather than all twenty: the long forecast costs one model run per
+  # member per launch and a spread estimate at lead does not need the full
+  # ensemble, while the filter itself still runs every member.
+  extended:
+    length: P5D
+    every: PT24H
+    keep_states: PT24H
+    slots: PT6H
+    members: [0, 1, 2, 3, 4, 5]
+
+vars:
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
+
+  # **The whole of the difference from `osse25-4dletkf`: ten levels to twenty.**
+  # The three surface families move together because they measure the same thing
+  # at the same depth; `config/layers/obs/common/sst.yaml` carries the block the
+  # scale lands in, and `docs/analysis.md` the grid it counts against.
+  #
+  # The unit is a model level index, not metres, and the grid is FNC1 stretched,
+  # so the two are not proportional and the number has to be chosen against a
+  # depth distribution rather than a depth. The mixed layer base was measured
+  # across the basin from eight background states of the finished ten level run,
+  # de Boyer Montegut density criterion (sigma-0 exceeding the 10 m value by
+  # 0.03 kg/m3), over the 19584 columns deeper than 200 m. The shelf is excluded
+  # because a 30 m column has no meaningful mixed layer.
+  #
+  # | percentile | 50% | 75% | 90% | 95% | 99% | max |
+  # |---|---|---|---|---|---|---|
+  # | level | 6 | 9 | 13 | 15 | 19 | 22 |
+  # | depth | 13 m | 20 m | 34 m | 45 m | 84 m | 140 m |
+  #
+  # Ten covers roughly the 78th percentile of that distribution and fifteen the
+  # 95th, so fifteen is the scale that just *reaches* the mixed layer base
+  # through most of the basin. Twenty covers the 99th.
+  #
+  # **Reaching it and weighting it are not the same thing, and that is what
+  # separates this value from fifteen.** Gaspari-Cohn goes to zero *at* the
+  # stated scale, with about half weight at half of it, so fifteen leaves the
+  # 90th percentile base (level 13) at roughly 0.05 weight: reached, and barely
+  # counted. Twenty is the point where the mixed layer is meaningfully weighted
+  # rather than merely touched, putting level 13 at roughly 0.27 and the median
+  # base (level 6) at roughly 0.85.
+  #
+  # So fifteen and twenty are two readings of the same instruction, "large enough
+  # to cover the mixed layer", not a guess and a better guess: fifteen reads
+  # cover as reach, twenty reads it as weight. Which one the filter prefers is
+  # the question the pair is run to answer, and neither should be treated as the
+  # tuned value before it is.
+  sst_vertical_localization_levels: 20
+  sss_vertical_localization_levels: 20
+  drifter_vertical_localization_levels: 20
+
+ensemble:
+  size: 20
+  control: true
+  source: offline
+  on_missing_member: fail_cycle
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+
+cleanup:
+  keep_cycles: 1
+
+model:
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00
