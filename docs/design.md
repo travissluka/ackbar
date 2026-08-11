@@ -1107,6 +1107,22 @@ observer with no file in any cycle at all is reported before submission. One mar
 is checked file by file, because the experiment has already said its own gaps are not
 acceptable.
 
+**The same rule reads across the observers as well as down the cycles, and that half is a
+refusal.** A cycle in which no observer at all has a file assimilates nothing, and nothing
+downstream can say so: the analysis is skipped because there is nothing to solve against,
+`writeback` copies the background into `ana/`, `post.obs` writes zeros and passes its own
+all-rejected check, which is about observations that were read. Three such cycles are a free
+run inside an experiment that reports as an assimilation, and no artifact's absence marks them.
+So `validate` reports the empty windows before submission and `stage.obs` refuses one when it
+reaches it, which is where `ackbar heal` picks the cycle up once the archive is fixed. What
+makes the refusal defensible rather than superstitious is the archive itself: it is an offline
+product, so its other windows are on disk to be compared against, and one platform being absent
+is a gap while every platform absent at the same instant is a window that was never built.
+There is deliberately no way to declare an empty cycle acceptable. Every archive here is
+generated per window, so an empty one is a hole in something that was meant to be complete; the
+cost is a single-observer experiment over a gappy real archive, where the platform's gap and
+the empty cycle are the same event and the run stops at it.
+
 **OSSE first.** Synthetic observations generated from a truth run are the first obs source.
 Real observations come later, via an offline archive-building script, using v2's downloaders
 and ioda converters as a one-time tool rather than a per-cycle step.

@@ -109,6 +109,7 @@ def validate_experiment(config, schema, site, root, offline=False):
         findings += _gridspec_step(config)
         findings += _coverage_step(timed, config, graph, shared)
         findings += _observation_step(observations)
+        findings += _observation_cycle_step(observations)
         findings += _observation_domain_step(config, observations)
         findings += _executable_step(graph, root)
         findings += _limit_step(graph, site)
@@ -224,7 +225,7 @@ def _jobtime_step(config, graph):
             findings.append(Finding(
                 2, where, f"cycle {cycle}: token survived substitution: {value!r}"
             ))
-        _take_observation_inputs(rendered, observations)
+        _take_observation_inputs(rendered, observations, cycle)
         findings.extend(_forcing_pair(rendered))
         findings.extend(_forcing_table_files(rendered))
         _collect_paths(rendered, paths)
@@ -330,7 +331,7 @@ def _forcing_table_files(rendered):
     return findings
 
 
-def _take_observation_inputs(rendered, observations):
+def _take_observation_inputs(rendered, observations, cycle):
     """Move each observer's input file out of the general path set.
 
     An observation file is the one input an experiment is allowed to be missing,
@@ -338,6 +339,10 @@ def _take_observation_inputs(rendered, observations):
     from the tree rather than filtered afterwards, because the paths there are a
     flat set of strings by then and nothing distinguishes an archive file from a
     grid file.
+
+    Kept by cycle as well as in one set, because the two observation steps ask
+    the same files two different questions: one is about an observer across the
+    experiment, the other about a cycle across the observers.
     """
     for entry in rendered.get("observations") or ():
         space = entry.get("obs space") or {}
@@ -347,9 +352,10 @@ def _take_observation_inputs(rendered, observations):
             continue
         record = observations.setdefault(
             space.get("name", ""), {"required": bool(space.get(OBS_REQUIRED)),
-                                    "paths": set()},
+                                    "paths": set(), "by_cycle": {}},
         )
         record["paths"].add(path)
+        record["by_cycle"].setdefault(cycle, set()).add(path)
 
 
 #: Keys whose value is a filename with the extension left off. saber writes and
@@ -664,6 +670,52 @@ def _observation_step(observations):
                 f"them is a wrong path."
             )))
     return findings
+
+
+def _observation_cycle_step(observations):
+    """The same proportion rule as `_observation_step`, on the other axis.
+
+    That one reads down a column: an observer with no file in any cycle is a
+    wrong path. This one reads across a row: a cycle with no file for any
+    observer is a window the archive does not have.
+
+    **It is the failure nothing downstream can see.** The cycle runs to
+    completion assimilating nothing, and every task in it succeeds: `stage.obs`
+    drops each observer in turn, the analysis is skipped because there is
+    nothing to solve against, `writeback` hands the background forward, and
+    `post.obs` writes zeros. There is no artifact whose absence says so, and the
+    experiment reports healthy while it free-runs. `observations.realize` stops
+    such a cycle when it reaches one; this says it before anything is submitted,
+    which is where the archive can still be rebuilt cheaply.
+
+    Every cycle empty is left to `_observation_step`, which says the same thing
+    per observer and says it better: an archive nothing resolves in is a path
+    problem, and reporting it twice sends the reader looking for a second cause.
+    """
+    if not observations:
+        return []
+    cycles = sorted({cycle for record in observations.values()
+                     for cycle in record["by_cycle"]})
+    empty = [cycle for cycle in cycles
+             if not any(os.path.exists(path)
+                        for record in observations.values()
+                        for path in record["by_cycle"].get(cycle, ()))]
+    if not empty or len(empty) == len(cycles):
+        return []
+    example = sorted(path for record in observations.values()
+                     for path in record["by_cycle"].get(min(empty), ()))
+    covered = min(cycle for cycle in cycles if cycle not in empty)
+    return [Finding(3, "observations", (
+        f"{len(empty)} of {len(cycles)} cycle(s) have no observation file for "
+        f"any observer: {', '.join(str(c) for c in empty[:8])}"
+        f"{' ...' if len(empty) > 8 else ''}. Cycle {covered} has one, so the "
+        f"archive exists and does not cover these windows. Each of them would "
+        f"run to completion, assimilate nothing, and report success: there is "
+        f"no output whose absence would say otherwise. Build the missing "
+        f"windows, or run the cycles the archive covers. One platform missing "
+        f"from a window is a gap and is dropped at run time; all of them is a "
+        f"window that is not there. For example {example[0]} does not exist."
+    ))]
 
 
 #: The ioda groups and variables an observation file keeps its positions in.

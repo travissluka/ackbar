@@ -22,6 +22,13 @@ rather than absent from it.
 `$required: true` on an observer inverts the default. Absence then fails the
 cycle, which is what an experiment says when the platform is the reason the
 experiment exists.
+
+What is *not* a gap is a window in which no observer at all has a file. Nothing
+downstream can tell that cycle from a healthy one: the analysis is skipped
+because there is nothing to assimilate, the writeback copies the background
+forward, and `post.obs` writes a document of zeros and passes. So `realize`
+refuses it, and the reason it can is that the archive is an offline product
+whose other windows are on disk to be compared against. See `_archive_covers`.
 """
 
 import json
@@ -108,7 +115,9 @@ def realize(config, paths, cycle):
     """Decide the cycle's observer set and write the list. Returns the records.
 
     Raises if a required observer's file is missing, which is the one case where
-    a gap in the archive is an error rather than a fact about the archive.
+    a gap in the archive is an error rather than a fact about the archive, and
+    if no observer has a file at all. See `_no_observations` for why those are
+    different questions.
     """
     records = observers(config, cycle)
     missing = [r for r in records if r["required"] and not r["present"]]
@@ -117,8 +126,74 @@ def realize(config, paths, cycle):
             f"{len(missing)} required observer(s) have no input file for cycle "
             f"{cycle}: " + ", ".join(f"{r['name']} ({r['input']})" for r in missing)
         )
+    if records and not any(r["present"] for r in records):
+        raise ObservationError(_no_observations(config, cycle, records))
     write(paths, cycle, records)
     return records
+
+
+def _no_observations(config, cycle, records):
+    """Why a cycle with no observations at all is a failure, and which one it is.
+
+    **An assimilating experiment cannot tell a cycle it chose not to assimilate
+    from one it was unable to.** Both run green from end to end: `stage.obs`
+    drops every observer and exits 0, `run.analysis_state` answers None so the
+    analysis is skipped, `writeback` copies the background into `ana/`, and
+    `post.obs` writes zero of zero and passes its own all-rejected check, which
+    is about observations that were read. Three cycles of that is a free run
+    inside an experiment that reports as an assimilation.
+
+    What separates the two is not in this cycle. The observation archive is an
+    offline product built before the experiment starts, so every other window it
+    holds is on disk to be asked, and one platform being down is a gap in one
+    platform while the rest of the archive answers. Every platform absent at the
+    same instant is not an outage: it is a window that was never built, or a
+    path that resolves to nothing. `_archive_covers` asks which.
+
+    Deliberately no way to say "an empty cycle is fine here". The case does not
+    exist yet: every archive this runs on is generated per window by
+    `tools/obs-*`, so an empty window is a hole in a thing that was supposed to
+    be complete. An experiment that genuinely wants to assimilate nothing for a
+    stretch says so by not configuring observers, or by not running those cycles.
+    """
+    names = ", ".join(record["name"] for record in records)
+    elsewhere = _archive_covers(config, cycle)
+    if elsewhere is None:
+        return (
+            f"cycle {cycle} has no observation file for any of its "
+            f"{len(records)} observers ({names}), and neither does any other "
+            f"cycle of this experiment. That is a path that resolves to nothing "
+            f"or an offline stage that never ran, not a gap in the archive. "
+            f"`ackbar validate` reports it per observer before anything is "
+            f"submitted; reaching it here means the archive moved after the "
+            f"experiment was created.")
+    return (
+        f"cycle {cycle} has no observation file for any of its {len(records)} "
+        f"observers ({names}), while cycle {elsewhere} has one. A platform goes "
+        f"down on its own and the rest of the archive answers; all of them at "
+        f"one instant is a window that was never built, or an experiment whose "
+        f"period runs past the archive it names. Left to run, this cycle "
+        f"assimilates nothing and every task in it reports success. Fill the "
+        f"window, or shorten the experiment, then heal this cycle.")
+
+
+def _archive_covers(config, cycle):
+    """Another cycle of this experiment whose window some observer has a file for.
+
+    None when there is none. Rendering every cycle's paths and statting them is
+    the same question `validate._observation_step` asks up front, asked again
+    here because an archive can be moved or half-rebuilt after an experiment is
+    created, and because `ackbar validate --offline` never asked it at all.
+
+    Only on the way to failing, so its cost is a few hundred `stat` calls in a
+    cycle that is about to stop.
+    """
+    for other in range(1, int(config["cycle"]["count"]) + 1):
+        if other == cycle:
+            continue
+        if any(record["present"] for record in observers(config, other)):
+            return other
+    return None
 
 
 def write(paths, cycle, records):

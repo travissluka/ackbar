@@ -21,7 +21,8 @@ from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph import build_graph, job_time_context
-from ackbar.validate import _observation_domain_step, validate_experiment
+from ackbar.validate import (_observation_cycle_step, _observation_domain_step,
+                             validate_experiment)
 
 REPO = Path(__file__).resolve().parents[1]
 LAYERS = REPO / "config" / "layers"
@@ -294,10 +295,32 @@ class TestStep3InputPaths:
         `stage.obs` drops the observer for those cycles and records it, and
         refusing to create the experiment over it would make ACKBAR unusable on
         any real record.
+
+        One platform in one window, not the whole window: the other observer
+        still carries the cycle, which is what makes this a gap rather than the
+        empty cycle below.
+        """
+        stage(full(staged, schema, site=local_site))
+        stage_observations(staged, skip=("adt_3a.2018041512",))
+        assert full(staged, schema, site=local_site) == []
+
+    @needs_build
+    def test_a_window_no_observer_has_a_file_for_is_reported(
+        self, staged, schema, local_site
+    ):
+        """The other axis of the same proportion rule.
+
+        A cycle in which every observer is absent at once assimilates nothing
+        and reports success from end to end, and there is no artifact whose
+        absence says so. `observations.realize` stops such a cycle when it
+        reaches one; this is the same statement made while the archive can still
+        be rebuilt.
         """
         stage(full(staged, schema, site=local_site))
         stage_observations(staged, skip=("2018041600",))
-        assert full(staged, schema, site=local_site) == []
+        found = full(staged, schema, site=local_site)
+        assert [f.where for f in found] == ["observations"]
+        assert "no observation file for any observer" in found[0].message
 
     @needs_build
     def test_an_observer_with_no_file_in_any_cycle_is_a_typo_and_is_reported(
@@ -320,7 +343,7 @@ class TestStep3InputPaths:
         # the check reverts to file by file.
         staged["observations"][0]["obs space"]["$required"] = True
         stage(full(staged, schema, site=local_site))
-        stage_observations(staged, skip=("2018041600",))
+        stage_observations(staged, skip=("adt_3a.2018041512",))
         found = full(staged, schema, site=local_site)
         assert [f.where.endswith("2018041512.nc4") for f in found] == [True]
         assert "required" in found[0].message
@@ -369,6 +392,65 @@ class TestStep3InputPaths:
             if f.where.startswith(("/out", "/scratch"))
         ]
         assert outputs == []
+
+
+class TestStep3ACycleWithNoObservationsAtAll:
+    """The proportion rule read across the observers instead of down the cycles.
+
+    `_observation_step` catches the observer that is absent everywhere, which is
+    a wrong path. This catches the cycle in which every observer is absent at
+    once, which is a window the archive does not hold, and which nothing
+    downstream can report: the cycle assimilates nothing and every task in it
+    succeeds.
+
+    Directly rather than through a staged experiment, for the reason the domain
+    step is: the rule is about the shape of the table, and the command wiring is
+    pinned by the staged-archive test above.
+    """
+
+    def archive(self, tmp_path, present):
+        """`{observer: {cycle: [files]}}`, creating the ones marked present."""
+        observations = {}
+        for name, cycles in present.items():
+            record = {"required": False, "paths": set(), "by_cycle": {}}
+            for cycle, exists in cycles.items():
+                path = tmp_path / f"{cycle}" / f"{name}.nc4"
+                if exists:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.touch()
+                record["paths"].add(str(path))
+                record["by_cycle"][cycle] = {str(path)}
+            observations[name] = record
+        return observations
+
+    def test_a_window_no_observer_covers_is_reported(self, tmp_path):
+        found = _observation_cycle_step(self.archive(tmp_path, {
+            "adt_j2": {1: True, 2: False, 3: True},
+            "sst_npp": {1: True, 2: False, 3: True},
+        }))
+        assert [f.step for f in found] == [3]
+        assert "1 of 3 cycle(s)" in found[0].message
+        assert "Cycle 1 has one" in found[0].message
+
+    def test_one_observer_surviving_the_window_is_a_gap(self, tmp_path):
+        # The case the whole observation path is built around, and the reason
+        # this rule is "every observer" rather than "any observer".
+        assert _observation_cycle_step(self.archive(tmp_path, {
+            "adt_j2": {1: True, 2: False, 3: True},
+            "sst_npp": {1: True, 2: True, 3: True},
+        })) == []
+
+    def test_an_archive_that_covers_nothing_is_left_to_the_observer_rule(self, tmp_path):
+        # `_observation_step` says this per observer and says it better: a path
+        # that resolves nowhere is a typo, and a second finding about windows
+        # would send the reader looking for a second cause.
+        assert _observation_cycle_step(self.archive(tmp_path, {
+            "adt_j2": {1: False, 2: False},
+            "sst_npp": {1: False, 2: False},
+        })) == []
+
+    def test_an_experiment_with_no_observers_has_nothing_to_say(self, tmp_path):
+        assert _observation_cycle_step({}) == []
 
 
 class TestStep3ObservationsAreInTheDomain:

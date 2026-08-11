@@ -3,7 +3,8 @@
 The behaviour under test is a decision, not a computation: an observation file
 that is not there drops its observer and the cycle carries on. That is right for
 any real archive and it is also how an experiment quietly assimilates nothing,
-so every test here is about the record being complete and being obeyed.
+so every test here is about the record being complete and being obeyed, and
+about the one case that is not a gap: a window no observer at all has a file for.
 """
 
 import json
@@ -129,11 +130,40 @@ def test_a_required_observer_with_no_file_fails_the_cycle(env):
     assert not paths.observer_list(1).exists()
 
 
-def test_an_empty_archive_is_not_an_error(env):
-    # A gap wide enough to drop everything is still a fact about the archive.
+def test_a_window_missing_from_a_working_archive_stops_the_cycle(env):
+    """The distinction the cycle itself cannot make, made from the archive.
+
+    One platform absent is that platform's gap and the others carry the cycle.
+    Every platform absent at the same instant, in an archive that answers for
+    the cycle either side of it, is a window that was never built. Nothing
+    downstream would notice: the analysis is skipped, the writeback hands the
+    background on, and `post.obs` reports zero of zero and passes.
+    """
+    config, paths, archive = env
+    stage_archive(archive, 2)
+    with pytest.raises(observations.ObservationError, match="cycle 2 has one"):
+        observations.realize(config, paths, 1)
+    assert not paths.observer_list(1).exists()
+
+
+def test_an_archive_that_answers_nowhere_says_so_rather_than_blaming_the_window(env):
+    # The same refusal, different cause and different fix: a path that resolves
+    # to nothing is `ackbar validate`'s finding, and saying "this window was
+    # never built" would send the reader to rebuild an archive that is not
+    # where they think it is.
     config, paths, _ = env
+    with pytest.raises(observations.ObservationError,
+                       match="neither does any other cycle"):
+        observations.realize(config, paths, 1)
+
+
+def test_one_observer_surviving_is_enough_to_carry_the_cycle(env):
+    # The gap that is genuinely data. The rule is about a cycle with nothing at
+    # all, not about a cycle that lost a platform.
+    config, paths, archive = env
+    stage_archive(archive, 1, names=("sst.nc4",))
     records = observations.realize(config, paths, 1)
-    assert not any(r["present"] for r in records)
+    assert [r["present"] for r in records] == [False, True]
     assert paths.observer_list(1).exists()
 
 
