@@ -396,7 +396,41 @@ Two hazards that follow from the worktrees rather than from git. Agents on separ
 can edit the same file; a branch that has not rebased since the last merge is the one that
 finds out by conflict, so rebase before continuing rather than before handing off. And
 `src/ackbar` is an editable install shared by every worktree's runs (see Environment above),
-so a fast-forward lands under any experiment that is mid-flight.
+so a fast-forward lands under any experiment that is mid-flight. The same sharing runs the
+other way, and that direction is silent: the venv's editable install names the shared
+checkout's `src/` by absolute path and no worktree has a venv of its own, so `ackbar` run
+from a worktree imports the shared checkout's code and defaults to the shared checkout's
+`config/layers/`. A worktree's own edits to either do not apply to a run launched from it,
+and nothing warns. `--layers` can be pointed at the branch's copy, but a code change has no
+such escape: verify one by merging it, not by running from the branch.
+
+### Which kind of agent gets which work
+
+The choice is not about the size of the task. It is about whether the work writes, and about
+where the session doing the routing is standing.
+
+**Read-only work goes to a subagent.** Searching, auditing, reviewing, answering a question
+about the code: a subagent inherits its parent's working directory, needs no branch of its
+own, and returns a conclusion rather than a commit. Nothing has to be merged afterwards,
+which is what makes it the cheap option.
+
+**Writing work that needs its own branch goes to a peer session.** A peer is a separate
+Claude session, so it takes its own worktree and its own branch, and its work reaches `main`
+by the fast-forward route above. A subagent inherits its parent's working directory, so one
+spawned from a session pinned to the shared checkout is pinned there too and cannot write
+either. The Agent tool advertises an `isolation: "worktree"` option that would give a
+subagent a worktree of its own; that is untested here, so do not route writing work through
+it without checking it first.
+
+**A session driving experiments cannot write at all.** This is the case that forces the rule
+rather than merely recommending it. `ackbar create` and `ackbar start` have to run from the
+shared checkout, for the reason in the paragraph above, so a session running experiments
+sends every edit it wants to a peer, however small. A one line README fix is a peer's job
+under those conditions, and that is the process working rather than failing.
+
+**So the routing session stays out of a worktree while it is driving.** Entering one to make
+a quick edit takes the whole session, and its subagents, out of the checkout the experiments
+need.
 
 ## Conventions
 
