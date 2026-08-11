@@ -282,7 +282,7 @@ Which family gets what:
 |---|---|---|
 | `sst_*`, `sss_*`, `drifter_*` | constant coordinate 1 | one level measured, and it is the top one |
 | `adt_*` | none | depth integrated, so there is no level to centre a taper on |
-| `argo_*`, `glider_*` | none, for now | depths are metres; see below |
+| `argo_*`, `glider_*` | none | by decision; see below |
 
 SOCA's own `test/testinput/letkf3d.yml` draws the same line between its surface
 temperature observer and its ADT observer, and it is the CI-verified schema for
@@ -316,17 +316,29 @@ deviation from 1 m to 3400 m. Each family carries the value as a var
 (`sst_vertical_localization_levels` and its two siblings), so a sweep is three
 one-line overrides in an experiment and needs no block restated.
 
-### What is not localized in the vertical yet
+### Why the profiles are not localized in the vertical
 
-The profiles. A cast reports depth in metres, and converting those to fractional
-level indices against the background's own thicknesses is work nothing here does,
-so `argo_*` and `glider_*` update the whole column. That is the conservative
-error in this configuration rather than the dangerous one: a profile is the only
-thing in the network that sees the vertical structure at all, so an
-over-reaching profile spreads real information too far, while an over-reaching
-surface observation spreads a surface signal into water it never touched. It is
-still worth building, and the shape it would take is a converted `MetaData` field
-written by the observer, not a UFO option.
+`argo_*` and `glider_*` update the whole column, and that is the decision rather
+than a gap waiting to be filled. It is the conservative error in this
+configuration rather than the dangerous one: a profile is the only thing in the
+network that sees the vertical structure at all, so an over-reaching profile
+spreads real information too far, while an over-reaching surface observation
+spreads a surface signal into water it never touched.
+
+The obvious config knob is not the answer, and reaching for it is worse than
+doing nothing. A cast reports depth in metres while the geometry's coordinate is
+a model level index, so `ioda vertical coordinate: depth` compares metres against
+level indices and localizes a 175 m observation to exactly zero at every level,
+deleting the only subsurface information the network has. Localizing a cast would
+mean converting its depths to fractional level indices against the background's
+own thicknesses, and that work is declined, not deferred.
+
+The residual risk is worth naming, because it is what would reopen this: with the
+profiles unlocalized, a deep observation reaches the surface through a 20 member
+sample covariance, which is the same class of spurious correlation the surface
+entries were added to remove, running the other way. That is the first thing to
+check if a near surface field stays worse than the free run while the subsurface
+improves.
 
 ## The covariance, and where an ensemble comes into it
 

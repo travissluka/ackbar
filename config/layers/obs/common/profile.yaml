@@ -36,9 +36,11 @@ observation bodies:
     # *level index*. `ioda vertical coordinate: depth` would compare the two, so
     # a 175 m observation would read as 175 levels away, localize to zero
     # everywhere, and delete the only subsurface information the network has.
-    # Localizing a cast in the vertical needs its depths converted to levels
-    # against the background's own thicknesses, which is work nothing here does
-    # yet; until then a cast updates the whole column. See `docs/analysis.md`.
+    # Localizing a cast in the vertical would need its depths converted to levels
+    # against the background's own thicknesses, and that conversion is declined
+    # rather than deferred: a cast updates the whole column, which is the
+    # conservative error here, since a profile is the only thing that sees the
+    # vertical structure at all. See `docs/analysis.md`.
     $localization:
     - localization method: Rossby
       rossby mult: $(profile_localization_scale)
