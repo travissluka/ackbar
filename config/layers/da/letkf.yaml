@@ -175,15 +175,22 @@ solver:
   # 1.5 trades some spurious long-range correlation for a better conditioned
   # local problem, which is the right side of that trade at these resolutions.
   #
-  # **It is not the cutoff in Rossby radii.** `soca::ObsLocRossby` multiplies
-  # `mult * rossby_radius` by 2/sqrt(0.3) = 3.65 before Gaspari-Cohn, so the
-  # hard cutoff is 5.5 radii at this setting: about 246 km in the Gulf, where
-  # the radius is 45 km, not 67 km. `docs/analysis.md` has the measurement.
+  # **It is not the cutoff in Rossby radii.** `soca::ObsLocRossby` forms
+  # `(base value + mult * rossby_radius)`, floors it at
+  # `min grid mult * sqrt(area)`, and multiplies the result by 2/sqrt(0.3) = 3.65
+  # before Gaspari-Cohn, so the hard cutoff is 5.5 radii at this setting, not
+  # 1.5. The 5.5 is the only single number in this: the cutoff itself is a field,
+  # because `ObsLocRossby` reads `rossby_radius` at each analysis point and that
+  # field spans better than a factor of two here. On gom_25km the cutoff runs
+  # from about 150 km at the tightest point to about 340 km at the loosest, with
+  # a median near 210 km. `docs/analysis.md` has the percentiles, the measurement
+  # and how to re-measure from a domain's `soca_gridspec.nc`.
   #
   # It interacts with the halo above: `halo size` has to exceed the largest
-  # localization radius anywhere on the domain or the filter solves with
-  # observations it cannot see. 500 km against 246 km leaves a factor of two in
-  # the Gulf and nothing at all near the equator, where the first baroclinic
-  # radius grows past 200 km and the cutoff would exceed 1000 km. A global
-  # domain needs the halo revisited alongside this number.
+  # localization radius anywhere on the domain, not the typical one, or the
+  # filter solves with observations it cannot see. 500 km against the 340 km
+  # worst case leaves a factor of 1.5 in the Gulf and nothing at all near the
+  # equator, where the first baroclinic radius grows past 200 km and the cutoff
+  # would exceed 1000 km. A global domain needs the halo revisited alongside
+  # this number.
 

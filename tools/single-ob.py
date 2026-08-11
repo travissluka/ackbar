@@ -41,8 +41,10 @@ is why the printed `ombg` is not the `delta` in `CASES`.
 
 `FILLER_MIN_KM` has to clear the *Gaspari-Cohn* radius, not the Rossby multiple:
 `soca::ObsLocRossby` multiplies `mult * rossby_radius` by `2/sqrt(0.3)` = 3.65
-before tapering, so `rossby mult: 1.5` on a 36 km Rossby radius cuts off near
-200 km, not near 54 km.
+before tapering, so `rossby mult: 1.5` cuts off at 5.5 Rossby radii, not 1.5.
+That is a field rather than a number, because the radius is read at each
+analysis point: on gom_25km it runs from about 150 km to about 340 km, which is
+what `FILLER_MIN_KM` is set to clear. See `docs/analysis.md`.
 
 ## Trap two: the output rows are not in input order
 

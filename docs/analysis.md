@@ -300,14 +300,40 @@ this bundle.
 
 `rossby mult` is not the localization radius in Rossby radii, and the two knobs
 in the same `$localization` list are not on the same scale.
-`soca::ObsLocRossby::computeLocalization` forms `base + mult * rossby_radius`,
-floors it by `min grid mult` cells, and then multiplies the result by
-`2/sqrt(0.3)` = 3.65 before handing it to Gaspari-Cohn as the hard cutoff
-(`ObsLocRossby.cc:57`, the "convert from gaussian to gaspari-cohn width" line).
-So `rossby mult: 1.5` where the first baroclinic Rossby radius is 36 km cuts off
-at about 198 km, five and a half Rossby radii, not at 54 km.
+`soca::ObsLocRossby::computeLocalization` (`ObsLocRossby.cc:47-57`) forms
+`base value + rossby mult * rossby_radius`, floors that by
+`min grid mult * sqrt(area)`, applies the optional `min value` and `max value`
+clamps if they are set, and only then multiplies by `2/sqrt(0.3)` = 3.65 before
+handing the result to Gaspari-Cohn as the hard cutoff (the "convert from
+gaussian to gaspari-cohn width" line). ACKBAR sets `min grid mult: 1.0` and
+leaves `base value` at its default of zero with neither clamp set, so here the
+cutoff is 3.65 times `mult * rossby_radius`, or the floor where that is larger.
+`rossby mult: 1.5` therefore cuts off at 5.5 Rossby radii, not 1.5. The 5.5 is
+the only part of this that is a single number.
 
-That is a measurement as well as an arithmetic claim. A single observation
+**The cutoff is a field rather than a constant**, because `rossby_radius` is a
+field and `ObsLocRossby` reads it fresh at every analysis point. Over
+`gom_25km`'s wet points it varies by better than a factor of two:
+
+| percentile | 0 | 10 | 50 | 75 | 90 | 100 |
+|---|---|---|---|---|---|---|
+| `rossby_radius`, km | 27.3 | 31.2 | 38.1 | 43.6 | 55.4 | 61.9 |
+| cutoff at `rossby mult: 1.5`, km | 150 | 171 | 209 | 239 | 303 | 339 |
+
+So the honest statement of the horizontal reach at `rossby mult: 1.5` is about
+150 km at the tightest point and about 340 km at the loosest, with a median near
+210 km. Any single number quoted for it is wrong somewhere on the domain. To
+re-measure for another domain or another multiple, read `rossby_radius` and
+`mask2d` from that domain's `soca_gridspec.nc` in the experiment's static
+directory; `tools/soca-gridspec.sh` is what writes the file, and the radius
+comes into it from the bundle's `rossrad.nc`.
+
+The floor is inert on this grid: `sqrt(area)` tops out at 27.1 km against a
+smallest Rossby radius of 27.3 km, so `min grid mult: 1.0` never binds, even for
+the profiles at `rossby mult: 1.0`. It is the term that takes over on a coarse
+grid or at high latitude, where the radius falls below the cell.
+
+That range is a measurement as well as an arithmetic claim. A single observation
 placed in the deep central Gulf (see below) reaches to 209 km and is zero beyond
 183 km; the two numbers differ because the cutoff is recomputed at each analysis
 point from *that* point's Rossby radius rather than from the observation's, so
