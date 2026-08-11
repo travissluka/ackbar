@@ -113,7 +113,7 @@ experiment:
 
 vars:
   # Layers interpolate this; every observer layer needs it.
-  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 cycle:
   start: '2015-01-05T00:00:00Z'   # must equal the initial condition's valid time

@@ -143,7 +143,7 @@ vars:
   # different nature runs must never be mixed, because nothing downstream reads
   # the provenance and the mixture would score as ordinary observation error.
   # `osse25-noda.yaml` carries what each half of the name means.
-  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 ensemble:
   size: 20

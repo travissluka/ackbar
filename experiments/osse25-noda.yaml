@@ -81,7 +81,7 @@ vars:
   # it replaces was sampled from a nature run on the unsmoothed bathymetry, and
   # leaving it readable under the name every arm already pointed at is how half a
   # comparison ends up scored against a different ocean.
-  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 forecast:
   # Identical to `osse25-3dvar`, `osse25-3dfgat` and every other arm, and it has

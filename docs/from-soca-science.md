@@ -48,7 +48,7 @@ cycle:
   count: 20
 
 vars:
-  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 forecast:
   extended: {length: P5D, every: PT24H, keep_states: PT24H, slots: PT6H}

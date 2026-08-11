@@ -120,7 +120,7 @@ forecast:
     members: [0, 1, 2, 3, 4, 5]
 
 vars:
-  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-gom_25km/2015
+  obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 ensemble:
   size: 20
