@@ -105,16 +105,36 @@ mpiexec -n 1 "$GRIDGEN" gridgen.yml
 
 # The staggered fields as generated describe the *east* and *north* faces,
 # because that is the only face set a non-symmetric MOM6 has an index for, and
-# they are moved onto the west and south faces, which are the ones SOCA's reader
-# actually loads out of a symmetric restart. Without this every velocity in the
-# system is masked and labelled one cell away from where it is. The reasoning,
-# the evidence and how to re-check it are in `ackbar.gridspec`.
+# on the domains where it can be done they are moved onto the west and south
+# faces, which are the ones SOCA's reader actually loads out of a symmetric
+# restart. Without this every velocity in the system is masked and labelled one
+# cell away from where it is. The reasoning, the evidence and how to re-check it
+# are in `ackbar.gridspec`.
 #
 # Here rather than inside the reader because the reader cannot be told which
 # columns to take: `commit_reader_strided` starts at the tracer origin for every
 # variable. So the gridspec has to describe the columns it takes.
-python -c "from ackbar.gridspec import shift_staggered; \
+#
+# Either way the file records which face set it ended up on. The domain layer
+# decides, and it is read rather than inferred from the grid: a domain that
+# cannot take the shift and a domain whose land mask is wrong at the boundary
+# look identical from inside this script, and guessing between them is how a
+# regional domain would come to skip the shift silently.
+case $STAGGERED in
+    west/south)
+        python -c "from ackbar.gridspec import shift_staggered; \
 shift_staggered('soca_gridspec.nc')"
+        ;;
+    east/north)
+        echo "soca-gridspec: $DOMAIN declares east/north, recording without shifting"
+        python -c "from ackbar.gridspec import record_generated; \
+record_generated('soca_gridspec.nc')"
+        ;;
+    *)
+        echo "soca-gridspec: $DOMAIN declares staggered_faces=$STAGGERED, which is neither west/south nor east/north" >&2
+        exit 1
+        ;;
+esac
 
 mkdir -p "$OUT"
 mv soca_gridspec.nc "$OUT/soca_gridspec.nc"

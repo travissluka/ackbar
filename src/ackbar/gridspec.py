@@ -32,6 +32,29 @@ offline, once. The trade is that ACKBAR's velocity faces are then the west and
 south set rather than MOM6's own east and north set, so the archive says which it
 is: `post` writes `lon_u` and `lat_u` beside every velocity record.
 
+**Why a global domain gets no shift at all.** `_shift` drops the field's highest
+index, which is sound only where that index is a face with no cell beyond it. On
+a zonally periodic or tripolar grid it is not: `om_1deg`'s outermost `mask2du`
+column holds 159 ocean faces of 320, and its outermost `mask2dv` row 226 of 360,
+because the cell beyond them exists, reached by the wraparound. So this refuses
+there, and such a domain records `east/north` through `record_generated`
+instead, which states truthfully where its staggered fields sit.
+
+That is a statement about this implementation, not about the defect. The
+mismatch corrected here is a property of SOCA's MOM6 being built without
+symmetric memory while the forecast's is built with it, and that is as true
+globally as regionally. A global domain integrating the real model would have
+every velocity a half cell from its mask exactly as a regional one would, so
+`validate` refuses that combination rather than shipping it quietly. No global
+domain runs a model today; `OM4_025` is the one that will.
+
+Whoever implements the missing half: the x axis is the easy one and wants
+`np.roll` rather than `_shift`, because on a periodic grid the west face of
+tracer 0 genuinely *is* the east face of tracer nx-1, so nothing is dropped and
+no edge value has to be invented. The y axis is the hard one. A tripolar grid's
+northernmost row is the fold, where the grid meets itself reversed rather than
+translated, and no roll expresses that.
+
 **How to re-check it**, on any domain, without running anything:
 
     tools/uv-stagger-figures.py --gridspec <static>/soca_gridspec.nc \\
@@ -65,9 +88,20 @@ import numpy as np
 #: leave nothing to say that it had happened.
 STAGGER_ATTR = "ackbar_staggered_faces"
 
-#: What the attribute says, and the whole of what it means: index i of every
-#: staggered field is the face on the low side of tracer i.
+#: What the attribute says on a shifted gridspec, and the whole of what it means:
+#: index i of every staggered field is the face on the low side of tracer i.
 STAGGER_VALUE = "west/south"
+
+#: What it says on a gridspec left exactly as `soca_gridgen.x` wrote it. Not an
+#: exemption from the shift but the honest answer where the shift cannot be
+#: applied, which today is every global domain. See `record_generated`, and the
+#: module docstring for why the two are different statements.
+STAGGER_VALUE_GENERATED = "east/north"
+
+#: Every face set a gridspec is allowed to claim. The domain layer's
+#: `staggered_faces` is checked against this by the schema, so a typo there is a
+#: schema error rather than a domain that matches no branch at build time.
+STAGGER_VALUES = (STAGGER_VALUE, STAGGER_VALUE_GENERATED)
 
 #: The fields to move, by the axis they move along. `mask` is separated from the
 #: coordinates because the two need different values at the index the shift
@@ -167,8 +201,34 @@ def _shift(values, axis, edge):
     return out
 
 
-def assert_shifted(path):
-    """Refuse a gridspec whose staggered fields have not been moved.
+def record_generated(path):
+    """Record that a gridspec's staggered fields are where `soca_gridgen.x` left
+    them, on the east and north faces.
+
+    For a domain `shift_staggered` cannot be applied to. The attribute is
+    written for the same reason it is written after a shift: what makes a
+    gridspec safe to read is that it *states* its face set, and a file stating
+    nothing is indistinguishable from one built before anybody had thought about
+    the question.
+
+    This does not make the domain correct to integrate a model on. It makes the
+    file honest about what it is, and `validate._gridspec_step` is where the
+    consequence of that honesty is refused.
+    """
+    with netCDF4.Dataset(path, "r+") as data:
+        if STAGGER_ATTR in data.ncattrs():
+            raise GridspecError(
+                f"{path} already carries {STAGGER_ATTR}="
+                f"{data.getncattr(STAGGER_ATTR)!r}, so which faces its "
+                f"staggered fields are on has been recorded once already. "
+                f"Rebuild the gridspec with tools/soca-gridspec.sh if it needs "
+                f"to be redone."
+            )
+        data.setncattr(STAGGER_ATTR, STAGGER_VALUE_GENERATED)
+
+
+def assert_faces_recorded(path):
+    """Refuse a gridspec that will not say which faces its staggered fields are on.
 
     The case this exists for is the one that makes this whole approach risky:
     `soca_gridgen.x` is rerun, its output lands without the post-step, and the
@@ -180,7 +240,10 @@ def assert_shifted(path):
 
     Presence is the check, not a particular value, the same shape as
     `forcing.assert_reference_height`. A file that records a face set records a
-    decision; a file that records nothing predates the decision.
+    decision; a file that records nothing predates the decision. Which of the
+    two values it records is a separate question, answered against the domain
+    layer's declaration by the caller, because this file cannot know which
+    domain it was built for.
     """
     faces = staggered_faces(path)
     if faces is None:
@@ -191,9 +254,8 @@ def assert_shifted(path):
             f"are on the east and north faces while SOCA's reader loads the "
             f"west and south ones, which puts every velocity increment a cell "
             f"from the mask applied to it. Rebuild it with "
-            f"tools/soca-gridspec.sh, which applies the shift, or apply it to "
-            f"the file with ackbar.gridspec.shift_staggered. See "
-            f"docs/analysis.md.")
+            f"tools/soca-gridspec.sh, which records the face set either way. "
+            f"See docs/analysis.md.")
     return faces
 
 

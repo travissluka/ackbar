@@ -34,7 +34,8 @@ from .config.schema import validate as validate_schema
 from .config.template import TemplateError, slots_of
 from .duration import DurationError, parse_duration, parse_instant
 from .forcing import TABLE_FILE as FORCING_TABLE_FILE
-from .gridspec import assert_shifted, extent, within
+from .gridspec import (STAGGER_ATTR, STAGGER_VALUE, STAGGER_VALUE_GENERATED,
+                       assert_faces_recorded, extent, within)
 from .soca import GRIDSPEC
 from .graph import GraphError, build_graph, job_time_context, member_set
 from .graph.build import extended_cycles
@@ -50,6 +51,12 @@ STEPS = (
     (5, "projected job count against queue limits"),
     (6, "the graph is acyclic and member arrays share the index set"),
 )
+
+#: Models that integrate a real ocean state, and so read a velocity off the
+#: grid the gridspec describes. `stub` and `persistence` never do, which is why
+#: `om_1deg` can carry a gridspec on the generated face set and still be the
+#: domain the graph fixtures are built on. See `_gridspec_step`.
+FORECAST_MODELS = ("mom6sis2",)
 
 #: Steps that consult the filesystem or the site's scheduler limits. `--offline`
 #: skips these, which is what the tier 0 and 1 tests run and what is useful on a
@@ -382,7 +389,9 @@ def _looks_like_path(text):
 
 
 def _gridspec_step(config):
-    """A domain's gridspec must say which faces its staggered fields are on.
+    """A domain's gridspec must say which faces its staggered fields are on, must
+    say what its domain layer says, and must not be the generated face set under
+    a model that would integrate on it.
 
     Step 3 rather than a step of its own: an input that is present but will not
     say what it is is an input problem, and it reads beside "input path does not
@@ -391,16 +400,49 @@ def _gridspec_step(config):
     A domain with no `static` has no geometry, which is the stub, and absence of
     the file is step 3's own finding and is said better there.
     """
-    static = (config.get("domain") or {}).get("static")
+    domain = config.get("domain") or {}
+    static = domain.get("static")
     if not static:
         return []
     path = os.path.join(static, GRIDSPEC)
     if not os.path.exists(path):
         return []
     try:
-        assert_shifted(path)
+        faces = assert_faces_recorded(path)
     except (ValueError, OSError) as error:
         return [Finding(3, path, str(error))]
+
+    # Absent means shifted. The default is the safe one on purpose: a domain
+    # whose layer has not considered the question must be the one that fails,
+    # not the one that skips the shift, so adding a regional domain and
+    # forgetting this key cannot be how the defect returns.
+    declared = domain.get("staggered_faces", STAGGER_VALUE)
+    if faces != declared:
+        return [Finding(3, path, (
+            f"the gridspec records {STAGGER_ATTR}={faces!r} but the domain "
+            f"layer declares staggered_faces: {declared!r}. One of the two is "
+            f"stale, and nothing else detects it: the gridspec is built once "
+            f"per domain, so a later edit to the domain layer leaves the file "
+            f"behind with no symptom. Rebuild it with tools/soca-gridspec.sh, "
+            f"which reads the declaration and writes the file to match."))]
+
+    model = (config.get("model") or {}).get("name")
+    if declared == STAGGER_VALUE_GENERATED and model in FORECAST_MODELS:
+        return [Finding(3, path, (
+            f"this domain's staggered fields sit where `soca_gridgen.x` left "
+            f"them, on the east and north faces, and this experiment "
+            f"integrates the {model} forecast model. SOCA's reader loads the "
+            f"west and south faces whatever the file says, so every velocity "
+            f"would be masked and labelled a half cell from where it actually "
+            f"is: increments written into faces the model carries no velocity "
+            f"on, and faces it does carry one on that no increment reaches. "
+            f"Nothing downstream reports this; the run completes and the "
+            f"velocity analysis is wrong. `ackbar.gridspec.shift_staggered` is "
+            f"what corrects it and cannot be applied to this domain, whose "
+            f"outermost row and column hold ocean rather than the land a "
+            f"bounded grid has there. Run this domain under model.name: stub "
+            f"or persistence, or implement the periodic and tripolar case "
+            f"described in the src/ackbar/gridspec.py docstring."))]
     return []
 
 

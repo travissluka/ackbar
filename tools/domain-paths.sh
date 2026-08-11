@@ -1,7 +1,8 @@
 # Where a domain's model configuration lives. Sourced, not run.
 #
 #   source "$ACKBAR_ROOT/tools/domain-paths.sh"
-#   domain_paths gom_25km      # sets BASE, DATA, OVERRIDE, STATIC and LEVELS
+#   domain_paths gom_25km      # sets BASE, DATA, OVERRIDE, STATIC, LEVELS,
+#                              # STAGGERED
 #
 # The values are read out of the domain's own layer rather than derived
 # from its name, because no rule over the name is right for all of them: the
@@ -54,6 +55,25 @@ def vars_of(path, seen=()):
     return merged
 
 
+def domain_of(path, seen=()):
+    """A layer's `domain` block, with everything it inherits merged underneath.
+
+    Same rule as `vars_of` and needed for the same reason, one key: a domain
+    states which faces its gridspec's staggered fields are on, and the offline
+    stage that builds the gridspec has to read the same declaration `validate`
+    will check the file against. Two answers to that question is precisely the
+    drift the whole face-set attribute exists to prevent.
+    """
+    if path in seen:
+        sys.exit(f"domain-paths: {path} inherits itself")
+    document = yaml.safe_load(open(path)) or {}
+    merged = {}
+    for parent in document.get("inherit") or ():
+        merged.update(domain_of(f"{root}/config/layers/{parent}.yaml", seen + (path,)))
+    merged.update(document.get("domain") or {})
+    return merged
+
+
 declared = vars_of(layer)
 
 
@@ -80,6 +100,13 @@ for shell, var in (("BASE", "mom6_base_dir"),
                    # three dimensional field off disk has to restate.
                    ("LEVELS", "diffusion_levels")):
     print(f"{shell}={resolve(var)}")
+
+# Absent means the shift is required, matching `validate._gridspec_step`. The
+# default lives in both places rather than in a shared constant because one is
+# shell reading YAML and the other is Python reading the merged config; what
+# keeps them honest is that a mismatch between the file and the declaration is
+# itself a validate finding.
+print(f"STAGGERED={domain_of(layer).get('staggered_faces', 'west/south')}")
 EOF
     ) || return 1
 

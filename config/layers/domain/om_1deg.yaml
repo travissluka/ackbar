@@ -58,6 +58,24 @@ domain:
   # `tools/soca-gridspec.sh` for what writes it.
   static: $(domain_static)
 
+  # This domain's gridspec keeps its staggered velocity fields where
+  # `soca_gridgen.x` put them, on the east and north faces, because the shift
+  # onto the west and south ones cannot be expressed on a global grid: it works
+  # by dropping the outermost row and column, which a bounded domain has masked
+  # to land for want of a cell beyond them and this one has as open ocean,
+  # reached by the zonal wraparound and the tripolar fold.
+  #
+  # Declaring it is not declaring it harmless. SOCA's reader loads the west and
+  # south faces regardless, so a model integrated here would have every velocity
+  # a half cell from its mask, and `ackbar validate` refuses this domain
+  # together with a real forecast model for exactly that reason. What makes the
+  # domain usable is that its live work is the tier 0 and 1 graph fixtures,
+  # which run `stub` and never touch a grid. `OM4_025` is global too and is the
+  # production target, so the periodic and tripolar shift has to be written
+  # before that domain integrates anything; src/ackbar/gridspec.py says what it
+  # would take.
+  staggered_faces: east/north
+
   resources:
     # Everything that is bookkeeping: python, shell, a few file operations.
     # Named `default` so that adding a task does not silently submit it with

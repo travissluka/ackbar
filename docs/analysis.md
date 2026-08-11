@@ -427,11 +427,39 @@ members and five slots, against a 16 GB experiment.
 failure this approach introduces and it is the one worth being loud about: rerun
 `soca_gridgen.x` without the post-step and the defect returns with no symptom at
 all, after the documentation says it is fixed. So `validate` step 3 calls
-`ackbar.gridspec.assert_shifted` on the domain's gridspec and refuses one
+`ackbar.gridspec.assert_faces_recorded` on the domain's gridspec and refuses one
 lacking the attribute, the same shape as `forcing.assert_reference_height` for
 an archive that will not say what height its scalars are at. Presence is the
 check, not a particular value: a file that records a face set records a
 decision, and a file that records nothing predates the decision.
+
+**The shift is not applicable on a global grid, which is not the same as being
+unnecessary there.** `shift_staggered` works by dropping the outermost row and
+column, sound only where those faces have no cell beyond them. A bounded domain
+masks them to land; a global one reaches the cell beyond through the zonal
+wraparound and the tripolar fold, so they are open ocean and the shift would
+discard analysable faces. Such a domain records
+`ackbar_staggered_faces = "east/north"` through `ackbar.gridspec.record_generated`
+instead, which states truthfully where its staggered fields sit.
+
+The mismatch itself is untouched by that. It follows from SOCA's MOM6 being
+built without symmetric memory while the forecast's is built with it, and holds
+globally exactly as it holds regionally. So the declaration is not an exemption,
+and `validate` step 3 refuses the generated face set together with a model in
+`FORECAST_MODELS`, which today is `mom6sis2` alone: `stub` and `persistence`
+read no velocity off the grid. `om_1deg` is usable because its live work is the
+tier 0 and 1 graph fixtures, which never integrate anything. `OM4_025` is global
+too and is the production target, so the periodic and tripolar shift has to be
+written before that domain runs a model; `src/ackbar/gridspec.py` says what it
+would take, and the x axis wanting `np.roll` is the easy half of it.
+
+Which of the two a domain gets is declared in its layer as
+`domain.staggered_faces`, read by `tools/soca-gridspec.sh` when it builds the
+file and checked against the file by `validate`. Absent means `west/south`, so a
+domain whose layer has never considered the question fails rather than quietly
+skipping the shift, and a declaration that disagrees with the file on disk is
+itself a step 3 finding, which is what catches a domain layer edited after its
+gridspec was built.
 
 Two consequences of putting it there. **A domain's gridspec has to be shifted
 before any experiment on it can be created**, so deploying this and merging it

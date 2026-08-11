@@ -78,6 +78,18 @@ properties:
       # map of products because there is one product so far, and naming the
       # directory is what lets a second arrive without a schema change.
       static: { type: string }
+      # Which faces this domain's gridspec has its staggered velocity fields on,
+      # and so which of the two things `tools/soca-gridspec.sh` does to a freshly
+      # generated file: shift it onto the west and south faces SOCA's reader
+      # loads, or record that it was left on the east and north ones.
+      #
+      # Absent means `west/south`, the shift applied. The default is the safe
+      # one deliberately: `east/north` is the answer only where the shift cannot
+      # be expressed, which today is a global grid whose outermost row and
+      # column are ocean rather than land, and a domain whose layer has never
+      # considered the question must be the one that fails rather than the one
+      # that quietly skips the shift. See src/ackbar/gridspec.py.
+      staggered_faces: { enum: [west/south, east/north] }
       resources:
         # Per-task resources live in the domain layer, because domain is what
         # actually drives the difference between OM_1deg and OM4_025. The site

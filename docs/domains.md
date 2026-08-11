@@ -32,6 +32,33 @@ recovering some of what `gom_25km` loses. In absolute terms `gom_4km` is 5x
 deliberately: a 50 cycle experiment at 12 hour cycles is around 6.5 hours of
 model alone, and that is before any analysis.
 
+## Global domains carry the generated velocity faces
+
+`om_1deg` declares `domain.staggered_faces: east/north`. Every Gulf domain
+declares nothing and so takes the default, `west/south`, and `om4_025` will need
+the same declaration as `om_1deg` when it is built.
+
+The difference is a property of the grid. ACKBAR moves a gridspec's staggered
+velocity fields onto the west and south faces, because those are the ones SOCA's
+reader loads out of a symmetric restart whatever the file is labelled, and the
+move works by dropping the outermost row and column. On a bounded domain those
+faces are masked to land for want of a cell beyond them, so nothing analysable
+goes with them. A global grid has the cell beyond, reached by the zonal
+wraparound and the tripolar fold: `om_1deg`'s outermost `mask2du` column holds
+159 ocean faces of 320 and its outermost `mask2dv` row 226 of 360. So the shift
+is refused there and the file records the faces it is actually on instead.
+
+**A global domain therefore cannot integrate a forecast model here.** The
+underlying mismatch is a property of SOCA's MOM6 being built without symmetric
+memory, not of the grid, so it is present globally too, and a model run on one
+of these domains would put every velocity a half cell from its own mask with
+nothing downstream reporting it. `ackbar validate` refuses the generated face set
+together with `model.name: mom6sis2` for that reason. `om_1deg` remains usable
+because its live work is the tier 0 and 1 graph fixtures, which run `stub`.
+`om4_025` is the production target, so the periodic and tripolar form of the
+shift is work that precedes it; `src/ackbar/gridspec.py` describes what it takes,
+and `docs/analysis.md` has the full account of the face sets.
+
 ## The Gulf of Mexico domains
 
 All four cover 98.1W to 76.4W, 18N to 32N. They came from a 2021 MOM6-SIS2

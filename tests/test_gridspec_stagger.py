@@ -20,8 +20,8 @@ import pytest
 netCDF4 = pytest.importorskip("netCDF4")
 
 from ackbar.gridspec import (  # noqa: E402
-    STAGGER_ATTR, GridspecError, assert_shifted, shift_staggered,
-    staggered_faces)
+    STAGGER_ATTR, STAGGER_VALUE_GENERATED, GridspecError,
+    assert_faces_recorded, record_generated, shift_staggered, staggered_faces)
 
 NX, NY = 8, 6
 
@@ -228,13 +228,13 @@ def test_a_freshly_generated_gridspec_is_refused(grid):
     """
     path, _ = grid
     with pytest.raises(ValueError, match=STAGGER_ATTR):
-        assert_shifted(path)
+        assert_faces_recorded(path)
 
 
 def test_a_shifted_gridspec_passes_and_says_which_faces(grid):
     path, _ = grid
     shift_staggered(path)
-    assert assert_shifted(path) == "west/south"
+    assert assert_faces_recorded(path) == "west/south"
 
 
 def test_dropping_an_ocean_column_is_refused(grid, tmp_path):
@@ -246,3 +246,68 @@ def test_dropping_an_ocean_column_is_refused(grid, tmp_path):
     with pytest.raises(GridspecError, match="ocean faces in it"):
         shift_staggered(path)
     assert STAGGER_ATTR not in netCDF4.Dataset(path).ncattrs()
+
+
+# --- the domains the shift cannot be applied to ------------------------------
+#
+# A global grid's outermost row and column are ocean, reached by the zonal
+# wraparound and the tripolar fold, so `shift_staggered` refuses there and the
+# file records the face set it is actually on instead. What these check is that
+# recording is a different thing from being correct: the file becomes readable,
+# and `validate` is what refuses to integrate a model on it.
+
+
+def test_a_global_grid_refuses_the_shift(grid):
+    """The om_1deg case, in miniature: ocean at both outer edges.
+
+    Measured on the real file, the outermost `mask2du` column holds 159 ocean
+    faces of 320 and the outermost `mask2dv` row 226 of 360.
+    """
+    path, _ = grid
+    with netCDF4.Dataset(path, "r+") as data:
+        data.variables["mask2du"][0, :, -1] = 1.0
+        data.variables["mask2dv"][0, -1, :] = 1.0
+    with pytest.raises(GridspecError, match="ocean faces in it"):
+        shift_staggered(path)
+
+
+def test_recording_the_generated_faces_leaves_the_arrays_alone(grid):
+    """The whole of what `record_generated` does, and the whole of what it must
+    not do: the file gains an attribute and not a shifted array."""
+    path, _ = grid
+    with netCDF4.Dataset(path) as data:
+        data.set_auto_mask(False)
+        before = {name: np.asarray(data.variables[name][:]).copy()
+                  for name in ("lonu", "latu", "lonv", "latv",
+                               "mask2du", "mask2dv")}
+    record_generated(path)
+    with netCDF4.Dataset(path) as data:
+        data.set_auto_mask(False)
+        for name, was in before.items():
+            assert np.array_equal(np.asarray(data.variables[name][:]), was), name
+
+
+def test_a_recorded_gridspec_says_the_generated_faces(grid):
+    path, _ = grid
+    record_generated(path)
+    assert staggered_faces(path) == STAGGER_VALUE_GENERATED
+    assert assert_faces_recorded(path) == STAGGER_VALUE_GENERATED
+
+
+def test_recording_twice_is_refused(grid):
+    """Same guard as the shift's, for the same reason: an attribute that can be
+    rewritten is not a record of what was done to the file."""
+    path, _ = grid
+    record_generated(path)
+    with pytest.raises(GridspecError, match="already carries"):
+        record_generated(path)
+
+
+def test_a_shifted_gridspec_cannot_then_be_recorded_as_generated(grid):
+    """The two are alternatives, not steps. A file that has been shifted and
+    then relabelled would claim the one face set it is certainly not on."""
+    path, _ = grid
+    shift_staggered(path)
+    with pytest.raises(GridspecError, match="already carries"):
+        record_generated(path)
+    assert staggered_faces(path) == "west/south"
