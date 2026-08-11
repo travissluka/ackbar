@@ -37,6 +37,18 @@ vars:
   # Where a source's files live, so the source layers differ by one word.
   forcing_archive: $(static_root)/forcing/$(forcing_purpose)
 
+ensemble:
+  # **One run unless the experiment says otherwise**, because every source below
+  # stages its file through `ensemble.inputs` and that block is what makes
+  # `ensemble.size` required. Without this default, inheriting a forcing source
+  # would fail the schema on every deterministic experiment, and the fix would
+  # be the same three lines copied into each of them.
+  #
+  # Zero means the control alone, `mem000`, which is what a deterministic run
+  # is; the schema's `ensemble` block has the long version. An ensemble states
+  # its own size and overrides this, and it has to: nothing here can guess it.
+  size: 0
+
 model:
   # Seven variables out of one `INPUT/atm.nc`. Nothing in the table is about the
   # Gulf, but it is resolved out of the domain's own base directory, so it only

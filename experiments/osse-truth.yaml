@@ -39,13 +39,6 @@ experiment:
   name: osse-truth
   description: OSSE stage B, the gom_12km nature run
 
-ensemble:
-  # Not an ensemble: one run, `mem000`. The block is here because a forcing
-  # source stages its file through `ensemble.inputs`, which is the same
-  # mechanism every member of a real ensemble uses, and a single run is the
-  # control alone.
-  size: 0
-
 vars:
   # The truth archive, not the experiment one. Both hold the same seven fields
   # on the same grid and differ in what produced them, which is the whole of the
