@@ -269,10 +269,13 @@ vars:
   # `diffusion_levels` is the domain's, declared in the domain layer, because it
   # is that domain's NK.
 
-  # The unbalanced sea surface height standard deviation, in metres. Zero, for
-  # the reason stated beside the key itself: every height increment then arrives
-  # through the balance operator, out of water the analysis actually moved.
-  unbalanced_ssh: 0.0
+  # The unbalanced sea surface height standard deviation, in metres. Not zero,
+  # and the reason is measured rather than assumed: at zero every altimeter
+  # increment has to arrive through the balance operator, which with `kst` off
+  # means it arrives entirely as subsurface temperature, and the thermocline
+  # error then grows with every cycle instead of settling.
+  # `docs/background-error.md` carries the sweep this value comes from.
+  unbalanced_ssh: 0.05
 
   # Inner iterations per outer loop. One outer loop, which is what `3d` means
   # here; FGAT and 4D add loops rather than iterations.

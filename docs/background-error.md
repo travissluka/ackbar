@@ -398,6 +398,69 @@ defaults rather than chosen values, and the sea surface height multiplier in
 be made. The exception is sea surface temperature, which reads a field derived
 for the domain by `tools/sst-bgerr.py`.
 
+The other exception is the unbalanced sea surface height standard deviation,
+which is the subject of the next section because it turned out to decide more
+than its own field.
+
+## The unbalanced sea surface height error
+
+`unbalanced_ssh` is 0.05 m. Zero is the tempting value and it is wrong, for a
+reason that is invisible until the minimization is allowed to converge.
+
+The argument for zero is real: an unbalanced height increment moves the free
+surface without moving any water, and the model spends the start of the next
+forecast reconciling the two. Set it to zero and every height increment instead
+arrives through the balance operator, out of temperature and salinity the
+analysis actually corrected. hat10 does this.
+
+What that argument leaves out is where the correction then has to go. `kst` is
+off in this configuration, so the balance operator puts no salinity anywhere it
+saw only temperature, and an altimeter's increment therefore arrives as
+subsurface *temperature* and nothing else. Every altimeter observation in the
+network is paid for out of the thermocline.
+
+Measured on gom_25km, 3DFGAT, twenty cycles, the three arms differing in this
+value alone:
+
+| | noda | 0.0 | 0.05 | 0.10 |
+|---|---|---|---|---|
+| sea surface height | 0.1243 | **0.0785** | 0.0812 | 0.0885 |
+| sea surface temperature | 0.7089 | 0.4559 | **0.4514** | 0.4525 |
+| T at 100 m | 1.7054 | 1.3833 | **1.1634** | 1.2763 |
+| T at 300 m | 1.4609 | 1.1506 | **1.1314** | 1.1930 |
+| S at 300 m | 0.2607 | 0.2862 | 0.2593 | **0.2436** |
+| S at 700 m | 0.1170 | 0.1303 | 0.1179 | **0.1107** |
+
+The mean hides the important part, which is the shape in time. At zero the T at
+100 m error falls for eleven cycles, bottoms at 1.220, and then *climbs* for the
+rest of the run, to 1.444 and still rising. At 0.05 and 0.1 it falls
+monotonically and flattens, at 0.969 and 1.003. The zero arm is not merely worse,
+it is not converging to anything: each cycle hands the next a thermocline further
+from truth than the one before.
+
+Two things follow that are worth keeping.
+
+**Deep salinity was the same defect, not a separate one.** At zero, S at 300 m
+and 700 m are *worse than not assimilating at all*, which had been carried as an
+open question about the steric balance. Both are fixed here, and at 0.1 they beat
+noda outright.
+
+**The broken configuration scores best on the observations it can see.** The zero
+arm has the lowest surface sea level error of the three. That is the whole
+argument for `tools/local/osse-state-error.py` existing beside
+`osse-compare.py`: judged on departures alone, the configuration that over-fits
+the altimeters and wrecks the interior is the one that looks best.
+
+0.05 rather than 0.1 because temperature prefers it and salinity's preference for
+0.1 is smaller. The optimum is bracketed on one side only: 0.02 and 0.03 were not
+run, so the true minimum is somewhere at or below 0.05 rather than known to be at
+it.
+
+**This was only visible after the iteration count was fixed.** With `ninner: 20`
+the minimization stopped long before it had fit the altimeters, which capped the
+damage and made the zero look survivable. Two defects, each hiding the other; see
+the iteration section in `docs/analysis.md`.
+
 ## The depth filter, and why it is off
 
 `SOCABkgErrFilt` carries two mechanisms with one name. `efold_z` is a taper:
