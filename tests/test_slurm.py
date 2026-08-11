@@ -243,6 +243,77 @@ def test_unparseable_accounting_is_an_outage_rather_than_no_data(monkeypatch):
     assert len(run.calls) == slurm.QUERY_ATTEMPTS
 
 
+# --- accounting, the cheap way -----------------------------------------------
+#
+# `--json` serializes every field Slurm knows for every job. At a thousand ids
+# that measured ten seconds against three hundred milliseconds for the two
+# columns a live display reads, which is longer than the refresh interval, so
+# `state.snapshot` asks this way instead.
+
+def test_states_come_back_per_array_element(monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake(
+        "4_1|COMPLETED\n4_2|FAILED\n7|COMPLETED\n"))
+    assert slurm.accounting_states([4, 7]) == {
+        (4, 1): "COMPLETED", (4, 2): "FAILED", (7, None): "COMPLETED",
+    }
+
+
+def test_the_reason_slurm_appends_to_a_state_is_dropped(monkeypatch):
+    monkeypatch.setattr(slurm, "run", fake("4|CANCELLED by 1000\n"))
+    assert slurm.accounting_states([4]) == {(4, None): "CANCELLED"}
+
+
+def test_the_unstarted_remainder_of_an_array_has_no_outcome_yet(monkeypatch):
+    """"4_[5-20]" is a queue fact, not an accounting one."""
+    monkeypatch.setattr(slurm, "run", fake("4_1|COMPLETED\n4_[5-20]|PENDING\n"))
+    assert slurm.accounting_states([4]) == {(4, 1): "COMPLETED"}
+
+
+def test_the_worst_element_is_what_the_base_id_did(monkeypatch):
+    states = {(4, 1): "COMPLETED", (4, 2): "FAILED", (4, 3): "RUNNING"}
+    assert slurm.collapse_elements(states) == {4: "FAILED"}
+    assert slurm.collapse_elements(
+        {(4, 1): "COMPLETED", (4, 2): "RUNNING"}) == {4: "RUNNING"}
+
+
+def test_a_scheduler_that_cannot_be_asked_is_an_outage_here_too(monkeypatch):
+    """The exit code is what says which, `--json` not being in the way."""
+    monkeypatch.setattr(slurm, "QUERY_BACKOFF", 0)
+    run = fake("", returncode=1)
+    monkeypatch.setattr(slurm, "run", run)
+    with pytest.raises(slurm.SlurmError, match="outage"):
+        slurm.accounting_states([4])
+    assert len(run.calls) == slurm.QUERY_ATTEMPTS
+
+
+def test_zero_rows_falls_through_to_the_hardened_query(monkeypatch):
+    """The one case the cheap call cannot tell apart, handed to the one that can.
+
+    Nothing at all for ids that were asked about is either "purged" or "not
+    answering", and rather than guess, this defers to `accounting`, whose whole
+    contract is that the difference matters.
+    """
+    calls = []
+
+    def run(command, check=True, stdin=None):
+        calls.append(command)
+        # The `-P` call says nothing; the `--json` one says the job completed.
+        stdout = "" if "--json" not in command else _array((4, 1, "COMPLETED"))
+        return types.SimpleNamespace(args=command, returncode=0,
+                                     stdout=stdout, stderr="")
+
+    monkeypatch.setattr(slurm, "run", run)
+    assert slurm.accounting_states([4]) == {(4, None): "COMPLETED"}
+    assert any("--json" in command for command in calls)
+
+
+def test_the_cheap_query_is_not_a_query_at_all_for_no_ids(monkeypatch):
+    def explode(*a, **k):
+        raise AssertionError("should not have run a command")
+    monkeypatch.setattr(slurm, "run", explode)
+    assert slurm.accounting_states([]) == {}
+
+
 # --- the state the submitter actually asks for -------------------------------
 
 def _states(monkeypatch, queue, accounting):

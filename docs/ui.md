@@ -41,8 +41,19 @@ opens the full map.
 | `tab` | sidebar, grid, panes |
 | `1`-`5` | grid, nodes, log, stats, config |
 | `enter` | open the log of the node under the cursor |
+| `backspace` | back to the grid from any pane |
 | `h` `s` `r` `p` `x` `t` | heal, start, resume, pause, cancel, harvest |
 | `R` `A` `P` `q` | refresh now, show all experiments, colour-blind-safe palette, quit |
+
+The mouse works where pointing is the natural thing to do: a click puts the cursor on the cell
+under it, a double click opens that cell's log, and the sidebar and the tabs are clickable. "Why
+did *that* one fail" is a question you ask by pointing, and counting twenty arrow presses to a
+cell already on screen is the kind of friction that sends a reader back to `sacct`.
+
+Which region the arrows move is drawn rather than remembered: a teal rail down the left edge of
+whichever region has the keyboard, the grid cursor bright and its column lit only while the grid
+has it, and the sidebar's highlight dim while it does not. The rail is always there and only
+changes colour, so focus moving never shifts the layout by a column.
 
 `h`, `s`, `r`, `x` all open the plan before they touch the queue: heal shows its broken nodes,
 its closure, and the job ids it will cancel, and `enter` confirms. `p` and `t` are not gated,
@@ -75,15 +86,43 @@ number. `DependencyNeverSatisfied` is recognized ahead of both and is `stranded`
 The sidebar shows `N▸` running and `Nq` queued; blocked is deliberately not counted there, since
 it would dwarf both and read as a problem.
 
-## One round trip per tick
+## What a tick costs
 
-`ui/poll.py` runs one `squeue` and one batched `sacct` covering every tracked job id, then calls
-`state.collect` per experiment against that single snapshot. The cost of asking Slurm is per
-invocation rather than per job id, so the naive one-collect-per-experiment loop is six `sacct`
-calls a second on a login node for ten experiments and five second ticks.
+Three things keep a refresh at a couple of hundred milliseconds over ten experiments and a
+thousand job ids. Each was a real cost, measured on rancor rather than guessed at, and the first
+two were what made the whole tick take longer than the interval between ticks.
 
-That is what `state.snapshot` exists for, and `state.collect(paths, graph, snap=None)` still
-queries for itself when nothing passes one, which is what every argv command does.
+**One round trip, not one per experiment.** `ui/poll.py` runs one `squeue` and one batched
+`sacct` covering every tracked job id, then calls `state.collect` per experiment against that
+single snapshot. The cost of asking Slurm is per invocation rather than per job id, so the naive
+one-collect-per-experiment loop is six `sacct` calls a second on a login node for ten experiments
+and five second ticks. That is what `state.snapshot` exists for, and
+`state.collect(paths, graph, snap=None)` still queries for itself when nothing passes one, which
+is what every argv command does.
+
+**Two columns, not every field.** `sacct --json` serializes everything Slurm knows for every job:
+at a thousand ids that is fifteen megabytes to produce and parse, and it measured ten seconds
+against three hundred milliseconds for `-P -o JobID,State`. So `state.snapshot` asks through
+`slurm.accounting_states`, which reads per array element, and `slurm.collapse_elements` does the
+worst-element collapse that `accounting` did internally. The hardened `accounting` is unchanged
+and still what the submitter and healer use, and the cheap call falls through to it when it comes
+back with nothing at all, which is the one case an exit code cannot tell from a purge.
+
+**A finished job is asked about once.** `poll.Settled` remembers accounting rows that can no
+longer change: nothing of the job in the queue, every row it has terminal. Asking again is not
+checking, it is re-reading an immutable record, and without it the cost of a tick grows with how
+long an experiment has run rather than with how much is happening. `R` forgets the lot and asks
+about everything, which is the escape hatch for the one way it can be wrong, a scheduler whose
+job ids restart.
+
+A refresh also rescans the output root, so an experiment created while the console is open
+appears within a tick instead of on the next restart. That is affordable because `discover` hands
+back the `Experiment` objects it was given rather than re-parsing ten frozen configs and
+rebuilding ten graphs: the config is frozen, so there is nothing to re-read.
+
+Until the first tick lands the banner says it is reading the output root. "No experiments under
+this output root" is a finding, and stating it before anything has been looked at is stating
+something false for as long as the first scan takes.
 
 Polling runs in a thread worker, so a slow `sacct` makes the clock in the corner stale and
 nothing else, and a tick still in flight is skipped rather than queued. When Slurm cannot be

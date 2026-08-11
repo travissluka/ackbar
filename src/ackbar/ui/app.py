@@ -45,6 +45,12 @@ INTERVAL = 5.0
 BREATH_INTERVAL = 0.4
 
 
+def _unfocusable(widget):
+    """Take a container out of the tab order. `can_focus` is a class var."""
+    widget.can_focus = False
+    return widget
+
+
 class AckbarUI(App):
     """`ackbar-ui`."""
 
@@ -69,6 +75,11 @@ class AckbarUI(App):
         Binding("x", "act('x')", "cancel"),
         Binding("t", "act('t')", "harvest", show=False),
         Binding("enter", "open_log", "log"),
+        # Out of a pane and back to the grid. Backspace because the panes are
+        # somewhere you went rather than somewhere you are, and because escape
+        # alone would be the only way back out of the log and it is also the key
+        # that dismisses a modal.
+        Binding("backspace,escape", "back_to_grid", "back", show=False),
         Binding("1", "tab('grid')", "grid", show=False),
         Binding("2", "tab('nodes')", "nodes", show=False),
         Binding("3", "tab('log')", "log", show=False),
@@ -104,7 +115,10 @@ class AckbarUI(App):
             with Vertical(id="main"):
                 with TabbedContent(id="tabs"):
                     with TabPane("grid", id="grid"):
-                        with VerticalScroll(id="grid-scroll"):
+                        # Not itself a tab stop: the grid inside it is, and two
+                        # stops for one pane means tab lands somewhere the arrow
+                        # keys do nothing, which reads as the arrows being broken.
+                        with _unfocusable(VerticalScroll(id="grid-scroll")):
                             yield StatusGrid(id="statusgrid")
                         yield CellDetail(id="detail")
                     with TabPane("nodes", id="nodes"):
@@ -122,6 +136,12 @@ class AckbarUI(App):
         yield Footer()
 
     def on_mount(self):
+        # Said before the first tick, and it is a different sentence from "there
+        # are no experiments". The scan and the scheduler both take a moment on a
+        # busy machine, and a display that opens by reporting an empty output root
+        # is telling the reader something false for as long as it takes to find
+        # out otherwise.
+        self.query_one("#banner", Banner).show(None, loading=True)
         self.set_interval(self.interval, self.tick)
         self.set_interval(BREATH_INTERVAL, self.breathe)
         self.tick()
@@ -132,10 +152,10 @@ class AckbarUI(App):
         self.poll()
 
     @work(thread=True, exclusive=True, group="poll")
-    def poll(self):
+    def poll(self, fresh=False):
         """One refresh, in a thread. `exclusive` skips a tick still in flight."""
         try:
-            report = self.poller.refresh()
+            report = self.poller.refresh(fresh=fresh)
         except Exception as error:  # noqa: BLE001 - a tick must never kill the app
             self.call_from_thread(self.notify, f"refresh failed: {error}",
                                   severity="error")
@@ -193,8 +213,12 @@ class AckbarUI(App):
         view = self.view
         banner = self.query_one("#banner", Banner)
         banner.show(view, refreshed=self._ago(),
-                    error=self.report.error if self.report else "")
+                    error=self.report.error if self.report else "",
+                    loading=self.report is None)
         if view is None:
+            self.query_one("#statusgrid", StatusGrid).blank(
+                "reading the output root…" if self.report is None
+                else "no experiments under this output root")
             return
 
         grid = self.query_one("#statusgrid", StatusGrid)
@@ -221,6 +245,7 @@ class AckbarUI(App):
                          style=theme.INK["muted"])
             title.append(", ".join(p.name for p in files[:3]) or "nothing",
                          style=theme.INK["accent"])
+            title.append("   ⌫ back to the grid", style=theme.INK["faint"])
         self.query_one("#log-title", Static).update(title)
 
     def show_detail(self, node_id):
@@ -256,6 +281,10 @@ class AckbarUI(App):
         if self.query_one("#tabs", TabbedContent).active == "log":
             self.show_log(event.node_id)
 
+    def on_status_grid_opened(self, event):
+        self.action_tab("log")
+        self.show_log(event.node_id, force=True)
+
     def on_tabbed_content_tab_activated(self, event):
         if event.pane.id == "log":
             self.show_log(self.query_one("#statusgrid", StatusGrid).cursor_node)
@@ -263,7 +292,12 @@ class AckbarUI(App):
     # --- actions -------------------------------------------------------------
 
     def action_refresh_now(self):
-        self.poll()
+        # By hand means "ask about everything", including the jobs whose outcome
+        # was taken as final. See `poll.Settled`.
+        self.poll(fresh=True)
+
+    def action_back_to_grid(self):
+        self.action_focus_grid()
 
     def action_toggle_all(self):
         self.show_all = not self.show_all
@@ -337,6 +371,8 @@ class HelpScreen(ModalScreen):
             ("tab", "move between the sidebar, the grid and the panes"),
             ("1 - 5", "grid, nodes, log, stats, config"),
             ("enter", "open the log of the node under the cursor"),
+            ("backspace", "back to the grid from any pane"),
+            ("click", "put the cursor on a cell; twice opens its log"),
             ("", ""),
             ("h", "heal: cancel a failure's dependents and resubmit them"),
             ("s", "start the first cycle"),

@@ -122,7 +122,11 @@ class Snapshot:
 
     #: (base job id, member) -> (state, reason), from `squeue`
     live: dict = field(default_factory=dict)
-    #: base job id -> accounting record, from `sacct`
+    #: base job id -> {"state": ...}, from `sacct`: the worst state among an
+    #: array's elements, which is the answer for an element accounting has no
+    #: row of its own for. State only, and not `accounting`'s other fields: this
+    #: is built from `slurm.accounting_states`, because the full record costs
+    #: thirty times as much to fetch and nothing here reads the rest of it.
     done: dict = field(default_factory=dict)
     #: (base job id, member) -> {"state": ...}, from `sacct`
     done_elements: dict = field(default_factory=dict)
@@ -137,12 +141,20 @@ class Snapshot:
 
 
 def snapshot(job_ids):
-    """Ask the scheduler about *job_ids*. Raises on an outage, as ever."""
+    """Ask the scheduler about *job_ids*. Raises on an outage, as ever.
+
+    Two commands, one `squeue` and one `sacct`. It was three, and the third was
+    `sacct --json` over the same ids for the sake of the base-id collapse, which
+    `slurm.collapse_elements` now does from the rows the cheap call already
+    returned.
+    """
     job_ids = list(job_ids)
+    states = slurm.accounting_states(job_ids)
     return Snapshot(
         live=_queue_elements(job_ids),
-        done=slurm.accounting(job_ids) if job_ids else {},
-        done_elements=_accounting_elements(job_ids),
+        done={base: {"state": state}
+              for base, state in slurm.collapse_elements(states).items()},
+        done_elements={key: {"state": state} for key, state in states.items()},
         asked=frozenset(job_ids),
     )
 
@@ -274,29 +286,6 @@ def _queue_elements(job_ids):
             continue
         member = int(element) if element.isdigit() else None
         out[(int(base), member)] = (state, reason)
-    return out
-
-
-def _accounting_elements(job_ids):
-    """{(base id, member): {"state": ...}} from sacct, per array element."""
-    if not job_ids:
-        return {}
-    result = slurm.run(
-        ["sacct", "-n", "-X", "-P", "-o", "JobID,State", "-j",
-         ",".join(str(i) for i in job_ids)],
-        check=False,
-    )
-    out = {}
-    for line in result.stdout.splitlines():
-        parts = line.strip().split("|")
-        if len(parts) != 2:
-            continue
-        raw, state = parts
-        base, _, element = raw.partition("_")
-        if not base.isdigit() or element.startswith("["):
-            continue
-        member = int(element) if element.isdigit() else None
-        out[(int(base), member)] = {"state": state.split()[0]}
     return out
 
 

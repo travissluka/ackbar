@@ -45,11 +45,15 @@ def cell_style(node_state, palette, phase=0, *, background=None):
 class Banner(Static):
     """The top line: which experiment, what it is, and whether it is halted."""
 
-    def show(self, view, *, refreshed="", error=""):
+    def show(self, view, *, refreshed="", error="", loading=False):
         text = Text(no_wrap=True, overflow="ellipsis")
         text.append("ackbar", style=f"bold {theme.INK['accent']}")
         if view is None:
-            text.append("   no experiments under this output root",
+            # Two different facts, and the console used to report the second one
+            # while the first was still true: before the first tick lands, "no
+            # experiments" is not something anybody has looked yet.
+            text.append("   ⟳ reading the output root…" if loading
+                        else "   no experiments under this output root",
                         style=theme.INK["muted"])
             self.update(text)
             return
@@ -198,6 +202,12 @@ class StatusGrid(Static):
     jumping, and a movement key that shadows an action key depending on which
     widget has focus is the kind of interface that gets one of the two wrong at
     the worst moment.
+
+    A click puts the cursor on the cell under the pointer, and a double click
+    opens its log, which is the mouse spelling of `enter`. Worth having even in a
+    keyboard-first display: "why did *that* one fail" is a question you ask by
+    pointing at it, and counting twenty arrow presses to the cell you can already
+    see is the kind of friction that makes a reader go back to `sacct`.
     """
 
     can_focus = True
@@ -223,6 +233,22 @@ class StatusGrid(Static):
         self.column = 0
         self.phase = 0
         self._showing = None
+        # What to say when there is nothing to draw. "Nothing submitted yet" is
+        # a claim about an experiment, and before the first tick there is no
+        # experiment to make a claim about.
+        self._message = "reading the output root…"
+        #: (label width, cell width, visible cycles) from the last draw. Kept so
+        #: a click can be turned back into a cell; the layout is a function of
+        #: the pane width and the cycle count, so it is not derivable without it.
+        self._layout = (0, 1, [])
+
+    def blank(self, message):
+        """Draw *message* instead of a grid: no experiment, or not yet."""
+        self.view = None
+        self._showing = None
+        self.tasks = []
+        self._message = message
+        self.draw()
 
     def show(self, view, *, palette=None):
         """Adopt a new view. Keeps the cursor where it was on the same one."""
@@ -299,12 +325,54 @@ class StatusGrid(Static):
         self.column = 0 if across < 0 else max(0, len(self.cycles) - 1)
         self._moved()
 
+    def on_click(self, event):
+        """Put the cursor where the pointer is; twice opens the log."""
+        if self.view is None or not self.tasks:
+            return
+        offset = event.get_content_offset(self)
+        if offset is None:
+            return
+        label, width, window = self._layout
+        if not window:
+            return
+
+        column = (offset.x - label) // width
+        if column < 0 or column >= len(window):
+            return
+        # Line 0 is the header of cycle numbers: clicking a number is a request
+        # for that cycle, not for a task, so the row stays where it was. Below
+        # the last task is the legend, which is not a cell.
+        row = self.row if offset.y == 0 else offset.y - 1
+        if not 0 <= row < len(self.tasks):
+            return
+
+        self.row = row
+        self.column = self.cycles.index(window[column])
+        self._moved()
+        if event.chain >= 2:
+            self.post_message(self.Opened(self.cursor_node))
+
     def _moved(self):
         self.draw()
         self.post_message(self.Moved(self.cursor_node))
 
+    def on_focus(self):
+        # The cursor is drawn differently depending on whether this widget has
+        # the keyboard, so focus is a repaint.
+        self.draw()
+
+    def on_blur(self):
+        self.draw()
+
     class Moved(Message):
         """The cursor landed on a node."""
+
+        def __init__(self, node_id):
+            super().__init__()
+            self.node_id = node_id
+
+    class Opened(Message):
+        """A node was double clicked: the mouse spelling of `enter`."""
 
         def __init__(self, node_id):
             super().__init__()
@@ -321,12 +389,19 @@ class StatusGrid(Static):
 
     def picture(self):
         if self.view is None or not self.tasks:
-            return Text("nothing submitted yet", style=theme.INK["muted"])
+            return Text(self._message, style=theme.INK["muted"])
 
         label = max(len(t) for t in self.tasks) + 2
         room = max(4, self.size.width - label - 2)
         width, window = _fit(self.cycles, self.column, room)
         cursor_cycle = self.cycles[min(self.column, len(self.cycles) - 1)]
+        self._layout = (label, width, window)
+        # Focus is drawn, not merely tracked. With five focusable regions on the
+        # screen, "which one do the arrow keys move" has to be visible without
+        # pressing one to find out, so the cursor here is bright and its column
+        # lit when this widget has the keyboard, and both go quiet when it does
+        # not. The stylesheet lights the rail down the left edge to match.
+        active = self.has_focus
 
         text = Text(no_wrap=True)
         text.append_text(_header(window, width, cursor_cycle, label))
@@ -357,10 +432,14 @@ class StatusGrid(Static):
                     # the half of the grid nothing has happened in yet.
                     text.append(
                         theme.CURSOR_CELL * ink,
-                        style=f"bold #f0f6fc on {self.palette[status.summary]}",
+                        style=(f"bold #f0f6fc on {self.palette[status.summary]}"
+                               if active else
+                               f"{theme.INK['muted']} on "
+                               f"{self.palette[status.summary]}"),
                     )
-                    text.append(gutter, style=f"on {theme.INK['cursor']}")
-                elif cycle == cursor_cycle:
+                    text.append(gutter, style=f"on {theme.INK['cursor']}"
+                                if active else f"on {theme.INK['column']}")
+                elif cycle == cursor_cycle and active:
                     text.append(theme.CELL * ink, style=cell_style(
                         status.summary, self.palette, self.phase,
                         background=theme.INK["column"],

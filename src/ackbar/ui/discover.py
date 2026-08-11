@@ -31,6 +31,10 @@ class Experiment:
     name: str
     config: dict
     paths: Paths
+    #: The frozen config this was loaded from. The identity a rescan matches on,
+    #: rather than the name: the name comes *out* of the file, so matching on it
+    #: would mean reading the file to find out whether the file needs reading.
+    source: Path = None
     #: `run/ledger.jsonl`'s mtime, or the directory's. Recency is "when did
     #: anything happen to this", and the ledger is appended to on every
     #: submission, so it is the cheapest honest answer.
@@ -93,7 +97,7 @@ class Experiment:
         return max(0.0, (now if now is not None else time.time()) - self.touched)
 
 
-def discover(site, root=None):
+def discover(site, root=None, known=()):
     """Every experiment under the output root, most recently touched first.
 
     Sorted by recency rather than by name because the question a console is
@@ -102,14 +106,29 @@ def discover(site, root=None):
     skipped rather than fatal: one broken directory must not make the console
     unable to show the other nine, and the argv commands will say what is wrong
     with it in more detail than a sidebar row could.
+
+    *known* is any iterable of `Experiment`s a previous scan produced, and the
+    ones still on disk are handed back rather than rebuilt. That is what makes a
+    scan cheap enough to run on every tick, which is what makes a newly created
+    experiment appear on its own instead of when the console is next restarted:
+    the glob and its stats are a couple of milliseconds, while parsing ten frozen
+    configs and building ten graphs is the better part of a second, and a frozen
+    config cannot have changed under us.
     """
     root = Path(root or site["output_root"])
     if not root.is_dir():
         return []
 
+    reusable = {e.source: e for e in known if e.source is not None}
     out = []
     for frozen in sorted(root.glob("*/cfg/experiment.yaml")):
-        experiment = load(frozen, site)
+        experiment = reusable.get(frozen)
+        if experiment is None:
+            experiment = load(frozen, site)
+        else:
+            # The one thing about it that does move: recency orders the sidebar
+            # and decides what `--all` hides.
+            experiment.touched = _touched(experiment.paths, frozen)
         if experiment is not None:
             out.append(experiment)
     out.sort(key=lambda e: (-e.touched, e.name))
@@ -135,6 +154,7 @@ def load(frozen, site):
         name=config["experiment"]["name"],
         config=config,
         paths=paths,
+        source=frozen,
         touched=_touched(paths, frozen),
     )
 

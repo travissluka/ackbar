@@ -66,17 +66,15 @@ def fake_slurm(monkeypatch):
     live, done = {}, {}
 
     def queue_elements(job_ids):
-        return dict(live)
+        asked = set(job_ids)
+        return {key: row for key, row in live.items() if key[0] in asked}
 
-    def accounting(job_ids):
-        return {job: {"state": s} for job, s in done.items()}
-
-    def accounting_elements(job_ids):
-        return {(job, None): {"state": s} for job, s in done.items()}
+    def accounting_states(job_ids):
+        return {(job, None): s for job, s in done.items()
+                if job in set(job_ids)}
 
     monkeypatch.setattr(st, "_queue_elements", queue_elements)
-    monkeypatch.setattr(st.slurm, "accounting", accounting)
-    monkeypatch.setattr(st, "_accounting_elements", accounting_elements)
+    monkeypatch.setattr(st.slurm, "accounting_states", accounting_states)
     return live, done
 
 
@@ -213,6 +211,92 @@ def test_a_snapshot_that_was_never_asked_about_an_id_says_nothing_about_it(
     # stay failed, because the only way forward is to run it again.
     fresh = st.snapshot([100])
     assert st.collect(paths, graph, fresh)["1.da"].summary == st.FAILED
+
+
+def test_an_experiment_created_while_the_console_is_open_appears(
+        experiment, fake_slurm, tmp_path):
+    """It did not, and quitting to see a new experiment is not a live display."""
+    poller = Poller(experiment)
+    assert set(poller.refresh().views) == {"demo"}
+
+    directory = tmp_path / "out" / "later" / "cfg"
+    directory.mkdir(parents=True)
+    with open(directory / "experiment.yaml", "w") as handle:
+        yaml.safe_dump(dict(CONFIG, experiment={"name": "later"}), handle)
+
+    assert set(poller.refresh().views) == {"demo", "later"}
+
+
+def test_a_rescan_hands_back_the_experiments_it_already_loaded(experiment,
+                                                              fake_slurm):
+    """What makes a scan per tick affordable: the config is frozen."""
+    poller = Poller(experiment)
+    poller.refresh()
+    first = poller.experiments[0]
+    graph = first.graph
+    poller.refresh()
+    assert poller.experiments[0] is first
+    assert poller.experiments[0].graph is graph
+
+
+def test_a_job_slurm_has_finished_with_is_asked_about_once(
+        experiment, fake_slurm, monkeypatch):
+    """The cost of a tick should track what is happening, not how long it ran.
+
+    A terminal accounting row has no further states to reach, so asking again is
+    re-reading an immutable record. On a real experiment this is the difference
+    between a thousand ids per tick and a dozen.
+    """
+    live, done = fake_slurm
+    submitted(experiment, [(1, "da"), (1, "forecast")])
+    done[100] = "COMPLETED"
+    done[101] = "RUNNING"
+    live[(101, None)] = ("RUNNING", "None")
+
+    asked = []
+    real = st.snapshot
+    monkeypatch.setattr(st, "snapshot",
+                        lambda ids: asked.append(tuple(ids)) or real(ids))
+
+    poller = Poller(experiment)
+    poller.refresh()
+    second = poller.refresh()
+    assert asked == [(100, 101), (101,)]
+    # And it is still complete in the second report, out of what was remembered.
+    assert second.views["demo"].statuses["1.da"].summary == st.COMPLETE
+    assert second.views["demo"].statuses["1.forecast"].summary == st.RUNNING
+
+
+def test_a_job_still_in_the_queue_is_never_taken_as_settled(experiment,
+                                                            fake_slurm):
+    """`sacct` can say COMPLETED for an element while siblings still run."""
+    live, done = fake_slurm
+    submitted(experiment, [(1, "da")])
+    done[100] = "COMPLETED"
+    live[(100, None)] = ("COMPLETING", "None")
+
+    poller = Poller(experiment)
+    poller.refresh()
+    assert poller.settled.unasked([100]) == [100]
+
+
+def test_a_refresh_by_hand_asks_about_everything_again(experiment, fake_slurm,
+                                                      monkeypatch):
+    """The escape hatch, for the one case that can be wrong: reused job ids."""
+    _, done = fake_slurm
+    submitted(experiment, [(1, "da")])
+    done[100] = "COMPLETED"
+
+    asked = []
+    real = st.snapshot
+    monkeypatch.setattr(st, "snapshot",
+                        lambda ids: asked.append(tuple(ids)) or real(ids))
+
+    poller = Poller(experiment)
+    poller.refresh()
+    poller.refresh()
+    poller.refresh(fresh=True)
+    assert asked == [(100,), (), (100,)]
 
 
 def test_the_queue_split_is_counted_separately(experiment, fake_slurm):
@@ -408,6 +492,122 @@ async def test_quitting_changes_nothing_on_disk(experiment, fake_slurm):
             await pilot.press(key)
             await pilot.pause()
     assert sorted(p.name for p in paths.experiment_dir.rglob("*")) == before
+
+
+async def test_the_first_frame_says_it_is_looking_not_that_there_is_nothing(
+        experiment, fake_slurm, monkeypatch):
+    """Two different facts, and the console used to state the wrong one.
+
+    "No experiments under this output root" is a finding. Before the first tick
+    lands nobody has looked, and on a busy machine that is a second or two of
+    the display asserting something false.
+    """
+    monkeypatch.setattr(AckbarUI, "apply", lambda self, report: None)
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "reading" in str(app.query_one("#banner").content)
+
+
+async def test_an_empty_output_root_says_so_once_it_has_been_read(tmp_path,
+                                                                 fake_slurm):
+    site = {"output_root": str(tmp_path / "empty"),
+            "scratch_root": str(tmp_path / "scratch"), "launcher": ""}
+    (tmp_path / "empty").mkdir()
+    app = AckbarUI(site=site, interval=3600.0)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        assert "no experiments" in str(app.query_one("#banner").content)
+        assert "no experiments" in str(app.query_one("#statusgrid").content)
+
+
+async def test_a_click_puts_the_cursor_on_the_cell_under_the_pointer(
+        experiment, fake_slurm):
+    """Pointing at the cell you can see, instead of counting arrow presses."""
+    submitted(experiment, [(1, "da"), (2, "da"), (3, "da"), (4, "da")])
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.column = 0
+        grid.draw()
+        await pilot.pause()
+        label, width, window = grid._layout
+        row, target = 1, len(window) - 1
+
+        await pilot.click(grid, offset=(
+            grid.gutter.left + label + target * width,
+            grid.gutter.top + 1 + row,
+        ))
+        await pilot.pause()
+        assert grid.cursor_node == f"{window[target]}.{grid.tasks[row]}"
+
+
+async def test_a_double_click_opens_the_log_the_way_enter_does(experiment,
+                                                              fake_slurm):
+    submitted(experiment, [(1, "da")])
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        label, width, window = grid._layout
+
+        await pilot.click(grid, offset=(grid.gutter.left + label,
+                                        grid.gutter.top + 1), times=2)
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "log"
+
+
+async def test_the_grid_says_whether_the_arrows_are_pointed_at_it(experiment,
+                                                                 fake_slurm):
+    """Which region has the keyboard has to be visible without pressing a key."""
+    submitted(experiment, [(1, "da")])
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+
+        def bright_cursor():
+            return any("f0f6fc" in str(span.style)
+                       for span in grid.picture().spans)
+
+        grid.focus()
+        await pilot.pause()
+        assert bright_cursor()
+
+        app.query_one("#fleet").focus()
+        await pilot.pause()
+        assert not bright_cursor()
+
+
+async def test_backspace_comes_back_out_of_a_pane_to_the_grid(experiment,
+                                                             fake_slurm):
+    submitted(experiment, [(1, "da")])
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "log"
+        app.query_one("#logview").focus()
+        await pilot.pause()
+
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert app.query_one("#tabs").active == "grid"
+        assert app.focused is app.query_one("#statusgrid")
 
 
 async def test_the_stats_pane_reads_the_harvest_and_invents_nothing(

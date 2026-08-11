@@ -51,10 +51,34 @@ Screen {
     height: 2;
 }
 
+/* Dim while the list does not have the keyboard, bright while it does. The
+ * highlight is two things at once, "this is the experiment being shown" and
+ * "the arrows move this", and only the second one goes away on blur. */
 #fleet > .option-list--option-highlighted,
 #fleet > .option-list--option-hover-highlighted {
-    background: #1c2b33;
+    background: #161b22;
     text-style: none;
+}
+
+#fleet:focus > .option-list--option-highlighted {
+    background: #1c3f47;
+    text-style: none;
+}
+
+/* Which region has the keyboard, on every region that can take it.
+ *
+ * A rail down the left edge, always present and normally the colour of the
+ * background, so lighting it costs no layout: a border that appeared on focus
+ * would shift the grid one column sideways every time focus moved, which is
+ * worse than not knowing. Five focusable regions is too many to work out by
+ * pressing an arrow and seeing what happens. */
+#fleet, #statusgrid, #nodestable, #statstable, #logview, #config-scroll {
+    border-left: solid #0d1117;
+}
+
+#fleet:focus, #statusgrid:focus, #nodestable:focus, #statstable:focus,
+#logview:focus, #config-scroll:focus {
+    border-left: solid #2dd4bf;
 }
 
 #main {

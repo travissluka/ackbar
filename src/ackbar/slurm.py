@@ -242,6 +242,87 @@ def accounting(job_ids):
     return out
 
 
+def accounting_states(job_ids):
+    """{(base job id, array index): state} from `sacct`, states and nothing else.
+
+    The same question `accounting` answers, asked the cheap way, for the callers
+    that only need the state. `--json` serializes every field Slurm knows for
+    every job: at a thousand ids that is fifteen megabytes to produce, transfer
+    and parse, and it measured ten seconds against three hundred milliseconds
+    for the two columns actually read. A live display cannot pay that per tick,
+    and neither should `status` on an experiment that has been running a week.
+
+    Per array *element*, because that is the resolution the caller wants and the
+    resolution `sacct` natively reports; `accounting` collapses elements onto the
+    base id and this deliberately does not. A non-array job is keyed
+    `(id, None)`.
+
+    Same outage contract as `accounting`, arrived at differently. There, empty
+    output cannot be told from a dbd that is not answering, so empty is a
+    failure; here `--json` is not in the way, so the exit code says which it is:
+    `sacct` exits zero for a job it has no record of and non-zero when it cannot
+    ask. The one ambiguous case, zero rows for ids that were asked about, falls
+    through to `accounting` rather than being interpreted here, so the hardened
+    path is what answers when the cheap one says nothing at all.
+    """
+    if not job_ids:
+        return {}
+    command = ["sacct", "-n", "-X", "-P", "-o", "JobID,State",
+               "-j", ",".join(str(i) for i in job_ids)]
+    result = None
+    for attempt in range(QUERY_ATTEMPTS):
+        result = run(command, check=False)
+        if result.returncode == 0:
+            break
+        if attempt + 1 < QUERY_ATTEMPTS:
+            time.sleep(QUERY_BACKOFF * (attempt + 1))
+    if result is None or result.returncode != 0:
+        raise SlurmError(
+            f"sacct could not answer for {len(job_ids)} job(s) after "
+            f"{QUERY_ATTEMPTS} attempts; treating this as an outage rather "
+            f"than as those jobs not existing"
+        )
+
+    out = {}
+    for line in result.stdout.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 2:
+            continue
+        raw, state = parts
+        base, _, element = raw.partition("_")
+        # "123_[5-20]", the un-started remainder of an array. It has no outcome
+        # yet by definition, and the queue is where it is visible.
+        if not base.isdigit() or element.startswith("["):
+            continue
+        member = int(element) if element.isdigit() else None
+        # "CANCELLED by 1000" and friends.
+        out[(int(base), member)] = state.split()[0]
+
+    if not out:
+        return {key: record["state"]
+                for key, record in _base_keyed(accounting(job_ids)).items()}
+    return out
+
+
+def _base_keyed(records):
+    """`accounting`'s base-keyed rows in `accounting_states`' key shape."""
+    return {(job_id, None): record for job_id, record in records.items()}
+
+
+def collapse_elements(states):
+    """Per-element states from `accounting_states`, worst element per base id.
+
+    The same collapse `accounting` does internally, exposed because a caller
+    that asked per element still wants the "what did this job do" answer for
+    the elements accounting has no row for.
+    """
+    out = {}
+    for (base, _member), state in states.items():
+        if base not in out or _worse(state, out[base]):
+            out[base] = state
+    return out
+
+
 def _worse(state, than):
     """Whether an array element's outcome should displace one already seen.
 

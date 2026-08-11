@@ -10,13 +10,14 @@ So: one `squeue` and one batched `sacct` covering every tracked job id, then
 `state.collect` per experiment against that single snapshot. Same answers, one
 round trip.
 
-Nothing here is a cache. A `Report` is what was true at one instant, it is
-replaced whole by the next tick, and the only thing carried across a tick is the
-*previous* report, kept so that a scheduler outage can leave the last known grid
-on screen instead of blanking it. That distinction is the one `slurm.accounting`
-already insists on: "Slurm could not answer" is not "none of these jobs exist",
-and a display that erased itself on a slurmdbd restart would be asserting the
-second.
+No state is cached. A `Report` is what was true at one instant and is replaced
+whole by the next tick. Two things are carried across a tick and neither is a
+state cache: the *previous* report, kept so that a scheduler outage can leave the
+last known grid on screen instead of blanking it, and `Settled`, which remembers
+accounting rows that can no longer change. The first is the distinction
+`slurm.accounting` already insists on, "Slurm could not answer" is not "none of
+these jobs exist", and a display that erased itself on a slurmdbd restart would
+be asserting the second; the other is argued at `Settled` itself.
 """
 
 import time
@@ -24,6 +25,68 @@ from dataclasses import dataclass, field
 
 from .. import ledger, slurm, state
 from .discover import discover
+
+
+class Settled:
+    """Job ids whose accounting row can no longer change, and what it said.
+
+    The one thing in the console worth remembering across a tick, and it is not
+    a cache of state: a job that has left the queue and reached a terminal
+    accounting state has *no* further states to reach. Asking again is not
+    checking, it is re-reading an immutable record, and the record is the
+    expensive part. A twenty-five cycle ensemble experiment accumulates upwards
+    of a thousand job ids and all but a dozen of them are ancient history, so
+    the cost of a tick otherwise grows with the length of the run rather than
+    with how much is happening, which is the wrong way round for a live display.
+
+    Two facts have to hold together before an id is kept, and both are checked:
+    nothing of it is in the queue, and every accounting row it has is terminal.
+    An array with one element still running is not settled, however many of its
+    siblings have finished.
+
+    The one way this can be wrong is a scheduler whose job ids restart, which
+    means a slurmctld rebuilt from nothing mid-session. `forget` exists for that
+    and `R` calls it, so a refresh asked for by hand asks about everything.
+    """
+
+    def __init__(self):
+        self.done = {}
+        self.elements = {}
+
+    def forget(self):
+        self.done.clear()
+        self.elements.clear()
+
+    def unasked(self, job_ids):
+        """The ids still worth a scheduler round trip."""
+        return [i for i in job_ids if i not in self.done]
+
+    def fill(self, snap):
+        """Put the remembered rows back into a fresh snapshot."""
+        for job_id, record in self.done.items():
+            snap.done.setdefault(job_id, record)
+        for key, record in self.elements.items():
+            snap.done_elements.setdefault(key, record)
+        snap.asked = snap.asked | frozenset(self.done)
+        return snap
+
+    def absorb(self, snap):
+        """Keep whatever this snapshot proved is over."""
+        queued = {base for base, _member in snap.live}
+        for job_id, record in snap.done.items():
+            if job_id in queued or job_id in self.done:
+                continue
+            elements = {key: row for key, row in snap.done_elements.items()
+                        if key[0] == job_id}
+            if not _terminal(record) or not all(
+                    _terminal(row) for row in elements.values()):
+                continue
+            self.done[job_id] = record
+            self.elements.update(elements)
+
+
+def _terminal(record):
+    return record["state"] not in slurm.ACTIVE
 
 
 @dataclass
@@ -79,11 +142,12 @@ class Report:
 class Poller:
     """Holds the experiment list, and produces a `Report` per refresh.
 
-    `rescan` and `refresh` are separate because they cost different things and
-    change on different timescales. The experiment list changes when somebody
-    runs `create`, which is rare and needs a directory scan; state changes every
-    few seconds and needs the scheduler. Folding them together would either
-    re-glob the output root every tick or never notice a new experiment.
+    `rescan` and `refresh` are still separate calls, but a refresh rescans:
+    `discover` hands back the experiments it was given, so a scan is a glob and a
+    handful of stats, and an experiment created while the console is open shows up
+    within a tick instead of on the next restart. It did not, and that was the
+    wrong trade made for the right reason: the scan was expensive because it
+    parsed every frozen config, so it ran once, so `create` was invisible.
     """
 
     def __init__(self, site, root=None):
@@ -91,12 +155,14 @@ class Poller:
         self.root = root
         self.experiments = []
         self.previous = None
+        self.settled = Settled()
 
     def rescan(self):
-        self.experiments = discover(self.site, self.root)
+        self.experiments = discover(self.site, self.root,
+                                    known=self.experiments)
         return self.experiments
 
-    def refresh(self):
+    def refresh(self, fresh=False):
         """One tick. Never raises for a scheduler problem; reports it instead.
 
         A failure to reach Slurm is a fact about the tick, not about the
@@ -105,8 +171,9 @@ class Poller:
         experiment's view, for the same reason `discover` skips an unreadable
         config: nine working experiments must stay visible past one broken one.
         """
-        if not self.experiments:
-            self.rescan()
+        if fresh:
+            self.settled.forget()
+        self.rescan()
 
         wanted = {}
         for experiment in self.experiments:
@@ -122,9 +189,11 @@ class Poller:
         })
 
         try:
-            snap = state.snapshot(job_ids)
+            snap = state.snapshot(self.settled.unasked(job_ids))
         except slurm.SlurmError as error:
             return self._outage(str(error))
+        self.settled.absorb(snap)
+        self.settled.fill(snap)
 
         views = {}
         for experiment in self.experiments:
