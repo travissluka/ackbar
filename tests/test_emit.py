@@ -25,7 +25,7 @@ def paths(tmp_path):
 
 def text(paths, node):
     return emit.script_text(
-        CONFIG, paths, node, root="/repo", python="/venv/bin/python",
+        paths, node, root="/repo", python="/venv/bin/python",
     )
 
 
@@ -110,7 +110,7 @@ def test_writing_a_script_does_not_create_the_cycle_directory(paths):
     # down `run/<date>/log/` for every cycle at once, so a sixty cycle run
     # showed sixty run directories before it had run anything.
     target = emit.write_script(
-        CONFIG, paths, ARRAY, root="/repo", python="/venv/bin/python",
+        paths, ARRAY, root="/repo", python="/venv/bin/python",
     )
     assert target.exists()
     assert not Path(paths.job_log(2, "forecast", True)).parent.exists()

@@ -76,7 +76,7 @@ def run(command, check=True, stdin=None):
 
 
 def sbatch(script, *, job_name, comment, dependency=None, array=None,
-           partition=None, account=None, extra=()):
+           partition=None, account=None):
     """Submit one script. Returns the job id as an integer.
 
     Identity is carried twice, as the design requires: in the job name so
@@ -98,7 +98,6 @@ def sbatch(script, *, job_name, comment, dependency=None, array=None,
         command.append(f"--partition={partition}")
     if account:
         command.append(f"--account={account}")
-    command.extend(extra)
     command.append(str(script))
 
     result = run(command)
@@ -291,7 +290,7 @@ def scancel(job_ids):
     run(["scancel"] + [str(i) for i in job_ids], check=False)
 
 
-def array_spec(members, throttle=None):
+def array_spec(members):
     """`--array` for a member index set, as compact ranges.
 
     Compact because a site's `MaxArrayTasks` and the command line both care,
@@ -310,5 +309,4 @@ def array_spec(members, throttle=None):
         runs.append((start, previous))
         start = previous = value
     runs.append((start, previous))
-    spec = ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
-    return f"{spec}%{throttle}" if throttle else spec
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)

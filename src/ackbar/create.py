@@ -68,7 +68,7 @@ def create(config, site, schema, layers, *, root, force=False, python=None):
     _freeze_templates(paths, root)
     _provenance(paths, config, site, root, layers)
 
-    scripts = emit.write_all(config, paths, graph, root=root, python=python)
+    scripts = emit.write_all(paths, graph, root=root, python=python)
 
     if config["model"]["name"] == "stub":
         _stub_initial_condition(config, paths)

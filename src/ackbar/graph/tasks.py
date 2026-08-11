@@ -26,7 +26,6 @@ class TaskDef:
     member_level: bool = False
     #: config -> repository-relative executable path, or None.
     exe: Callable = lambda config: None
-    description: str = ""
 
 
 def _solver(config):
@@ -86,16 +85,20 @@ def _forecast_exe(config):
 TASKS = (
     TaskDef(
         name="cleanup",
+        # remove the previous cycle's inputs, gated on artifact existence
         when=lambda config: True,
-        description="remove the previous cycle's inputs, gated on artifact existence",
     ),
     TaskDef(
         name="stage.obs",
+        # link this window's observations, drop absent non-required observers
         when=_has_obs,
-        description="link this window's observations, drop absent non-required observers",
     ),
     TaskDef(
         name="b.corr_vt",
+        # per-cycle vertical B calibration: vertical scales track the mixed layer,
+        # so unlike horizontal and localization scales they cannot be precomputed
+        # offline
+        #
         # The static B's vertical correlation, so a pure ensemble covariance has
         # nothing here to calibrate. A hybrid does: one of its two components is
         # that same static B.
@@ -107,14 +110,10 @@ TASKS = (
         # soca_sqrtvertloc.x, which computes vertical localization for an
         # ensemble covariance: a different quantity from the vertical
         # correlation scales of the static B.
-        description=(
-            "per-cycle vertical B calibration: vertical scales track the mixed "
-            "layer, so unlike horizontal and localization scales they cannot be "
-            "precomputed offline"
-        ),
     ),
     TaskDef(
         name="da",
+        # the analysis. LETKF is one MPI job consuming every member
         when=lambda config: _solver(config) != "none",
         exe=_da_exe,
         # The analysis that produces the *control's* answer, whichever solver
@@ -122,10 +121,12 @@ TASKS = (
         # `da.ens` below, and the two are separate nodes rather than one node
         # run twice because they are different applications with different
         # configs, different resources and different member cardinality.
-        description="the analysis. LETKF is one MPI job consuming every member",
     ),
     TaskDef(
         name="da.ens",
+        # the ensemble's own analysis, which is what gives a hybrid's covariance a
+        # flow-dependent ensemble to be drawn from
+        #
         # Only when something in this cycle has to maintain the ensemble. An
         # LETKF experiment does not have one of these: its `da` already is the
         # ensemble filter. A hybrid whose members are only recentred does not
@@ -133,23 +134,22 @@ TASKS = (
         when=lambda config: (ensemble_covariance(config)
                              and ensemble_source(config) == "letkf"),
         exe=lambda config: f"{SOCA_BIN}/soca_letkf.x",
-        description=(
-            "the ensemble's own analysis, which is what gives a hybrid's "
-            "covariance a flow-dependent ensemble to be drawn from"
-        ),
     ),
     TaskDef(
         name="hofx",
+        # observation evaluation for a run with no analysis
+        #
         # A free run is `solver: none`; observation evaluation is a property of
         # any run, not a mode. In a DA run the analysis application produces
         # ombg and oman itself, so this task is the free-run path to the same
         # diagnostics, and the OSSE observation generator.
         when=lambda config: _solver(config) == "none" and _has_obs(config),
         exe=lambda config: f"{SOCA_BIN}/soca_hofx3d.x",
-        description="observation evaluation for a run with no analysis",
     ),
     TaskDef(
         name="recenter",
+        # pull the ensemble onto the deterministic analysis
+        #
         # Not for an LETKF. Recentring an
         # ensemble onto a centre it already has is the identity, and the centre
         # of an LETKF's analysis ensemble is its own mean. A hybrid is the case
@@ -162,34 +162,33 @@ TASKS = (
         # every member at once, so no member can be recentred alone.
         when=ensemble_covariance,
         exe=lambda config: f"{SOCA_BIN}/soca_ensrecenter.x",
-        description="pull the ensemble onto the deterministic analysis",
     ),
     TaskDef(
         name="writeback",
+        # produce the restart set the next forecast reads. Direct restart write
+        # first; IAU is an alternate implementation behind the same edge rather than
+        # a different graph
         when=lambda config: _solver(config) != "none",
         member_level=True,
-        description=(
-            "produce the restart set the next forecast reads. Direct restart "
-            "write first; IAU is an alternate implementation behind the same "
-            "edge rather than a different graph"
-        ),
     ),
     TaskDef(
         name="forecast",
+        # the cycling forecast, which produces the next background
         when=lambda config: True,
         member_level=True,
         exe=_forecast_exe,
-        description="the cycling forecast, which produces the next background",
     ),
     TaskDef(
         name="forecast.ext",
+        # long forecast on its own cadence, a leaf with no successor
         when=lambda config: bool(config.get("forecast", {}).get("extended")),
         member_level=True,
         exe=_forecast_exe,
-        description="long forecast on its own cadence, a leaf with no successor",
     ),
     TaskDef(
         name="hofx.ext",
+        # observation evaluation of the long forecast, lead by lead
+        #
         # Unlike `hofx`, this runs whatever the solver is. In a DA run the
         # analysis application produces departures for the *cycling* background
         # and for nothing else, so without this the long forecast is the one
@@ -214,10 +213,11 @@ TASKS = (
                              and _has_obs(config)),
         member_level=True,
         exe=lambda config: f"{SOCA_BIN}/soca_hofx.x",
-        description="observation evaluation of the long forecast, lead by lead",
     ),
     TaskDef(
         name="post.fcst",
+        # the compressed states of the long forecast, lead by lead
+        #
         # Not folded into `post.state`, and the reason is the graph rather than
         # tidiness. `post.state` is an array over every member hanging off the
         # cycling forecast; the long forecast runs for a subset, so an edge from
@@ -226,34 +226,33 @@ TASKS = (
         # background. Its own task hangs off `forecast.ext` elementwise instead.
         when=lambda config: bool(config.get("forecast", {}).get("extended")),
         member_level=True,
-        description="the compressed states of the long forecast, lead by lead",
     ),
     TaskDef(
         name="post.obs",
+        # observation-space statistics and the realized observer list
         when=_has_obs,
-        description="observation-space statistics and the realized observer list",
     ),
     TaskDef(
         name="post.state",
+        # the compressed state record that outlives the cycle
         when=lambda config: True,
         member_level=True,
-        description="the compressed state record that outlives the cycle",
     ),
     TaskDef(
         name="verify",
+        # scoring against the verification source (not implemented: the job writes a
+        # deferred sentinel and no product)
         when=lambda config: True,
-        description="scoring against the verification source (not implemented: "
-                    "the job writes a deferred sentinel and no product)",
     ),
     TaskDef(
         name="stats",
+        # harvest this cycle's resource usage into run/<date>/stats.json
         when=lambda config: True,
-        description="harvest this cycle's resource usage into run/<date>/stats.json",
     ),
     TaskDef(
         name="submit",
+        # submit the next cycle; this is what makes cycling daemon-free
         when=lambda config: True,
-        description="submit the next cycle; this is what makes cycling daemon-free",
     ),
 )
 

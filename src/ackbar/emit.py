@@ -84,7 +84,7 @@ def comment(experiment, cycle, task):
     return f"ackbar:{experiment}:{cycle}:{task}"
 
 
-def script_text(config, paths, node, *, root, python):
+def script_text(paths, node, *, root, python):
     """The whole batch script for one node."""
     experiment = paths.experiment
     lines = ["#!/bin/bash"]
@@ -117,7 +117,7 @@ def script_text(config, paths, node, *, root, python):
     return "\n".join(lines) + "\n"
 
 
-def write_script(config, paths, node, *, root, python):
+def write_script(paths, node, *, root, python):
     """Emit one node's script.
 
     Deliberately *not* the log directory. Slurm opens `--output` before the job
@@ -135,20 +135,20 @@ def write_script(config, paths, node, *, root, python):
     # leaves a truncated job script that looks finished, and `create` writes
     # every cycle's scripts up front so there are a lot of chances.
     temp = target.with_name(target.name + ".partial")
-    temp.write_text(script_text(config, paths, node, root=root, python=python))
+    temp.write_text(script_text(paths, node, root=root, python=python))
     temp.chmod(temp.stat().st_mode | stat.S_IXUSR)
     temp.replace(target)
     return target
 
 
-def write_all(config, paths, graph, *, root, python=None):
+def write_all(paths, graph, *, root, python=None):
     """Every node in the graph. Returns the paths written, in graph order."""
     python = python or sys.executable
     root = os.fspath(root)
     written = []
     for node_id in graph.order():
         node = graph.get(*_split(node_id))
-        written.append(write_script(config, paths, node, root=root, python=python))
+        written.append(write_script(paths, node, root=root, python=python))
     return written
 
 

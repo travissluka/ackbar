@@ -44,10 +44,6 @@ def test_an_index_set_becomes_compact_ranges(members, expected):
     assert slurm.array_spec(members) == expected
 
 
-def test_a_throttle_is_appended_the_way_slurm_spells_it():
-    assert slurm.array_spec((1, 2, 3), throttle=2) == "1-3%2"
-
-
 # --- queue -------------------------------------------------------------------
 
 def test_array_elements_collapse_onto_their_base_job(monkeypatch):
