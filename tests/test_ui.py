@@ -582,6 +582,46 @@ async def test_a_click_puts_the_cursor_on_the_cell_under_the_pointer(
         assert grid.cursor_node == f"{window[target]}.{grid.tasks[row]}"
 
 
+async def test_clicking_a_task_name_or_a_cycle_number_moves_that_axis_only(
+        experiment, fake_slurm):
+    """The two margins are the two axes.
+
+    A cycle number asks for that cycle whatever row you were on, and a task name
+    asks for that task in the cycle you were already looking at. The name was
+    dead: the click landed left of the first cell and was thrown away.
+    """
+    submitted(experiment, [(1, "da"), (2, "da"), (3, "da"), (4, "da")])
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row, grid.column = 0, 0
+        grid.draw()
+        await pilot.pause()
+        label, width, window = grid._layout
+
+        # A task name, three rows down: same cycle, new task.
+        await pilot.click(grid, offset=(grid.gutter.left + 2,
+                                        grid.gutter.top + 1 + 3))
+        await pilot.pause()
+        assert grid.cursor_node == f"{window[0]}.{grid.tasks[3]}"
+
+        # A cycle number in the header: same task, new cycle.
+        target = len(window) - 1
+        await pilot.click(grid, offset=(grid.gutter.left + label + target * width,
+                                       grid.gutter.top))
+        await pilot.pause()
+        assert grid.cursor_node == f"{window[target]}.{grid.tasks[3]}"
+
+        # The corner is neither axis, so it moves nothing.
+        await pilot.click(grid, offset=(grid.gutter.left, grid.gutter.top))
+        await pilot.pause()
+        assert grid.cursor_node == f"{window[target]}.{grid.tasks[3]}"
+
+
 async def test_a_double_click_opens_the_log_the_way_enter_does(experiment,
                                                               fake_slurm):
     submitted(experiment, [(1, "da")])
@@ -897,6 +937,10 @@ async def test_a_log_that_appears_after_the_pane_opened_is_picked_up(
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "forecast.100_0.out").write_text("")
     fake_slurm[0][(100, 0)] = ("RUNNING", "None")
+    # The rest are waiting their turn. Without a scheduler row they would read
+    # failed, and the pane would rightly open on the first of those instead.
+    for member in (1, 2, 3):
+        fake_slurm[0][(100, member)] = ("PENDING", "Dependency")
 
     app = AckbarUI(site=ensemble, interval=3600.0)
     async with app.run_test(size=(150, 40)) as pilot:
@@ -910,6 +954,7 @@ async def test_a_log_that_appears_after_the_pane_opened_is_picked_up(
         app.action_open_log()
         await pilot.pause()
         pane = app.query_one("#logview", LogPane)
+        assert app.member == 0
         assert pane.path.name == "forecast.100_0.out"
 
         # The model starts writing.
@@ -936,6 +981,8 @@ async def test_the_pane_moves_off_a_live_log_that_has_been_deleted(
     scratch.mkdir(parents=True, exist_ok=True)
     (scratch / "model.log").write_text("step 1\n")
     fake_slurm[0][(100, 0)] = ("RUNNING", "None")
+    for member in (1, 2, 3):
+        fake_slurm[0][(100, member)] = ("PENDING", "Dependency")
 
     app = AckbarUI(site=ensemble, interval=3600.0)
     async with app.run_test(size=(150, 40)) as pilot:
@@ -957,6 +1004,54 @@ async def test_the_pane_moves_off_a_live_log_that_has_been_deleted(
         app.show_log(app.log_node)
         await pilot.pause()
         assert pane.path.name == "forecast.mem000.100_0.model.log"
+
+
+async def test_a_member_that_has_not_run_shows_nothing_not_the_last_one(
+        ensemble, fake_slurm):
+    """Stepping onto a member with no log left the previous member's on screen.
+
+    Worse than an empty pane by exactly the amount that a confident wrong answer
+    is worse than no answer: one member's text under another member's name.
+    """
+    live, done = fake_slurm
+    paths = submitted(ensemble, [(1, "forecast")], config=ENSEMBLE,
+                      members=(0, 1, 2, 3))
+    logs(paths, 1, ["forecast.100_0.out"])
+    done[100] = "COMPLETED"
+    live[(100, 2)] = ("PENDING", "Dependency")
+
+    app = AckbarUI(site=ensemble, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        grid = app.query_one("#statusgrid", StatusGrid)
+        grid.row = grid.tasks.index("forecast")
+        grid.column = 0
+        grid.draw()
+        app.action_open_log()
+        await pilot.pause()
+        pane = app.query_one("#logview", LogPane)
+        assert app.member == 0
+        assert pane.path.name == "forecast.100_0.out"
+
+        # Onto member 1, which has written nothing at all.
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.member == 1
+        assert pane.path is None
+        assert pane.lines and "mem001" in str(pane.lines[0])
+
+        # And the state it is in is said, not left to be guessed at.
+        app.action_select_member(2)
+        await pilot.pause()
+        assert "blocked" in "".join(str(line) for line in pane.lines)
+
+        # Back down to member 0, and the log returns rather than staying blank.
+        await pilot.press("left", "left")
+        await pilot.pause()
+        assert app.member == 0
+        assert pane.path.name == "forecast.100_0.out"
 
 
 async def test_arrows_step_members_and_brackets_step_files(ensemble,

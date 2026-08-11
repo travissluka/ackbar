@@ -64,6 +64,22 @@ def _first_worth_reading(status):
     return sorted(status.members)[0]
 
 
+def _nothing_yet(status, member):
+    """What to say instead of a log, which is usually "it has not run".
+
+    Worth saying rather than leaving blank, because an empty log pane and a task
+    whose log has not been written yet look the same, and the state of the thing
+    is already known: the strip a moment ago said this member was blocked.
+    """
+    state = None
+    if status is not None:
+        state = status.elements.get(member, status.summary)
+    who = "this task" if member is None else f"mem{member:03d}"
+    if state in (st.UNSUBMITTED, st.BLOCKED, st.PENDING):
+        return f"{who} has not run yet: {theme.WORD.get(state, state)}"
+    return f"no log for {who} yet"
+
+
 def _default_file(files):
     """Which of a node's files to open on: one with something in it.
 
@@ -343,11 +359,18 @@ class AckbarUI(App):
         everything = candidates(paths, int(cycle), task, job_id)
         members = self._log_members(status, everything, task)
         files = candidates(paths, int(cycle), task, job_id, self.member)
-        if not files:
-            # Nothing carries this member's name: it died before writing
-            # anything of its own, so the whole task's logs are better than a
-            # blank pane, and Slurm's capture is in there.
+        if not files and self.member is None:
+            # No member chosen and nothing found is simply a task with no logs.
             files = everything
+        # A member with no files of its own gets *no* files, deliberately. It
+        # used to fall back to the whole task's, on the theory that a member
+        # which died before writing anything still has Slurm's capture in
+        # there. But the capture is per element, so it is already in this
+        # member's own list when it exists, and the fallback's real effect was
+        # to show some *other* member's log under this member's name: step onto
+        # a member that has not run yet and the previous member's text stayed on
+        # screen, which is worse than an empty pane by exactly the amount that a
+        # confident wrong answer is worse than no answer.
         # `None` means "whichever file is worth opening", which is what arriving
         # at a node and changing member both want: the same member number of a
         # different node, or a different member of the same node, has its own set
@@ -376,7 +399,8 @@ class AckbarUI(App):
                    self.palette, phase=self.phase)
         row.show(files, self.file_index, task,
                  log_dir=paths.log_dir(int(cycle)))
-        pane.show(files[self.file_index] if files else None, force=force)
+        pane.show(files[self.file_index] if files else None, force=force,
+                  message=_nothing_yet(status, self.member))
 
         # Hints first, path last. The path is the only part that can be two
         # hundred characters long, and anything after it is a key nobody can
@@ -389,15 +413,15 @@ class AckbarUI(App):
         title.append("on" if pane.following else "off",
                      style=f"bold {theme.INK['accent']}" if pane.following
                      else theme.INK["muted"])
-        title.append("   ⌫ back   ", style=theme.INK["faint"])
+        title.append("   ⌫ back", style=theme.INK["faint"])
         # The file's own directory, not the log directory: a live log is in
-        # scratch, and a path that says otherwise is one nobody can `less`.
+        # scratch, and a path that says otherwise is one nobody can `less`. With
+        # no file open there is no path to name, and naming the directory it
+        # would have been in plus the word "nothing" is a sentence about nothing.
         open_file = files[self.file_index] if files else None
-        title.append(f"{open_file.parent}/" if open_file
-                     else f"{paths.log_dir(int(cycle))}/",
-                     style=theme.INK["muted"])
-        title.append(open_file.name if open_file else "nothing",
-                     style=theme.INK["accent"])
+        if open_file is not None:
+            title.append(f"   {open_file.parent}/", style=theme.INK["muted"])
+            title.append(open_file.name, style=theme.INK["accent"])
         self.query_one("#log-title", Static).update(title)
 
     def show_detail(self, node_id):

@@ -137,17 +137,28 @@ class LogPane(RichLog):
         self.path = None
         self.read_to = 0
         self.following = True
+        self._said = None
 
-    def show(self, path, *, force=False):
-        """Adopt *path*. Same path and not *force* means keep following it."""
+    def show(self, path, *, force=False, message="no log file yet"):
+        """Adopt *path*. Same path and not *force* means keep following it.
+
+        `None` clears the pane and says *message*. Clearing matters: stepping to
+        a member that has not run has to look like nothing, because leaving the
+        previous member's text on screen puts one member's failure under
+        another's name.
+        """
         if path is not None and path == self.path and not force:
+            return
+        if path is None and self.path is None and self._said == message:
+            # Already saying exactly this. Redrawing it every scheduler tick
+            # would blink the line for no reason.
             return
         self.path = path
         self.read_to = 0
+        self._said = message if path is None else None
         self.clear()
         if path is None:
-            self.write(Text("no log file for this task yet",
-                            style=theme.INK["muted"]))
+            self.write(Text(message, style=theme.INK["muted"]))
             return
         try:
             size = path.stat().st_size

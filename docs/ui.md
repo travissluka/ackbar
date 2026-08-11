@@ -51,6 +51,10 @@ under it, a double click opens that cell's log, and the sidebar and the tabs are
 did *that* one fail" is a question you ask by pointing, and counting twenty arrow presses to a
 cell already on screen is the kind of friction that sends a reader back to `sacct`.
 
+The grid's two margins are its two axes, and clicking either asks for that axis alone: a cycle
+number along the top moves to that cycle whatever row you were on, and a task name down the side
+moves to that task in the cycle you were already looking at.
+
 Which region the arrows move is drawn rather than remembered: a teal rail down the left edge of
 whichever region has the keyboard, the grid cursor bright and its column lit only while the grid
 has it, and the sidebar's highlight dim while it does not. The rail is always there and only
@@ -108,6 +112,13 @@ article afterwards, which is exactly backwards, so `candidates` includes the liv
 `paths.scratch(cycle, task, member)` and puts them first, marked `◂live`. Scratch is deleted when
 a task succeeds, so those paths exist exactly while they are the interesting ones, and the pane
 hands over to the archived copy when they go.
+
+A member with no logs of its own gets an empty pane saying so, and the state it is in: "mem004
+has not run yet: queued". It used to fall back to the whole task's file list, on the theory that a
+member which died before writing anything still has Slurm's capture in there. But the capture is
+per array element, so it is already in the member's own list whenever it exists, and the fallback's
+real effect was to leave the *previous* member's text on screen under this member's name, which is
+worse than an empty pane by the amount a confident wrong answer is worse than no answer.
 
 Following is an append, not a re-read: the pane remembers how far it has read and each half second
 costs one `stat` plus whatever was added, so the scroll position survives and a growing log does

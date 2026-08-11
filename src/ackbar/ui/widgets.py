@@ -336,18 +336,26 @@ class StatusGrid(Static):
         if not window:
             return
 
-        column = (offset.x - label) // width
-        if column < 0 or column >= len(window):
-            return
-        # Line 0 is the header of cycle numbers: clicking a number is a request
-        # for that cycle, not for a task, so the row stays where it was. Below
-        # the last task is the legend, which is not a cell.
+        # The two edges of the grid are the two axes, and clicking either asks
+        # for that axis alone. Line 0 is the header of cycle numbers, so clicking
+        # a number is a request for that cycle whatever row you were on; the left
+        # margin is the task names, so clicking a name is a request for that task
+        # in the cycle you were already looking at. Below the last task is the
+        # legend, which is not a cell at all.
+        column = self.column if offset.x < label else (offset.x - label) // width
+        if offset.x >= label:
+            if column < 0 or column >= len(window):
+                return
+            column = self.cycles.index(window[column])
         row = self.row if offset.y == 0 else offset.y - 1
-        if not 0 <= row < len(self.tasks):
+        if not 0 <= row < len(self.tasks) or not 0 <= column < len(self.cycles):
+            return
+        if offset.x < label and offset.y == 0:
+            # The corner is neither axis.
             return
 
         self.row = row
-        self.column = self.cycles.index(window[column])
+        self.column = column
         self._moved()
         if event.chain >= 2:
             self.post_message(self.Opened(self.cursor_node))
