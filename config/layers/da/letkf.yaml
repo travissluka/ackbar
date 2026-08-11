@@ -90,37 +90,13 @@ solver:
   # That file carries the argument for the values and for why the variational
   # solver does not read them.
   #
-  # **There is no relaxation here, and no divergence bound either. The sea floor
-  # is what makes that safe.** A ramp from 0.25 to 1.0 over five cycles used to
-  # sit here, added while the ensemble was still built in the wrong order.
-  # Removing it showed what it had been hiding: at full strength members died in
-  # `btstep: eta has dropped below bathyT`, in a thin column, every time.
-  #
-  # An `increment divergence limit` replaced the ramp and did keep every member
-  # alive, which made it look like the answer. It was treating the symptom. The
-  # columns were draining because `gom_25km`'s imported bathymetry put a 3.5 m
-  # cell against a 4083 m one, and once `tools/smooth-topography.py` capped the
-  # steepness at r <= 0.9 the bound stopped being necessary: five analysed cycles
-  # at full strength with it disabled, twenty one of twenty one forecasts every
-  # cycle. `docs/domains.md` has the measurements.
-  #
-  # Removing it is not tidiness. Measured on a real analysis it was cutting the
-  # velocity increment at 16% of wet cells, by a median factor of 0.48, and more
-  # than half of those cells were deeper than 200 m rather than the thin ones it
-  # was justified by. That is 17% of the depth-weighted velocity increment
-  # removed every cycle, and the count per cycle plateaued rather than decaying,
-  # so it was a standing constraint on the analysis and not a spin-up guard.
-  #
-  # `ackbar.writeback` still reads both `increment relaxation` and `increment
-  # divergence limit` if an experiment sets one. `divergence_scaling` is tested
-  # and stays: a domain whose sea floor cannot be capped is exactly what it is
-  # for. Do not switch it on without measuring what it removes.
-  #
-  # **IAU is better than any of this**, and is not wired yet. It spreads the
-  # increment across the forecast instead of applying all of it between two
-  # timesteps, so it removes the violence rather than the correction. MOM6 already
-  # implements it in `MOM_oda_incupd.F90`, with `ODA_INCUPD_NHOURS` and
-  # `ODA_INCUPD_UV`. These bounds can loosen further when it lands.
+  # **There is no relaxation here and no divergence bound either, and the sea
+  # floor is what makes that safe.** Both existed to stop members dying in
+  # `btstep: eta has dropped below bathyT`; smoothing the bathymetry removed the
+  # cause, and leaving the bound on cost 17% of the depth-weighted velocity
+  # increment every cycle. Do not switch either on without measuring what it
+  # removes. "Holding the increment back" in `docs/analysis.md` carries the
+  # measurements and the IAU alternative.
 
   # Deterministic LETKF, the square-root filter. The stochastic alternative
   # would need an observation perturbation seed and is a different experiment.

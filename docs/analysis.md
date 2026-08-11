@@ -515,6 +515,40 @@ Which restart variable a JEDI variable is, and which grid it is on, comes from
 copy of that mapping inside writeback would be one that keeps working after
 someone corrects the first.
 
+### Holding the increment back, and why nothing does
+
+`writeback` reads two optional settings, `increment relaxation` and `increment
+divergence limit`. No experiment sets either, and that is a result rather than an
+oversight.
+
+Both existed because members died in `btstep: eta has dropped below bathyT`, in a
+thin column, whenever the LETKF analysis was applied at full strength. First a
+ramp from 0.25 to 1.0 over five cycles, then a divergence limit that replaced it
+and did keep every member alive. Neither was the cause. The columns were draining
+because `gom_25km`'s imported bathymetry put a 3.5 m cell against a 4083 m one,
+and capping the steepness at `r <= 0.9` with `tools/smooth-topography.py` removed
+the failure at its source: five analysed cycles at full strength with the bound
+disabled, twenty one of twenty one forecasts alive every cycle.
+
+Leaving the bound switched on anyway would not have been free. Measured on a real
+analysis it cut the velocity increment at **16% of wet cells, by a median factor
+of 0.48**, and more than half of those cells were deeper than 200 m rather than
+the thin ones it was justified by. That is **17% of the depth-weighted velocity
+increment discarded every cycle**, and the count per cycle plateaued rather than
+decaying, so it was a standing constraint on the analysis rather than a spin-up
+guard.
+
+Both settings stay implemented. A domain whose sea floor cannot be smoothed is
+what they are for, and `divergence_scaling` is tested. Do not switch either on
+without measuring what it removes. [`domains.md`](domains.md) carries the
+bathymetry side, including why a cap chosen on `gom_25km` should not be carried
+to `gom_12km`.
+
+IAU would be better than either, and is not wired. It spreads the increment
+across the forecast instead of applying all of it between two timesteps, so it
+removes the violence rather than the correction; MOM6 already implements it in
+`MOM_oda_incupd.F90` (`ODA_INCUPD_NHOURS`, `ODA_INCUPD_UV`).
+
 ## A window with no observations
 
 The analysis in a window with nothing in it is the background. Over any real
