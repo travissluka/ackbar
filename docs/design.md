@@ -1055,6 +1055,11 @@ Regional costs more than a different grid file. What it actually pulls in:
   two checks make that loud rather than silent. `validate` step 3 refuses an experiment whose
   *every* observer has nothing inside the domain, which is a wrong path rather than a quiet
   platform, and `post.obs` fails a cycle that read observations and assimilated none of them.
+  Both are careful to read "has observations elsewhere" and never "has no observations": step 3
+  samples the first file per observer that has **rows in it** rather than the first that exists,
+  because the empty file two paragraphs above is what a quiet window looks like, and an archive
+  that is empty everywhere it was read produces no finding at all rather than a refusal whose
+  message counts zero observations.
   Neither existed when this bullet was written, and without them the offline placement would
   have traded a silent empty analysis for a silent empty archive.
 - **Domain-specific observation configuration.** v2 kept a parallel tree under

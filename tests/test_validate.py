@@ -413,6 +413,30 @@ class TestStep3ObservationsAreInTheDomain:
                 np.asarray(lat, dtype="f4")
         return {name: {"required": False, "paths": {str(path)}}}
 
+    def windows(self, tmp_path, name, series):
+        """One observer with a file per window, named so they sort in order.
+
+        A culled archive's files are per window, and *series* is read in that
+        order: `[[], [(-92.0, 22.0)]]` is a platform that saw nothing in the
+        first window and something in the second, which is the ordinary shape
+        this step has to read past rather than an edge case.
+        """
+        paths = set()
+        for index, points in enumerate(series):
+            path = tmp_path / f"{name}.{index:04d}.nc4"
+            lon = np.asarray([point[0] for point in points], dtype="f4")
+            lat = np.asarray([point[1] for point in points], dtype="f4")
+            with netCDF4.Dataset(path, "w") as data:
+                # Length zero rather than absent: `tools/obs-cull-domain.py`
+                # writes the dimension even when nothing survived the cull,
+                # because ioda reads its empty-file flag off it.
+                data.createDimension("Location", lon.size)
+                meta = data.createGroup("MetaData")
+                meta.createVariable("longitude", "f4", ("Location",))[:] = lon
+                meta.createVariable("latitude", "f4", ("Location",))[:] = lat
+            paths.add(str(path))
+        return {name: {"required": False, "paths": paths}}
+
     def test_every_observer_outside_the_domain_is_refused(self, tmp_path):
         config = self.domain(tmp_path)
         observations = {}
@@ -466,6 +490,74 @@ class TestStep3ObservationsAreInTheDomain:
         observations = self.observer(tmp_path, "adt_j2", [30.0], [-40.0])
 
         assert len(_observation_domain_step(config, observations)) == 1
+
+    def test_an_empty_first_window_does_not_speak_for_its_observer(self, tmp_path):
+        """The regression: a quiet first window is not evidence of anything.
+
+        A culled archive writes a present-but-empty file for every platform that
+        saw nothing in a window, so the earliest file an observer has is
+        routinely empty. Sampling that file and stopping reads "this observer
+        has no observations in the domain" off a file that was never asked, and
+        an archive whose first window is quiet across every platform is then
+        refused for a fault it does not have.
+        """
+        config = self.domain(tmp_path)
+        observations = self.windows(tmp_path, "adt_j2", [[], [(-92.0, 22.0)]])
+
+        assert _observation_domain_step(config, observations) == []
+
+    def test_an_archive_empty_everywhere_it_was_read_is_not_a_wrong_domain(
+            self, tmp_path):
+        """No observation, no question. The step declines rather than refuses.
+
+        Every observer holding no rows is what a correctly culled archive looks
+        like over a quiet window, and it is indistinguishable here from one that
+        is genuinely misbuilt. The check exists to catch observations that are
+        somewhere else, which needs an observation to be true of, so the
+        ambiguous case is left to say nothing rather than refuse a good archive.
+        """
+        config = self.domain(tmp_path)
+        observations = {}
+        observations.update(self.windows(tmp_path, "adt_j2", [[], []]))
+        observations.update(self.windows(tmp_path, "sst_npp", [[]]))
+
+        assert _observation_domain_step(config, observations) == []
+
+    def test_reading_past_empty_windows_is_not_a_way_to_pass(self, tmp_path):
+        """The other half, so the fix above cannot become "never refuse".
+
+        An observer whose empty windows are followed by a populated one that
+        sits outside the domain is still the failure this step exists for, and
+        the counts it reports come from the file that had something in it.
+        """
+        config = self.domain(tmp_path)
+        observations = self.windows(
+            tmp_path, "adt_j2", [[], [(10.0, 0.0), (11.0, 1.0)]])
+
+        found = _observation_domain_step(config, observations)
+        assert [f.step for f in found] == [3]
+        assert "none of the 2 observations" in found[0].message
+        assert "0001" in found[0].message, "the example must be the file with rows"
+
+    def test_the_refusal_can_never_report_a_count_of_zero(self, tmp_path):
+        """"none of the 0 observations" describes a state that cannot exist.
+
+        It was reachable, and it was the tell: the sentence is self-evidently
+        nonsense, so a message that can still form it means the counts feeding
+        it came from files that hold nothing. Pinned as a property of the
+        message rather than of one case.
+        """
+        config = self.domain(tmp_path)
+        observations = {}
+        observations.update(self.windows(tmp_path, "adt_j2", [[], [(10.0, 0.0)]]))
+        observations.update(self.windows(tmp_path, "sst_npp", [[], []]))
+
+        found = _observation_domain_step(config, observations)
+        assert [f.step for f in found] == [3]
+        assert "none of the 0" not in found[0].message
+        # One observer had rows and one had none; only the first can be counted,
+        # and the observer that said nothing is not tallied as a file "checked".
+        assert "none of the 1 observations in the 1 observer file(s)" in found[0].message
 
     def test_a_domain_with_no_gridspec_yet_is_not_this_steps_finding(self, tmp_path):
         """Its absence is `_path_step`'s to report, and saying it twice helps nobody."""

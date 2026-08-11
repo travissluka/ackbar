@@ -656,9 +656,18 @@ def _observation_domain_step(config, observations):
     culling stage is for, and any cutoff above zero is a knob with no defensible
     value.
 
-    One file per observer, the first that exists, because this is asking what
-    the archive *is* rather than auditing it. An archive whose first window is
-    in the domain and whose fiftieth is not is not a thing that happens.
+    One file per observer, the first that exists **and has rows in it**, because
+    this is asking what the archive *is* rather than auditing it. An archive
+    whose first window is in the domain and whose fiftieth is not is not a thing
+    that happens. The "has rows" half is not an optimization: a culled archive
+    writes a present-but-empty file for every platform that saw nothing in a
+    window, so stopping at the first file that merely exists samples a file with
+    nothing to say, and an archive whose earliest window happens to be quiet
+    across every platform would be refused for holding no in-domain
+    observations when the truthful reading is that it was never asked. An
+    archive that is empty everywhere this step looked produces no finding at
+    all: the question it exists to answer, "are these observations somewhere
+    else?", needs an observation to be asked of.
     """
     static = (config.get("domain") or {}).get("static")
     if not static:
@@ -691,15 +700,33 @@ def _observation_domain_step(config, observations):
                 # one's.
                 break
             counted[name] = (found, total, candidate)
-            break
+            if total:
+                break
+            # A file with no rows in it answers nothing. A culled archive writes
+            # one whenever a platform saw nothing in a window, so the first file
+            # an observer has is routinely empty and the question this step asks
+            # is still open. Keep going until this observer has rows to speak
+            # for it, and let the empty one stand only as a record that the
+            # observer was looked at.
 
-    if not counted or any(found for found, _, _ in counted.values()):
+    # Only files with rows can say whether the archive is in the domain, so the
+    # verdict is taken over those alone. Dropping the empty ones is also what
+    # keeps the message below from reaching "none of the 0 observations", which
+    # is a sentence about a state that cannot exist.
+    sampled = {name: entry for name, entry in counted.items() if entry[1]}
+
+    if not sampled or any(found for found, _, _ in sampled.values()):
+        # An archive that is empty as far as it was read is not evidence of
+        # anything, least of all of a wrong domain: every observer holding no
+        # rows is exactly what a correctly culled archive looks like over a
+        # quiet window. Refusing it here would refuse the archive this project
+        # asks for, so the step declines to speak.
         return []
 
-    example = min(counted)
-    total = sum(count for _, count, _ in counted.values())
+    example = min(sampled)
+    total = sum(count for _, count, _ in sampled.values())
     return [Finding(3, "observations", (
-        f"none of the {total} observations in the {len(counted)} observer file(s) "
+        f"none of the {total} observations in the {len(sampled)} observer file(s) "
         f"checked fall inside {(config.get('domain') or {}).get('name', 'this domain')}, "
         f"whose grid spans {box[0]:.3f} to {box[1]:.3f} east and {box[2]:.3f} to "
         f"{box[3]:.3f} north. For example {counted[example][2]} has "
