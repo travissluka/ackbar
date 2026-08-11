@@ -17,6 +17,7 @@ from ackbar.config.layers import merge_layers, resolve_layers
 from ackbar.config.resolve import resolve
 from ackbar.config.schema import load_schema, merge_keys
 from ackbar.graph.build import build_graph
+from ackbar.graph.tasks import BY_NAME
 from ackbar.paths import Paths
 
 REPO = Path(__file__).resolve().parents[1]
@@ -170,6 +171,33 @@ def test_a_deferred_task_declares_nothing_and_so_still_completes(env):
     config, _, paths = env
     config["model"]["name"] = "mom6sis2"
     assert run.deferred_task(config, "verify")
+    assert run.kind_of(config, "verify").name == "deferred"
+    assert run.kind_of(config, "verify").io(config, paths, "verify", 1, None) \
+        == ([], [])
+
+
+# --- the dispatch table ------------------------------------------------------
+
+@pytest.mark.parametrize("model", ["stub", "mom6sis2"])
+def test_every_task_the_graph_can_build_has_a_kind(env, model):
+    # What the table exists for: one row decides a job's predicate, its declared
+    # artifacts and its body together, so a task cannot be one kind to `task_io`
+    # and another to `run_task`. A task nothing matches would have fallen
+    # through to the stub silently.
+    config, _, _ = env
+    config["model"]["name"] = model
+    for task in BY_NAME:
+        assert run.kind_of(config, task).name
+
+
+def test_the_body_a_task_runs_is_the_one_that_declared_its_outputs(env):
+    # The pairing itself, asserted rather than assumed: `task_io` answers out of
+    # the same row `run_task` takes its body from.
+    config, _, paths = env
+    for task in ("da", "forecast", "recenter", "cleanup"):
+        kind = run.kind_of(config, task)
+        assert kind.io(config, paths, task, 2, 1) \
+            == run.task_io(config, paths, task, 2, 1)
 
 
 def test_a_finished_task_is_skipped_rather_than_repeated(env):
@@ -1029,7 +1057,7 @@ def test_reading_observations_and_assimilating_none_fails_the_cycle(env, tmp_pat
         tmp_path / "adt.nc4", observed=[1.0, 2.0], qc=[1, 1]))
 
     with pytest.raises(run.TaskError, match="not one survived"):
-        run._post(config, paths, 1, "post.obs", 0)
+        run._post(config, None, paths, 1, "post.obs", 0)
 
     # Written before the raise, because it carries which filter did the
     # rejecting and that is wanted at exactly this moment.
@@ -1042,7 +1070,7 @@ def test_a_cycle_that_assimilated_some_of_them_is_fine(env, tmp_path):
     departures_at(config, observation_output(
         tmp_path / "adt.nc4", observed=[1.0, 2.0], qc=[0, 1]))
 
-    run._post(config, paths, 1, "post.obs", 0)
+    run._post(config, None, paths, 1, "post.obs", 0)
 
     assert json.loads(paths.obs_summary(1).read_text())["totals"]["assimilated"] == 2
 
@@ -1060,7 +1088,7 @@ def test_a_cycle_with_no_observations_at_all_is_not_a_failure(env, tmp_path):
         data.createDimension("Location", 0)
     departures_at(config, empty)
 
-    run._post(config, paths, 1, "post.obs", 0)
+    run._post(config, None, paths, 1, "post.obs", 0)
 
     summary = json.loads(paths.obs_summary(1).read_text())
     assert summary["totals"] == {"observers": 2, "failed": 0,

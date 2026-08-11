@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import time
+from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -198,6 +199,12 @@ def vertical_correlation_is_cycled(config):
         "vertical correlation") == "cycled"
 
 
+def _deferred(config, site, paths, cycle, task, member):
+    """A body that has not been written yet. Says so and exits 0."""
+    print(f"ackbar: {cycle}.{task} has no body yet and writes nothing that "
+          f"anything reads; see DEFERRED in ackbar/run.py")
+
+
 def deferred_task(config, task):
     """Whether this job is one of the bodies that has not been written yet.
 
@@ -312,6 +319,82 @@ def real_post(config, task):
     """
     return (task in ("post.obs", "post.state", "post.fcst")
             and config["model"]["name"] in REAL_STATE)
+
+
+#: One kind of job: what decides that a job is of this kind, what it declares,
+#: and what runs it.
+#:
+#: **The three have to be chosen together, and this is what makes that
+#: structural.** They used to be two ladders, one in `task_io` and one in
+#: `run_task`, each branching eleven ways on the same task name and the same
+#: predicates. Nothing but care kept them in step, and the two are not
+#: independent: a task is allowed to skip only when every declared output
+#: exists, and `run_task` refuses to call a task done when the body returned
+#: without writing what it declared. So a ladder that says `hofx` while the
+#: other says `stub` is not a tidiness problem, it is a job that fails at the
+#: end having done its work, or one that declares outputs nothing will write.
+#:
+#: `io` takes `(config, paths, task, cycle, member)`, the order `task_io` and
+#: `stub_io` already had; `body` takes `(config, site, paths, cycle, task,
+#: member)`, the order `_forecast` and `_hofx_ext` already had. Both are uniform
+#: across the table even where a particular row ignores half of it, because a
+#: row that has to adapt its own arguments is a row that can adapt them wrongly.
+Kind = namedtuple("Kind", "name when io body")
+
+
+def kinds():
+    """Every kind of job, in the order the predicates are tried.
+
+    Order is load-bearing in two places. `submit`, `cleanup` and `stats` come
+    first because they are real under every model including the stub, and
+    `deferred` comes second to last so that a body which has not been written
+    yet is only reached after every real kind has declined the task. The last
+    row matches everything, which is what makes the stub the fallback rather
+    than a case anyone has to remember to add.
+
+    A function rather than a module constant because the rows name bodies
+    defined further down this file, and a constant would need every one of them
+    above it, which would put `_stub` before the docstring that explains why
+    the stub exists at all.
+    """
+    return (
+        Kind("submit", lambda config, task: task == "submit",
+             _no_io, _submit_next),
+        Kind("cleanup", lambda config, task: task == "cleanup",
+             _no_io, _cleanup),
+        Kind("stats", lambda config, task: task == "stats",
+             _no_io, _stats),
+        Kind("forecast", real_model, _forecast_io, _forecast),
+        Kind("b.corr_vt", real_corr_vt, _corr_vt_io, _b_vt),
+        Kind("analysis", real_analysis, _analysis_io, _analysis),
+        Kind("recenter", real_recenter, _recenter_io, _recenter),
+        Kind("writeback", real_writeback, _writeback_io, _writeback),
+        Kind("stage.obs",
+             lambda config, task: task == "stage.obs"
+             and real_observations(config, task),
+             _stage_obs_io, _stage_obs),
+        Kind("hofx.ext",
+             lambda config, task: task == "hofx.ext"
+             and real_observations(config, task),
+             _hofx_ext_io, _hofx_ext),
+        Kind("hofx",
+             lambda config, task: task == "hofx"
+             and real_observations(config, task),
+             _hofx_io, _hofx),
+        Kind("post", real_post, _post_io, _post),
+        Kind("deferred", deferred_task, _no_io, _deferred),
+        Kind("stub", lambda config, task: True, stub_io, _stub),
+    )
+
+
+def kind_of(config, task):
+    """Which kind of job this task is under this configuration."""
+    for kind in kinds():
+        if kind.when(config, task):
+            return kind
+    # Unreachable: the last row matches everything. Said rather than left to an
+    # implicit `None`, which would surface as an AttributeError inside a job.
+    raise TaskError(f"no job kind matches {task!r}")
 
 
 def background(config, paths, cycle):
@@ -441,26 +524,36 @@ def slot_states(config, paths, cycle, member):
 
 def task_io(config, paths, task, cycle, member):
     """(inputs, outputs) for one job, whatever is running it."""
-    if real_model(config, task):
-        stamp = restart_stamp(config)
-        source = restart_source(config, paths, cycle, member)
-        return [source / stamp], \
-               [paths.member_out("rst", cycle, member) / stamp] \
-               + slot_states(config, paths, cycle, member)
-    if real_corr_vt(config, task):
-        return [analysis_background(paths, cycle) / restart_stamp(config)], \
-               [vertical_correlation_file(paths, cycle)]
-    if real_analysis(config, task):
-        return _analysis_io(config, paths, cycle, task)
-    if real_recenter(config, task):
-        return _recenter_io(config, paths, cycle)
-    if real_writeback(config, task):
-        return _writeback_io(config, paths, cycle, member)
-    if real_observations(config, task):
-        return _observation_io(config, paths, task, cycle, member)
-    if real_post(config, task):
-        return _post_io(config, paths, task, cycle, member)
-    return stub_io(config, paths, task, cycle, member)
+    return kind_of(config, task).io(config, paths, task, cycle, member)
+
+
+def _forecast_io(config, paths, task, cycle, member):
+    """What a forecast reads and writes: a restart set, and the states after it."""
+    stamp = restart_stamp(config)
+    source = restart_source(config, paths, cycle, member)
+    return [source / stamp], \
+           [paths.member_out("rst", cycle, member) / stamp] \
+           + slot_states(config, paths, cycle, member)
+
+
+def _corr_vt_io(config, paths, task, cycle, member):
+    """What a cycled vertical B reads and writes."""
+    return [analysis_background(paths, cycle) / restart_stamp(config)], \
+           [vertical_correlation_file(paths, cycle)]
+
+
+def _no_io(config, paths, task, cycle, member):
+    """A job with nothing to declare.
+
+    Three of the four kinds that take this are real work whose product is not a
+    file this cycle owns: `submit` writes into the ledger and the scheduler,
+    `cleanup` deletes, `stats` harvests a cycle that is still running. The
+    fourth is a deferred body, which by definition writes nothing anything
+    reads. Declaring nothing is the honest answer for all four, and it is what
+    keeps the completion check below from being asked a question none of them
+    can answer.
+    """
+    return [], []
 
 
 def analysis_state(config, paths, cycle, member=0):
@@ -516,7 +609,7 @@ def _assimilated(config, paths, cycle):
     return any(record["present"] for record in observations.read(paths, cycle))
 
 
-def _analysis_io(config, paths, cycle, task):
+def _analysis_io(config, paths, task, cycle, member):
     """What an analysis reads and writes.
 
     The outputs come from the realized observer list for the same reason hofx's
@@ -583,7 +676,7 @@ def read_members(config, task="da"):
     return members[:1]
 
 
-def _recenter_io(config, paths, cycle):
+def _recenter_io(config, paths, task, cycle, member):
     """What the recentring reads and writes.
 
     Its centre is the deterministic analysis and its ensemble is whatever the
@@ -609,7 +702,7 @@ def _recenter_io(config, paths, cycle):
     return inputs, outputs
 
 
-def _writeback_io(config, paths, cycle, member):
+def _writeback_io(config, paths, task, cycle, member):
     """What writeback reads and writes.
 
     Its output is a whole restart set and its proof is the same file the model's
@@ -624,46 +717,51 @@ def _writeback_io(config, paths, cycle, member):
     return inputs, [paths.member_out("ana", cycle, member) / stamp]
 
 
-def _observation_io(config, paths, task, cycle, member):
-    """What the observation tasks read and write.
+def _stage_obs_io(config, paths, task, cycle, member):
+    """What `stage.obs` reads and writes.
 
-    `stage.obs` deliberately declares no inputs. Its whole job is that an
-    observation file may or may not be there, so a missing one is the normal
-    case rather than a reason to refuse to start, and it is the realized list
-    that records which way it went.
+    Deliberately no inputs. Its whole job is that an observation file may or may
+    not be there, so a missing one is the normal case rather than a reason to
+    refuse to start, and it is the realized list that records which way it went.
+    """
+    return [], [paths.observer_list(cycle)]
 
-    hofx's outputs come from that list rather than from the configuration,
-    because the configuration names every observer and only the staged ones ran.
-    Before the list exists there is nothing to declare, which is exactly when
-    the skip rule must not fire.
 
-    `hofx.ext` reads several cycles' observer lists and redirects every one of
-    them under `fcst/`, so neither half of `hofx`'s answer describes it: its
-    inputs are the long forecast's trajectory and its outputs are nowhere near
+def _hofx_ext_io(config, paths, task, cycle, member):
+    """What the long forecast's observer reads and writes.
+
+    It reads several cycles' observer lists and redirects every one of them
+    under `fcst/`, so neither half of `hofx`'s answer describes it: its inputs
+    are the long forecast's trajectory and its outputs are nowhere near
     `obs_out/`. Declaring `hofx`'s would make a manual rerun that deleted the
     forecast departures skip, on the strength of cycling departures it never
     wrote.
     """
-    if task == "stage.obs":
-        return [], [paths.observer_list(cycle)]
+    length = extended_length(config)
+    section = paths.fcst_obs(cycle, length, member)
+    inputs, outputs = [], []
+    for lead in extended_lead_cycles(config):
+        covered = cycle + int(lead.total_seconds()
+                              // cycle_length(config).total_seconds())
+        if not paths.observer_list(covered).exists():
+            continue
+        inputs.append(paths.observer_list(covered))
+        outputs.extend(section / Path(record["output"]).name
+                       for record in observations.read(paths, covered)
+                       if record["present"])
+    inputs.extend(paths.fcst_out(cycle, member, lead) / restart_stamp(config)
+                  for lead in extended_slots(config))
+    return inputs, outputs
 
-    if task == "hofx.ext":
-        length = extended_length(config)
-        section = paths.fcst_obs(cycle, length, member)
-        inputs, outputs = [], []
-        for lead in extended_lead_cycles(config):
-            covered = cycle + int(lead.total_seconds()
-                                  // cycle_length(config).total_seconds())
-            if not paths.observer_list(covered).exists():
-                continue
-            inputs.append(paths.observer_list(covered))
-            outputs.extend(section / Path(record["output"]).name
-                           for record in observations.read(paths, covered)
-                           if record["present"])
-        inputs.extend(paths.fcst_out(cycle, member, lead) / restart_stamp(config)
-                      for lead in extended_slots(config))
-        return inputs, outputs
 
+def _hofx_io(config, paths, task, cycle, member):
+    """What the cycling observer reads and writes.
+
+    Its outputs come from the realized list rather than from the configuration,
+    because the configuration names every observer and only the staged ones ran.
+    Before the list exists there is nothing to declare, which is exactly when
+    the skip rule must not fire.
+    """
     inputs = [background(config, paths, cycle) / restart_stamp(config),
               paths.observer_list(cycle)]
     if not paths.observer_list(cycle).exists():
@@ -706,7 +804,10 @@ def _post_io(config, paths, task, cycle, member):
 def run_task(config, site, paths, cycle, task, member=None):
     """Run one job to completion. Raises TaskError on anything unrecoverable."""
     sentinel = paths.sentinel(cycle, task, member)
-    inputs, outputs = task_io(config, paths, task, cycle, member)
+    kind = kind_of(config, task)
+    # The outputs alone: what a job requires of its inputs is the body's, and
+    # only the stub answers it by list.
+    _, outputs = kind.io(config, paths, task, cycle, member)
 
     if task not in RERUN_ALWAYS and sentinel.exists() and all(p.exists() for p in outputs):
         # The only safe skip. Output-exists alone is what v2 had, and a job
@@ -719,35 +820,7 @@ def run_task(config, site, paths, cycle, task, member=None):
     scratch.mkdir(parents=True, exist_ok=True)
 
     started = time.time()
-    if task == "submit":
-        _submit_next(config, site, paths, cycle)
-    elif task == "cleanup":
-        _cleanup(config, paths, cycle)
-    elif task == "stats":
-        _stats(site, paths, cycle)
-    elif real_model(config, task):
-        _forecast(config, site, paths, cycle, task, member)
-    elif real_corr_vt(config, task):
-        _b_vt(config, site, paths, cycle, task)
-    elif real_analysis(config, task):
-        _analysis(config, site, paths, cycle, task)
-    elif real_recenter(config, task):
-        _recenter(config, site, paths, cycle, task)
-    elif real_writeback(config, task):
-        _writeback(config, paths, cycle, task, member)
-    elif task == "stage.obs" and real_observations(config, task):
-        _stage_obs(config, paths, cycle)
-    elif task == "hofx.ext" and real_observations(config, task):
-        _hofx_ext(config, site, paths, cycle, task, member)
-    elif task == "hofx" and real_observations(config, task):
-        _hofx(config, site, paths, cycle, task)
-    elif real_post(config, task):
-        _post(config, paths, cycle, task, member)
-    elif deferred_task(config, task):
-        print(f"ackbar: {cycle}.{task} has no body yet and writes nothing that "
-              f"anything reads; see DEFERRED in ackbar/run.py")
-    else:
-        _stub(config, paths, cycle, task, member, inputs, outputs)
+    kind.body(config, site, paths, cycle, task, member)
 
     # **The skip rule and the completion rule have to be the same predicate.**
     # Above, a task is allowed to skip only when its sentinel exists *and* every
@@ -766,15 +839,19 @@ def run_task(config, site, paths, cycle, task, member=None):
     # The pre-body list, not a recomputed one, for the same reason: it is the
     # list the skip check would use, and a rule that consults a different one
     # reintroduces the disagreement in a subtler form.
+    #
+    # No exemption for a deferred body: it declares nothing, because `_no_io` is
+    # what its row in the table names, so there is nothing here for it to be
+    # exempt from.
     missing = [p for p in outputs if not p.exists()]
-    if missing and not deferred_task(config, task):
+    if missing:
         raise TaskError(
             f"{cycle}.{task}" + (f" member {member}" if member is not None else "")
             + " returned without writing what it declares:\n"
             + "\n".join(f"  {p}" for p in missing))
 
     _write_sentinel(sentinel, cycle, task, member, started,
-                    deferred=deferred_task(config, task))
+                    deferred=kind.name == "deferred")
 
     # Scratch is deleted by the task itself on success and kept on failure, so
     # a failed cycle leaves everything needed to debug it and a successful one
@@ -818,7 +895,7 @@ def _commit(target, payload):
 
 # --- the stub ----------------------------------------------------------------
 
-def _stub(config, paths, cycle, task, member, inputs, outputs):
+def _stub(config, site, paths, cycle, task, member):
     stub = config.get("model", {}).get("stub")
     if stub is None:
         raise TaskError(
@@ -827,6 +904,7 @@ def _stub(config, paths, cycle, task, member, inputs, outputs):
             f"stub; the real task bodies arrive with their science phases."
         )
 
+    inputs, outputs = stub_io(config, paths, task, cycle, member)
     missing = [str(p) for p in inputs if not p.exists()]
     if missing:
         raise TaskError(
@@ -1022,7 +1100,7 @@ def _forecast(config, site, paths, cycle, task, member):
 
 # --- the analysis ------------------------------------------------------------
 
-def _b_vt(config, site, paths, cycle, task):
+def _b_vt(config, site, paths, cycle, task, member):
     """Rebuild the vertical correlation of the static B for this cycle.
 
     Two steps, and only the first is ACKBAR's own. `ackbar.diffusion` turns the
@@ -1142,7 +1220,7 @@ def _carry_vertical(config, paths, cycle, grid, field, source):
             f"{1.0 - memory:.2f} of {origin}")
 
 
-def _analysis(config, site, paths, cycle, task):
+def _analysis(config, site, paths, cycle, task, member):
     """Solve for this cycle's analysis and its departures."""
     try:
         observers = observations.selected(config, paths, cycle)
@@ -1308,7 +1386,7 @@ def _member_trajectory(config, paths, cycle, member):
     return {when: directory / restart for when, directory in trajectory.items()}
 
 
-def _recenter(config, site, paths, cycle, task):
+def _recenter(config, site, paths, cycle, task, member):
     """Pull the ensemble onto the deterministic analysis."""
     if not _assimilated(config, paths, cycle):
         print(f"ackbar: {cycle}.{task} has nothing to recentre; the cycle "
@@ -1346,7 +1424,7 @@ def _recenter(config, site, paths, cycle, task):
         print(f"ackbar: wrote {path}")
 
 
-def _writeback(config, paths, cycle, task, member):
+def _writeback(config, site, paths, cycle, task, member):
     """Turn this cycle's analysis into the restart set the forecast reads."""
     try:
         writeback.writeback(
@@ -1361,7 +1439,7 @@ def _writeback(config, paths, cycle, task, member):
 
 # --- observations ------------------------------------------------------------
 
-def _stage_obs(config, paths, cycle):
+def _stage_obs(config, site, paths, cycle, task, member):
     """Decide this cycle's observer set and write the list that records it.
 
     Exits 0 having dropped every observer if the archive has nothing for this
@@ -1441,7 +1519,7 @@ def _hofx_ext(config, site, paths, cycle, task, member):
         print(f"ackbar: wrote {path}")
 
 
-def _hofx(config, site, paths, cycle, task):
+def _hofx(config, site, paths, cycle, task, member):
     """Evaluate the staged observers against this cycle's background."""
     try:
         written = soca.hofx(
@@ -1456,7 +1534,7 @@ def _hofx(config, site, paths, cycle, task):
         print(f"ackbar: wrote {path}")
 
 
-def _post(config, paths, cycle, task, member):
+def _post(config, site, paths, cycle, task, member):
     """Reduce what this cycle produced to something that outlives it.
 
     Neither body raises on a missing input. They run under `afterany` and their
@@ -1632,7 +1710,7 @@ def _post_fcst(config, paths, cycle, member):
 
 # --- the tasks that are real from day one ------------------------------------
 
-def _submit_next(config, site, paths, cycle):
+def _submit_next(config, site, paths, cycle, task, member):
     """Cycle n's job that submits cycle n+1. This is what makes cycling work.
 
     Fail-stop by construction: this job is `afterok` on the forecast, so a
@@ -1679,7 +1757,7 @@ def _submit_next(config, site, paths, cycle):
               f"as {record['job_id']}")
 
 
-def _cleanup(config, paths, cycle):
+def _cleanup(config, site, paths, cycle, task, member):
     """Remove restarts nothing can still need, gated on artifact existence.
 
     Keyed off artifacts rather than job state on purpose: keying off job state
@@ -2000,7 +2078,7 @@ def _reapable_scratch(paths, drop, config, members):
             yield entry
 
 
-def _stats(site, paths, cycle):
+def _stats(config, site, paths, cycle, task, member):
     """The per-cycle resource harvest.
 
     An `afterany` leaf, so it runs whatever happened, which is the point: this
