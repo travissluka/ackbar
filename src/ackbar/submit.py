@@ -84,6 +84,7 @@ def submit_cycle(config, site, paths, cycle, *, graph=None, tasks=None,
             array=slurm.array_spec(node.members),
             partition=site.get("partition"),
             account=site.get("account"),
+            qos=site.get("qos"),
         )
         submitted[node.id] = job_id
         records.append(ledger.append(

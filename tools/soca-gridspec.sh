@@ -96,7 +96,8 @@ printf 'soca_gridspec\n1 1 1 0 0 0\n' > diag_table
 } > gridgen.yml
 
 echo "soca-gridspec: building $DOMAIN geometry in $WORK"
-mpiexec -n 1 "$GRIDGEN" gridgen.yml
+# shellcheck disable=SC2086  # the launcher is a command, and must split
+$ACKBAR_OFFLINE_LAUNCHER 1 "$GRIDGEN" gridgen.yml
 
 [[ -s soca_gridspec.nc ]] || {
     echo "soca-gridspec: $GRIDGEN exited 0 and wrote no gridspec" >&2

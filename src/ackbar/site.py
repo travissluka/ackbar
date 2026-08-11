@@ -26,6 +26,11 @@ OPTIONAL = (
     "root",
     "partition",
     "account",
+    # Every JCSDA slurm site template carries a QoS alongside partition and
+    # account (ewok's `hosts/slurm.h`), because on the MSU machines the two do
+    # not imply it: an account may reach several, and the default is not always
+    # the one an experiment should be charged to.
+    "qos",
     "launcher",
     "datasets_root",
     "static_root",

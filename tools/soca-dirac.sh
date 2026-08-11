@@ -229,10 +229,11 @@ PY
 # Overridable per invocation because this runs outside Slurm, so nothing
 # schedules it against whatever else is on the box. The tier 3 suite is the
 # case that bites: its experiment tests go through Slurm while this goes
-# straight to mpiexec, and the two together can oversubscribe the node.
+# straight to its own launcher, and the two together can oversubscribe a node.
 NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
 echo "soca-dirac: applying the correlation to the diracs on $NTASKS ranks"
-mpiexec -n "$NTASKS" "$TOOLBOX" dirac.yaml > toolbox.log 2>&1 || {
+# shellcheck disable=SC2086  # the launcher is a command, and must split
+$ACKBAR_OFFLINE_LAUNCHER "$NTASKS" "$TOOLBOX" dirac.yaml > toolbox.log 2>&1 || {
     tail -40 toolbox.log >&2
     echo "soca-dirac: the toolbox failed; the log above is its last 40 lines" >&2
     exit 1

@@ -373,3 +373,22 @@ def test_identity_is_carried_twice_and_parsable_gives_the_id(monkeypatch):
     assert "--dependency=afterok:1" in command
     assert "--array=1-20" in command
     assert command[-1] == "/tmp/x.sh"
+
+
+def test_a_site_qos_reaches_the_command_line(monkeypatch):
+    # An account may reach several QoS and the default is not always the one an
+    # experiment should be charged to, which is why every JCSDA slurm template
+    # names it alongside partition and account.
+    run = fake("7\n")
+    monkeypatch.setattr(slurm, "run", run)
+    slurm.sbatch("/tmp/x.sh", job_name="e.1.da", comment="c",
+                 partition="orion", account="da-cpu", qos="batch")
+    assert "--qos=batch" in run.calls[0]
+
+
+def test_no_qos_means_no_flag_rather_than_an_empty_one(monkeypatch):
+    # rancor has no QoS worth naming, and `--qos=` is rejected by sbatch.
+    run = fake("7\n")
+    monkeypatch.setattr(slurm, "run", run)
+    slurm.sbatch("/tmp/x.sh", job_name="e.1.da", comment="c")
+    assert not [flag for flag in run.calls[0] if flag.startswith("--qos")]

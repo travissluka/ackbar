@@ -76,7 +76,7 @@ def run(command, check=True, stdin=None):
 
 
 def sbatch(script, *, job_name, comment, dependency=None, array=None,
-           partition=None, account=None):
+           partition=None, account=None, qos=None):
     """Submit one script. Returns the job id as an integer.
 
     Identity is carried twice, as the design requires: in the job name so
@@ -98,6 +98,8 @@ def sbatch(script, *, job_name, comment, dependency=None, array=None,
         command.append(f"--partition={partition}")
     if account:
         command.append(f"--account={account}")
+    if qos:
+        command.append(f"--qos={qos}")
     command.append(str(script))
 
     result = run(command)

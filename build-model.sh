@@ -9,12 +9,20 @@ MODEL_DIR=${MODEL_DIR:-$ACKBAR_ROOT/pkg/mom6sis2}
 STOCHY=${STOCHY:-$ACKBAR_ROOT/pkg/stochastic_physics}
 TARGET=${TARGET:-ice_ocean_SIS2}
 
-export CC=mpicc
-export MPICC=mpicc
-export FC=mpif90
-export MPIFC=mpif90
-export CFLAGS="-g -O2"
-export FCFLAGS="-g -O2 -fallow-argument-mismatch -fallow-invalid-boz"
+# The compiler is the machine's, not this script's. The defaults are the GNU
+# wrappers and GNU flags, which is what rancor and every gcc spack-stack
+# environment give; a site built on intel or oneapi sets the four variables in
+# its site file instead. This is not a preference knob: `mpicc` and `mpif90`
+# under Intel MPI wrap *gcc and gfortran*, not icx and ifx, so a machine whose
+# stack is intel builds a mixed-toolchain model against intel-built libraries
+# unless it says otherwise. And `-fallow-argument-mismatch` is rejected outright
+# by ifx, so the flags cannot follow separately from the wrappers.
+export CC=${ACKBAR_MPICC:-mpicc}
+export MPICC=$CC
+export FC=${ACKBAR_MPIFC:-mpif90}
+export MPIFC=$FC
+export CFLAGS="${ACKBAR_CFLAGS:--g -O2}"
+export FCFLAGS="${ACKBAR_FCFLAGS:--g -O2 -fallow-argument-mismatch -fallow-invalid-boz}"
 # LDFLAGS may carry "-fuse-ld=mold" from the site environment; harmless here.
 
 # MOM6-examples reaches its input data through this symlink. The root it points

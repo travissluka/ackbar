@@ -127,7 +127,8 @@ python3 "$ACKBAR_ROOT/tools/ensemble-ic.py" plan \
 # outside Slurm and nothing schedules it against what else is on the box.
 NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
 echo "ensemble-ic: drawing $MEMBERS perturbation(s) from the static background error"
-mpiexec -n "$NTASKS" "$ENSPERT" enspert.yaml > enspert.log 2>&1 || {
+# shellcheck disable=SC2086  # the launcher is a command, and must split
+$ACKBAR_OFFLINE_LAUNCHER "$NTASKS" "$ENSPERT" enspert.yaml > enspert.log 2>&1 || {
     tail -40 enspert.log >&2
     echo "ensemble-ic: soca_enspert.x failed; the log above is its last 40 lines" >&2
     exit 1

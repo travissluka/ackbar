@@ -20,9 +20,11 @@ def test_optional_settings_are_carried_when_present():
         "ACKBAR_OUTPUT_ROOT": "/o",
         "ACKBAR_SITE": "rancor",
         "ACKBAR_LAUNCHER": "mpiexec",
+        "ACKBAR_QOS": "batch",
     })
     assert site["site"] == "rancor"
     assert site["launcher"] == "mpiexec"
+    assert site["qos"] == "batch"
 
 
 def test_optional_settings_are_absent_rather_than_empty():

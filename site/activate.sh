@@ -36,6 +36,15 @@ ACKBAR_MPI_TASKS=4                 # ranks for the tools that run outside Slurm
 ACKBAR_BUILD_TYPE=RelWithDebInfo
 ACKBAR_CMAKE_GENERATOR=            # empty means make, which is always present
 ACKBAR_LAUNCHER=srun
+# The launcher for the offline tools, which run outside Slurm. Everything up to
+# and including the rank-count flag, so a tool spells one rank as
+# `$ACKBAR_OFFLINE_LAUNCHER 1`. Separate from ACKBAR_LAUNCHER because these two
+# answer different questions: the workflow's launcher runs inside an allocation
+# that already exists, while this one has to make its own or use none. On a
+# machine whose login nodes may run MPI, `mpiexec -n` is right and is the
+# default; on a shared HPC it is forbidden there, and the site sets
+# `srun ... -n` so the same tool queues a job instead.
+ACKBAR_OFFLINE_LAUNCHER="mpiexec -n"
 ACKBAR_CAN_SUBMIT_FROM_COMPUTE=yes
 
 source "$_site_file"
@@ -118,9 +127,11 @@ unset ackbar_python
 
 export ACKBAR_ROOT ACKBAR_SITE
 export ACKBAR_NJOBS ACKBAR_MPI_TASKS ACKBAR_BUILD_TYPE ACKBAR_CMAKE_GENERATOR
+export ACKBAR_MPICC ACKBAR_MPIFC ACKBAR_CFLAGS ACKBAR_FCFLAGS
 export ACKBAR_DATASETS_ROOT ACKBAR_STATIC_ROOT
 export ACKBAR_SCRATCH_ROOT ACKBAR_OUTPUT_ROOT ACKBAR_TEST_ROOT
-export ACKBAR_PARTITION ACKBAR_ACCOUNT ACKBAR_LAUNCHER
+export ACKBAR_PARTITION ACKBAR_ACCOUNT ACKBAR_QOS
+export ACKBAR_LAUNCHER ACKBAR_OFFLINE_LAUNCHER
 export ACKBAR_MAX_SUBMIT_JOBS ACKBAR_MAX_ARRAY_SIZE ACKBAR_CAN_SUBMIT_FROM_COMPUTE
 
 unset _site_file

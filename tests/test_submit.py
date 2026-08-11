@@ -35,7 +35,7 @@ def config():
 def env(tmp_path, config, monkeypatch):
     """A created experiment, a graph, and an sbatch that hands out job ids."""
     site = {"scratch_root": str(tmp_path / "s"), "output_root": str(tmp_path / "o"),
-            "partition": "compute", "account": "ackbar"}
+            "partition": "compute", "account": "ackbar", "qos": "normal"}
     paths = Paths.of(config, site).ensure()
     graph = build_graph(config)
 
@@ -113,6 +113,9 @@ def test_the_partition_and_account_come_from_the_site(env):
     submit.submit_cycle(env.config, env.site, env.paths, 1, graph=env.graph)
     assert kwargs_for(env, "da")["partition"] == "compute"
     assert kwargs_for(env, "da")["account"] == "ackbar"
+    # A shared machine charges by QoS as well, and an unset one must reach
+    # sbatch as an absent flag rather than an empty one.
+    assert kwargs_for(env, "da")["qos"] == "normal"
 
 
 # --- cross-cycle edges, which are the reason this is a program ---------------

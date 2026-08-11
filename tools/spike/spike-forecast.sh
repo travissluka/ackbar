@@ -220,7 +220,8 @@ if [[ -n ${SPIKE_NAMELIST:-} ]]; then
 fi
 
 start=$SECONDS
-mpiexec -n "$NTASKS" ./coupler_main > model.log 2>&1 || {
+# shellcheck disable=SC2086  # the launcher is a command, and must split
+$ACKBAR_OFFLINE_LAUNCHER "$NTASKS" ./coupler_main > model.log 2>&1 || {
     # The log outlives the scratch directory, because the run that failed is
     # the one whose log is worth having and the trap is about to delete it.
     # `tail` alone is not enough: MOM6 prints its FATAL before the backtrace,

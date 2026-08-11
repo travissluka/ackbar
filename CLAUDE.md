@@ -80,9 +80,11 @@ Sets `JEDI_ROOT`, `OMP_NUM_THREADS=1`, ccache/mold/Ninja build accelerators.
 `ecflow` module; both are candidates to avoid building things ourselves.
 
 Machine budget: 8 physical cores / 16 threads. `make -j16`, and `mpiexec -n 8` for a run
-started by hand outside Slurm, which is what the offline `tools/` scripts do. Inside the
-workflow MPI is launched by `$ACKBAR_LAUNCHER` from the site layer (`srun --mpi=pmi2` here),
-never by a spelling written into a job.
+started by hand outside Slurm. Inside the workflow MPI is launched by `$ACKBAR_LAUNCHER` from
+the site layer (`srun --mpi=pmi2` here), never by a spelling written into a job; the offline
+`tools/` scripts use `$ACKBAR_OFFLINE_LAUNCHER` (`mpiexec -n` here), which is separate because
+they run where they were typed rather than inside an allocation, and on a machine that forbids
+MPI on its login nodes that has to become an `srun`.
 
 ### Batch scheduler
 

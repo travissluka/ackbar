@@ -127,7 +127,8 @@ sys.stdout.write(text)
 EOF
 
 echo "coldstart-ic: integrating $DOMAIN for ${HOURS}h from $WHEN on $NTASKS PEs"
-mpiexec -n "$NTASKS" ./coupler_main > model.log 2>&1 || {
+# shellcheck disable=SC2086  # the launcher is a command, and must split
+$ACKBAR_OFFLINE_LAUNCHER "$NTASKS" ./coupler_main > model.log 2>&1 || {
     echo "coldstart-ic: the model failed; log follows" >&2
     tail -40 model.log >&2
     exit 1

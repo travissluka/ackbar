@@ -325,17 +325,19 @@ PY
 # Overridable per invocation because this runs outside Slurm, so nothing
 # schedules it against whatever else is on the box. The tier 3 suite is the
 # case that bites: its experiment tests go through Slurm while this goes
-# straight to mpiexec, and the two together can oversubscribe the node.
+# straight to its own launcher, and the two together can oversubscribe a node.
 NTASKS=${NTASKS:-${ACKBAR_MPI_TASKS:?the site did not set ACKBAR_MPI_TASKS}}
 # Under `--only` one of the two documents has no groups in it, and the toolbox
 # is not asked to run an empty calibration.
 if [[ -z "$ONLY" || "$ONLY" != corr_vt ]]; then
     echo "soca-diffusion: calibrating the horizontal on $NTASKS ranks"
-    mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_hz.yaml
+    # shellcheck disable=SC2086  # the launcher is a command, and must split
+    $ACKBAR_OFFLINE_LAUNCHER "$NTASKS" "$TOOLBOX" calibrate_hz.yaml
 fi
 if [[ -z "$ONLY" || "$ONLY" == corr_vt ]]; then
     echo "soca-diffusion: calibrating the vertical on $NTASKS ranks"
-    mpiexec -n "$NTASKS" "$TOOLBOX" calibrate_vt.yaml
+    # shellcheck disable=SC2086  # the launcher is a command, and must split
+    $ACKBAR_OFFLINE_LAUNCHER "$NTASKS" "$TOOLBOX" calibrate_vt.yaml
 fi
 
 # What the toolbox writes is what the da layers read, so check for the files
