@@ -169,6 +169,41 @@ def test_the_coordinates_move_with_the_mask(grid):
     assert np.allclose(after[:, 0], 2.0 * read(path, "lon")[:, 0] - before[:, 0])
 
 
+def test_every_coordinate_is_reflected_about_its_own_kind(grid):
+    """The assertion above, for the three coordinates it does not cover.
+
+    `lonu` is the one staggered field whose vacated edge is right whichever
+    tracer fills it, because the u faces share their latitude with the tracer
+    row. So checking it alone passed while `latu` was being reflected about a
+    longitude and `lonv` about a latitude, which put a latitude of -214 and a
+    longitude of +134 into the edge of every gridspec on disk.
+    """
+    path, _ = grid
+    before = {name: read(path, name)
+              for name in ("lonu", "latu", "lonv", "latv")}
+    shift_staggered(path)
+    lon, lat = read(path, "lon"), read(path, "lat")
+
+    for name, tracer, axis in (("lonu", lon, -1), ("latu", lat, -1),
+                               ("lonv", lon, -2), ("latv", lat, -2)):
+        after = read(path, name)
+        if axis == -1:
+            assert np.array_equal(after[:, 1:], before[name][:, :-1])
+            assert np.allclose(after[:, 0],
+                               2.0 * tracer[:, 0] - before[name][:, 0])
+        else:
+            assert np.array_equal(after[1:, :], before[name][:-1, :])
+            assert np.allclose(after[0, :],
+                               2.0 * tracer[0, :] - before[name][0, :])
+
+        # The reflection is half a cell, so a filled edge that leaves the
+        # coordinate's own range is a sign it was reflected about the wrong
+        # field. This is what fails loudly on the bug above; the assertions
+        # over the tracer are what say which field was wrong.
+        limit = 90.0 if name.startswith("lat") else 180.0
+        assert np.all(np.abs(after) <= limit)
+
+
 def test_shifting_twice_is_refused(grid):
     """The guard, because a second shift moves everything another cell and
     leaves nothing behind to say that it happened."""

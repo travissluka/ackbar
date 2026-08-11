@@ -72,9 +72,17 @@ STAGGER_VALUE = "west/south"
 #: The fields to move, by the axis they move along. `mask` is separated from the
 #: coordinates because the two need different values at the index the shift
 #: vacates: a mask gains land, a coordinate gains a position.
+#:
+#: **Each coordinate carries its own tracer field, and that pairing is by
+#: coordinate rather than by axis.** The vacated face is filled by reflecting it
+#: about the tracer point, which is only meaningful between like coordinates: a
+#: latitude reflected about a longitude is a number in neither. This once read
+#: one tracer per axis, so `latu` was reflected about `lon` and `lonv` about
+#: `lat`, which put -214 degrees of latitude and +134 degrees of longitude into
+#: the vacated edge of every gridspec built with it.
 STAGGERED = (
-    (-1, "lon", ("lonu", "latu"), "mask2du"),
-    (-2, "lat", ("lonv", "latv"), "mask2dv"),
+    (-1, (("lonu", "lon"), ("latu", "lat")), "mask2du"),
+    (-2, (("lonv", "lon"), ("latv", "lat")), "mask2dv"),
 )
 
 
@@ -110,7 +118,7 @@ def shift_staggered(path):
                     f"can shift"
                 )
 
-        for axis, tracer, coordinates, mask in STAGGERED:
+        for axis, coordinates, mask in STAGGERED:
             dropped = _high(np.asarray(data.variables[mask][:]), axis)
             if np.any(dropped != 0.0):
                 raise GridspecError(
@@ -120,8 +128,8 @@ def shift_staggered(path):
                     f"column to land because it has no cell beyond it, so this "
                     f"file is not one this should be applied to."
                 )
-            centre = np.asarray(data.variables[tracer][:])
-            for name in coordinates:
+            for name, tracer in coordinates:
+                centre = np.asarray(data.variables[tracer][:])
                 values = np.asarray(data.variables[name][:])
                 # The vacated face is outside the domain, so there is no grid
                 # point to copy. Reflecting the old outermost face about its
