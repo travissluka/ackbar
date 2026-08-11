@@ -32,8 +32,10 @@ build the DA cycling around it. It did not go that way: a 24 hour forecast there
 enough that iterating on it was the bottleneck, so the regional domains arrived early and
 `gom_25km` became where everything is proved. Today `gom_25km` is the plumbing domain and the
 whole of tier 3, `gom_12km` is where an answer that matters is computed, and `OM4_025`
-(quarter degree) remains the target for real experiments. `om_1deg`'s only live use is the
-tier 0/1 graph fixtures, which never run a model. See `docs/domains.md`.
+(quarter degree) remains the target for real experiments. `om_1deg`'s only live use is in
+tests that never run a model: the tier 0/1 graph and `ackbar validate` fixtures, plus the
+tier 0 checks that read `config/layers/domain/om_1deg.yaml` directly. Every tier 3 fixture,
+which is where a model does run, is `gom_25km`. See `docs/domains.md`.
 
 **Regional domains at various resolutions are in scope**, alongside the two global configs,
 and domain is a first-class configuration axis rather than a flag. Regional pulls in
@@ -277,8 +279,9 @@ The rest of `docs/` is narrower and worth knowing exists rather than reading up 
 `analysis.md` (the analysis tasks and what each produces), `background-error.md` (the four
 parts of B and which one is calibrated offline), `domains.md` (what each domain is and costs),
 `ensemble-spread.md` (the three spread mechanisms and the offline archive each needs),
-`forcing-reference-height.md` (the deferred `z_bot` question), `model-build.md` and
-`model-data.md` (the model and its input data), `observing-system.md` (what the OSSE archive
+`forcing-reference-height.md` (the deferred `z_bot` question), `from-soca-science.md` (what
+changes and what to unlearn, for someone who knows the old bash workflow), `model-build.md`
+and `model-data.md` (the model and its input data), `observing-system.md` (what the OSSE archive
 imitates and why), `osse.md` (the worked end-to-end study), `slurm.md`, and `testing.md` (the
 tiers, and what each can and cannot catch). `README.md` is the outside view of the same
 material.
