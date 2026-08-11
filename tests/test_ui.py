@@ -155,6 +155,54 @@ def test_the_halt_flag_is_read_live_not_cached(experiment):
     assert found.halted
 
 
+def test_an_archived_run_is_identified_by_its_directory(experiment, tmp_path):
+    """Renaming a finished run's directory is how one gets archived.
+
+    `create` makes the two agree; renaming makes them differ, and then the name
+    inside the frozen config belongs to whatever occupies it next. Identity has
+    to be the directory, which is unique by construction.
+    """
+    archived = tmp_path / "out" / "demo-ninner20" / "cfg"
+    archived.mkdir(parents=True)
+    with open(archived / "experiment.yaml", "w") as handle:
+        yaml.safe_dump(CONFIG, handle)          # still says "demo"
+
+    found = {e.name: e for e in discover(experiment)}
+    assert set(found) == {"demo", "demo-ninner20"}
+    # And each reads its own tree rather than both reading the live one's.
+    assert found["demo-ninner20"].paths.experiment_dir == \
+        tmp_path / "out" / "demo-ninner20"
+    assert found["demo"].paths.experiment_dir == tmp_path / "out" / "demo"
+    # The config's name is kept, because the ledger records, the job names and
+    # every `sacct` row of the archived run carry it.
+    assert found["demo-ninner20"].config_name == "demo"
+    assert found["demo"].config_name == "demo"
+
+
+async def test_two_directories_claiming_one_name_do_not_kill_the_sidebar(
+        experiment, fake_slurm, tmp_path):
+    """The crash this closes: `DuplicateID`, on the first tick, fatal.
+
+    Two archived runs whose configs both said `osse25-3dvar` made the sidebar add
+    two options with one id, and Textual raises. A display that dies on an odd
+    output root is worse than one that shows the odd root.
+    """
+    for name in ("demo-ninner20", "demo-older"):
+        directory = tmp_path / "out" / name / "cfg"
+        directory.mkdir(parents=True)
+        with open(directory / "experiment.yaml", "w") as handle:
+            yaml.safe_dump(CONFIG, handle)      # all three say "demo"
+
+    app = AckbarUI(site=experiment, interval=3600.0)
+    async with app.run_test(size=(150, 40)) as pilot:
+        await pilot.pause()
+        app.apply(app.poller.refresh())
+        await pilot.pause()
+        fleet = app.query_one("#fleet")
+        assert fleet.option_count == 3
+        assert app.selected in {"demo", "demo-ninner20", "demo-older"}
+
+
 # --- one snapshot for every experiment ---------------------------------------
 
 def test_the_poller_asks_the_scheduler_once_for_every_experiment(

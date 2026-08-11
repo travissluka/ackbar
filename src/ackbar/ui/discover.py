@@ -15,7 +15,7 @@ anything Slurm said for that long would not be.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -26,11 +26,25 @@ from ..paths import Paths
 
 @dataclass
 class Experiment:
-    """One experiment on disk, with the parts of it that are frozen."""
+    """One experiment on disk, with the parts of it that are frozen.
+
+    Identified by its *directory*, not by the name inside its frozen config. The
+    two are the same under `create` and come apart the moment somebody archives a
+    run by renaming its directory, which is an ordinary thing to do: rename
+    `osse25-3dvar` to `osse25-3dvar-ninner20`, start a fresh `osse25-3dvar`, and
+    now two frozen configs on disk both say `osse25-3dvar`. A directory name is
+    unique by construction and a config's name is not, so the directory is the
+    identity, and `config_name` keeps the other one because that is what the
+    ledger records, the job names and `sacct` all carry.
+    """
 
     name: str
     config: dict
     paths: Paths
+    #: The name inside the frozen config, which differs from `name` when the
+    #: directory has been renamed. Shown in the banner where it differs, because
+    #: it is the name Slurm knows this experiment's jobs by.
+    config_name: str = ""
     #: The frozen config this was loaded from. The identity a rescan matches on,
     #: rather than the name: the name comes *out* of the file, so matching on it
     #: would mean reading the file to find out whether the file needs reading.
@@ -147,11 +161,21 @@ def load(frozen, site):
     except (OSError, yaml.YAMLError, KeyError, ValueError):
         return None
 
-    # The name in the config wins over the directory name. They are the same
-    # under `create`, and where they are not it is because somebody copied a
-    # directory: the config is what every job and every ledger record says.
+    # The directory wins over the name in the config, and the paths are rooted at
+    # the directory rather than at what the config calls itself. They agree under
+    # `create`; where they do not, it is because a finished run was archived by
+    # renaming its directory, and then the config's name belongs to whatever now
+    # occupies it. Trusting the config there had two consequences, both seen:
+    # the sidebar tried to give two rows the same id and Textual raised
+    # `DuplicateID` on the spot, and everything the console read for the archived
+    # run, its ledger, its logs and its stats, came from the live run's directory
+    # instead of its own.
+    directory = frozen.parent.parent.name
+    if directory != paths.experiment:
+        paths = replace(paths, experiment=directory)
     return Experiment(
-        name=config["experiment"]["name"],
+        name=directory,
+        config_name=config["experiment"]["name"],
         config=config,
         paths=paths,
         source=frozen,

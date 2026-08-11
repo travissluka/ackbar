@@ -61,6 +61,13 @@ class Banner(Static):
         experiment = view.experiment
         text.append("  ▸  ", style=theme.INK["faint"])
         text.append(experiment.name, style="bold #f0f6fc")
+        if experiment.config_name and experiment.config_name != experiment.name:
+            # The directory was renamed, so this is an archived run. Worth saying,
+            # because its jobs, its ledger records and its `sacct` rows all carry
+            # the other name, and because whatever occupies that name now is a
+            # different experiment.
+            text.append(f"  (jobs named {experiment.config_name})",
+                        style=theme.INK["warn"])
         text.append("   ")
         text.append(f"{experiment.domain} · {experiment.solver}"
                     f" · {experiment.model}", style=theme.INK["muted"])
@@ -110,6 +117,14 @@ class FleetList(OptionList):
             if view is None:
                 continue
             if not show_all and _is_old(view):
+                continue
+            # A row per *distinct* name, because `add_option` raises `DuplicateID`
+            # and an exception here kills the whole app on a tick. Identity is the
+            # experiment's directory, so this cannot normally happen; it did when
+            # identity came from the frozen config's name and two archived runs
+            # claimed one, and a display that dies on an odd output root is worse
+            # than one that shows the odd root once.
+            if name in names:
                 continue
             names.append(name)
             self.add_option(Option(
