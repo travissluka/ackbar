@@ -2193,11 +2193,22 @@ def _stats(config, site, paths, cycle, task, member):
     is the task most wanted exactly when something failed. It harvests its own
     cycle including the jobs that are still running alongside it, so a row can
     be incomplete; `ackbar status` reads the scheduler, not this file.
-    """
-    from .harvest import write
 
-    payload = write(paths, cycle, launcher=site.get("launcher", ""))
+    Which is why it then repairs the cycles behind it: its own snapshot is
+    incomplete by construction, and the only cure is to look again once the rest
+    of that cycle has stopped. `refresh_stale` says why this is not an edge.
+    """
+    from .harvest import refresh_stale, write
+
+    launcher = site.get("launcher", "")
+    payload = write(paths, cycle, launcher=launcher)
     totals = payload.get("totals", {})
     print(f"ackbar: harvested {totals.get('jobs', 0)} job(s) for cycle {cycle}, "
           f"{totals.get('core_seconds', 0)} core seconds, "
           f"peak RSS {totals.get('max_rss_kb', 0)}K")
+
+    repaired = refresh_stale(paths, cycle, launcher=launcher)
+    if repaired:
+        print(f"ackbar: re-harvested cycle(s) "
+              f"{', '.join(str(c) for c in repaired)}, whose jobs had not "
+              f"finished when their own harvest ran")

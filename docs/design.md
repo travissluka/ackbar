@@ -586,6 +586,34 @@ Attribution comes from the job name and comment, so a harvested row maps back to
 and member without a side table. The harvest is an `afterany` leaf, because it is most valuable
 exactly when something failed.
 
+Being a leaf of its own cycle means the harvest is a snapshot taken too early, and this is
+structural rather than a matter of tuning: it reads the accounting for every job the ledger has
+recorded for the cycle, while its sibling leaves are still queued. Those rows come back
+`PENDING`, which is why `unfinished` is counted separately from `failed`, and array elements
+that have not started yet come back as one collapsed `123_[5-20]` row that is dropped, so the
+job count is short as well.
+
+So **each cycle's harvest repairs the ones behind it.** By the time cycle *n* runs, cycle *n-1*
+has stopped and `sacct` has its real states. Only files still claiming an unfinished job are
+re-read, so the steady cost is one extra query for the cycle just behind and a settled cycle is
+never queried again. Without this a run that finished cleanly kept a permanent count of jobs
+that had merely not started, and the stats page showed a wall of them for a run with nothing
+left to do.
+
+This is deliberately not a graph edge. Making `stats` wait on the leaves would make it wait on
+`post.state`, whose elements hang off the forecast by `aftercorr`, and a stranded element there
+never terminates: the harvest most wanted when a member failed would be the one thing that never
+ran. That is the same trap `post.state -> verify` was removed for.
+
+The last cycle has nothing behind it to do the repair, so it keeps its snapshot until something
+asks again: `ackbar harvest` with no `--cycle`, or `t` in the console. Both are safe to run at
+any age, because **a harvest never shrinks a file it already wrote.** Re-harvesting a cycle old
+enough that its rows have been purged returns a payload short a job or empty, and committing
+that would destroy the copy taken while the rows existed, which is the one thing here that
+cannot be recovered. The job count is the test, because a purge can only ever reduce it and
+nothing legitimately drops a job from a cycle: the ledger only grows, and a heal adds job ids
+rather than replacing them.
+
 ## Configuration
 
 Explicit named layers, deep-merged in order, later wins. The experiment file declares its own

@@ -6,6 +6,7 @@ so the obvious one-row-per-job query returns no memory at all; and job names are
 not unique across experiments, so attribution has to come from the ledger.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -220,6 +221,101 @@ def test_write_commits_the_file_by_rename(env):
     target = env.paths.stats_file(1)
     assert target.exists()
     assert not list(target.parent.glob("*.partial"))
+
+
+def test_a_harvest_never_shrinks_the_file_it_already_wrote(env):
+    """The purge this whole module exists to outrun.
+
+    `sacct` drops rows on a site retention, and `harvest_cycle` builds its
+    entries out of the rows it got back, so re-harvesting a cycle old enough to
+    have been purged returns a payload short a job or empty. Committing that
+    destroys the copy taken while the rows existed, which is the one thing here
+    that cannot be recovered.
+    """
+    ledger.append(env.paths, cycle=1, task="da", members=(), attempt=1,
+                  job_id=50, dependency="")
+    ledger.append(env.paths, cycle=1, task="verify", members=(), attempt=1,
+                  job_id=51, dependency="")
+    env.lines += [row("50", name="e.1.da"), row("51", name="e.1.verify")]
+    harvest.write(env.paths, 1)
+
+    env.lines.clear()               # the retention window has closed
+    kept = harvest.write(env.paths, 1)
+
+    assert len(kept["jobs"]) == 2
+    assert json.loads(env.paths.stats_file(1).read_text())["totals"]["jobs"] == 2
+
+
+def test_a_stale_unfinished_count_is_repaired_by_a_later_cycle(env):
+    """The bug the stats page showed: a wall of unfinished jobs on a done run.
+
+    A cycle's harvest is taken by a task inside that cycle, so it reads its own
+    leaves while they are still queued. Nothing revisited that, so a cycle that
+    went on to finish cleanly kept the count forever.
+    """
+    ledger.append(env.paths, cycle=1, task="forecast", members=(), attempt=1,
+                  job_id=60, dependency="")
+    ledger.append(env.paths, cycle=1, task="verify", members=(), attempt=1,
+                  job_id=61, dependency="")
+    env.lines += [
+        row("60", name="e.1.forecast", state="COMPLETED"),
+        row("61", name="e.1.verify", state="PENDING"),
+    ]
+    assert harvest.write(env.paths, 1)["totals"]["unfinished"] == 1
+
+    # Cycle 2 runs, by which time cycle 1's leaf has finished.
+    env.lines[-1] = row("61", name="e.1.verify", state="COMPLETED")
+    assert harvest.refresh_stale(env.paths, 2) == [1]
+
+    totals = json.loads(env.paths.stats_file(1).read_text())["totals"]
+    assert (totals["unfinished"], totals["failed"], totals["jobs"]) == (0, 0, 2)
+
+
+def test_a_settled_cycle_is_never_queried_again(env):
+    """What keeps the repair from costing a query per cycle for the whole run."""
+    ledger.append(env.paths, cycle=1, task="da", members=(), attempt=1,
+                  job_id=70, dependency="")
+    env.lines.append(row("70", name="e.1.da", state="COMPLETED"))
+    harvest.write(env.paths, 1)
+    env.asked.clear()
+
+    assert harvest.refresh_stale(env.paths, 5) == []
+    assert env.asked == []
+
+
+def test_a_repair_that_finds_nothing_leaves_the_count_alone(env):
+    """A purge must not turn `unfinished` into `failed`.
+
+    Both are wrong, but this one is wrong in the alarming direction: it invents
+    failures in a run that had none, out of rows Slurm has merely forgotten.
+    """
+    ledger.append(env.paths, cycle=1, task="verify", members=(), attempt=1,
+                  job_id=80, dependency="")
+    env.lines.append(row("80", name="e.1.verify", state="PENDING"))
+    harvest.write(env.paths, 1)
+
+    env.lines.clear()
+    assert harvest.refresh_stale(env.paths, 2) == []
+
+    totals = json.loads(env.paths.stats_file(1).read_text())["totals"]
+    assert (totals["unfinished"], totals["failed"]) == (1, 0)
+
+
+def test_the_cycle_being_harvested_is_not_its_own_repair(env):
+    """`refresh_stale` is exclusive: the current cycle is legitimately unfinished.
+
+    Re-reading it in the same job would query `sacct` twice for the same rows and
+    still record the same snapshot, because the siblings that make it unfinished
+    are waiting on this very task's cycle to drain.
+    """
+    ledger.append(env.paths, cycle=1, task="verify", members=(), attempt=1,
+                  job_id=90, dependency="")
+    env.lines.append(row("90", name="e.1.verify", state="RUNNING"))
+    harvest.write(env.paths, 1)
+    env.asked.clear()
+
+    assert harvest.refresh_stale(env.paths, 1) == []
+    assert env.asked == []
 
 
 @pytest.mark.parametrize("value,expected", [

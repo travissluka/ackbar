@@ -19,6 +19,10 @@ Three things about this that the obvious implementation gets wrong:
   seconds, so a peak during a restart read can fall entirely between samples.
   Any future escalation should be multiplicative rather than
   observed-peak-plus-epsilon.
+- **One harvest of a cycle is never the whole story.** The task doing it is a
+  leaf of the cycle it describes, so its siblings are still queued when it reads
+  the accounting. `refresh_stale` is how that snapshot gets corrected, and
+  `write` is what makes correcting it safe.
 """
 
 import json
@@ -209,11 +213,72 @@ def _int(value):
 
 
 def write(paths, cycle, launcher=""):
-    """Harvest and commit `stats/<cycle>.json`. Returns the payload."""
+    """Harvest and commit `stats/<cycle>.json`. Returns the payload.
+
+    **A harvest never shrinks a file it already wrote.** This whole module exists
+    because `sacct` rows are purged on a site retention, so re-harvesting a cycle
+    old enough to have been purged returns nothing for jobs that are no longer
+    there: `harvest_cycle` builds its entries out of the rows it got back, so the
+    payload would be short a job, or empty, and committing it would destroy the
+    copy that was taken while the rows existed. The count is the test because it
+    is the one thing a purge can only ever reduce.
+
+    Refusing is safe in the other direction too. Nothing legitimately drops a job
+    from a cycle: the ledger only grows, and a heal that resubmits adds job ids
+    rather than replacing them.
+    """
     payload = harvest_cycle(paths, cycle, launcher)
     target = paths.stats_file(cycle)
+    kept = _existing(target)
+    if kept is not None and len(kept.get("jobs", [])) > len(payload["jobs"]):
+        return kept
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_name(target.name + ".partial")
     temp.write_text(json.dumps(payload, indent=2) + "\n")
     temp.replace(target)
     return payload
+
+
+def _existing(target):
+    try:
+        with open(target) as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def refresh_stale(paths, before, launcher=""):
+    """Re-harvest the earlier cycles whose recorded harvest is a stale snapshot.
+
+    A cycle's harvest is taken by a task inside that cycle, so it necessarily
+    reads its own siblings while they are still queued and records them as
+    `unfinished`. Nothing used to revisit that, so a cycle that went on to finish
+    cleanly kept a permanent count of jobs that had merely not started yet, and
+    the stats page showed a wall of them for a run with nothing left to do.
+
+    So each cycle's harvest repairs the ones behind it. By the time cycle *n*
+    runs, the leaves of cycle *n-1* have finished and `sacct` has their real
+    states. Only files that claim an unfinished job are re-read, so the steady
+    cost is one extra query for the cycle just behind, and a cycle whose count
+    reaches zero is never queried again.
+
+    This is deliberately not a graph edge. Making `stats` wait on the leaves
+    would make it wait on `post.state`, which hangs off the forecast by
+    `aftercorr`, and a stranded element there never terminates: the harvest most
+    wanted when a member failed would be the one thing that never ran. That is
+    the same trap `post.state -> verify` was removed for, and `tasks.py` records
+    it as an invariant.
+
+    Returns the cycles it rewrote.
+    """
+    repaired = []
+    for cycle in range(before):
+        payload = _existing(paths.stats_file(cycle))
+        if payload is None:
+            continue
+        if not payload.get("totals", {}).get("unfinished"):
+            continue
+        fresh = write(paths, cycle, launcher)
+        if fresh["totals"] != payload["totals"]:
+            repaired.append(cycle)
+    return repaired
