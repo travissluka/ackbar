@@ -30,10 +30,18 @@
 # The boundary archive is built by `tools/obc-lagged.py` and is keyed by domain,
 # which is why the path resolves through `$(domain_slug)` rather than naming a
 # resolution. A domain without one fails at validate step 3 on a missing path.
+#
+# The archive name carries its span and its member count, and the count is not
+# incidental: `obc-lagged.py` spaces the ladder to fill the span, so an archive
+# built for N members holds different lags than one built for M, not the same
+# lags with more of them. Growing an ensemble therefore means building a new
+# archive and changing this line, and an experiment recreated after such a
+# change reads a boundary it did not originally run against. Only `cfg/`, frozen
+# at create time, records which one a finished run used.
 
 inherit:
   - forcing/gefs-ensemble
 
 ensemble:
   inputs:
-    obc.nc: $(static_root)/obc/$(domain_slug)/glorys-lag21-m20/{{member_dir}}.nc
+    obc.nc: $(static_root)/obc/$(domain_slug)/glorys-lag21-m40/{{member_dir}}.nc

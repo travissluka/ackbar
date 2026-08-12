@@ -43,7 +43,7 @@
 # fails inside the application, and nothing upstream can see it: the graph is
 # satisfied by the file existing, not by the trajectory being whole. That is
 # `tests/test_tier3_4denvar.py`'s subject at three cycles and four members, and
-# this is the same claim at twenty members on the real archive.
+# this is the same claim at forty members on the real archive.
 #
 # Localization is 2.0 Rossby radii, floored at two grid cells, and not masked
 # over land: `loc_hz_open` in `config/static/diffusion.yaml`, built into
@@ -121,7 +121,7 @@ forecast:
   # the error half of it. `mem000` is the control, since a run with a control
   # numbers its members from zero.
   #
-  # A subset rather than all twenty: the long forecast costs one model run per
+  # A subset rather than all forty: the long forecast costs one model run per
   # member per launch and a spread estimate at lead does not need the full
   # ensemble, while the filter itself still runs every member.
   extended:
@@ -139,7 +139,7 @@ vars:
   obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 ensemble:
-  size: 20
+  size: 40
   control: true
   # A 4D-LETKF beside the variational analysis, the same filter `osse25-hybrid`
   # runs, so the ensemble is observation informed rather than a decaying sample
@@ -147,7 +147,7 @@ ensemble:
   # analysis, so the ensemble follows the run being reported.
   source: letkf
   on_missing_member: fail_cycle
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble40
 
 cleanup:
   keep_cycles: 1

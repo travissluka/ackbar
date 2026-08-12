@@ -32,8 +32,9 @@
 # ensemble filter has no static B to rebuild. Its absence is not a setting left
 # out.
 #
-# **The ensemble is real ocean states, not perturbations.** One GLORYS year per
-# member, 1993 to 2013 and 2016, each integrated a day under this domain's own
+# **The ensemble is real ocean states, not perturbations.** One GLORYS date per
+# member, two dates in each of 1993 to 2013 and 2016, each integrated a day
+# under this domain's own
 # boundary and forcing, settled by one more free day, then recentred onto the
 # control. `tools/ensemble-ic-lagged.sh` says why that beats drawing from the
 # static background error, and the short version is two-fold: static
@@ -41,12 +42,19 @@
 # structure, and B says nothing about velocity at all, so every member would
 # have an identical current field.
 #
-# Twenty two years are drawn for twenty members, because the settle drops the
-# ones the model will not integrate freely, and 2014 and 2015 are skipped: the
-# first is the control's own year and the second is the nature run's. A dropped
-# member is not repaired, since a member is a sample and there is nothing to
-# recover from one the model rejects. `provenance.txt` beside the ensemble maps
-# each number back to the year behind it.
+# Forty four draws are made for forty members, because the settle drops the ones
+# the model will not integrate freely, and 2014 and 2015 are skipped: the first
+# is the control's own year and the second is the nature run's. A dropped member
+# is not repaired, since a member is a sample and there is nothing to recover
+# from one the model rejects.
+#
+# Forty four draws are twenty two years at two dates rather than forty four
+# years, because GLORYS12V1 begins in 1993 and there are not forty four usable
+# years to draw from. Two draws ten days apart in the same year are less
+# independent than two different years, so the sample grows faster than its rank
+# and the second date buys less than the first twenty two did.
+# `provenance.txt` beside the ensemble maps each number back to the date behind
+# it.
 #
 # **Settle first, recentre last, and both halves of that are load bearing.** A
 # member arrives from the 24 hour cold start still carrying the interpolation
@@ -109,7 +117,7 @@ forecast:
   # the error half of it. `mem000` is the control, since a run with a control
   # numbers its members from zero.
   #
-  # A subset rather than all twenty: the long forecast costs one model run per
+  # A subset rather than all forty: the long forecast costs one model run per
   # member per launch and a spread estimate at lead does not need the full
   # ensemble, while the filter itself still runs every member.
   extended:
@@ -123,11 +131,11 @@ vars:
   obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 ensemble:
-  size: 20
+  size: 40
   control: true
   source: offline
   on_missing_member: fail_cycle
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble40
 
 cleanup:
   keep_cycles: 1

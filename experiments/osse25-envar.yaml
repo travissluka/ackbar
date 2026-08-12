@@ -1,7 +1,7 @@
 # The quarter degree OSSE's pure FGAT EnVar.
 #
 # See docs/osse.md. `osse25-hybrid` with one layer added, `da/envar`, which sets
-# `solver.covariance: ensemble`. So the background error is the twenty member
+# `solver.covariance: ensemble`. So the background error is the forty member
 # ensemble alone: the static B is still configured and is never read, which
 # `config/layers/da/envar.yaml` argues at length is the honest arrangement
 # rather than a tidy one.
@@ -108,7 +108,7 @@ forecast:
   # the error half of it. `mem000` is the control, since a run with a control
   # numbers its members from zero.
   #
-  # A subset rather than all twenty: the long forecast costs one model run per
+  # A subset rather than all forty: the long forecast costs one model run per
   # member per launch and a spread estimate at lead does not need the full
   # ensemble, while the filter itself still runs every member.
   extended:
@@ -126,7 +126,7 @@ vars:
   obs_dir: $(static_root)/obs/gom12-osse-2015-era5-binned-gom_25km/2015
 
 ensemble:
-  size: 20
+  size: 40
   control: true
   # A filter beside the variational analysis, which is what makes the ensemble
   # component flow dependent and observation informed rather than a decaying
@@ -134,7 +134,7 @@ ensemble:
   # on the variational analysis, so the ensemble follows the run being reported.
   source: letkf
   on_missing_member: fail_cycle
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble20
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/ensemble40
 
 cleanup:
   keep_cycles: 1
