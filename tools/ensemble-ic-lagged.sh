@@ -1,8 +1,11 @@
 #!/bin/bash
-# Build an ensemble initial condition from the same calendar date in other years.
+# Build an ensemble initial condition from nearby calendar dates in other years.
 #
-#   tools/ensemble-ic-lagged.sh <domain> <control ic> <year>...
+#   tools/ensemble-ic-lagged.sh [--offsets "<days>..."] <domain> <control ic> <year>...
 #   tools/ensemble-ic-lagged.sh gom_25km \
+#       $ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00 \
+#       $(seq 1993 2013) 2016
+#   tools/ensemble-ic-lagged.sh --offsets "0 -5 5" gom_25km \
 #       $ACKBAR_STATIC_ROOT/ic/gom_25km/osse-control-25km/20150712T00 \
 #       $(seq 1993 2013) 2016
 #
@@ -13,6 +16,32 @@
 # never a range: the control's own year and the nature run's year both have to
 # come out of the middle of it, and a sample has to be over-drawn because some
 # members do not survive the settle that follows.
+#
+# ---------------------------------------------------------------------------
+# The draw is years times offsets, because years alone run out
+#
+# GLORYS12V1 begins in 1993, and the control's own year and the nature run's
+# have to be left out, so drawing one member per year has a hard ceiling in the
+# high twenties that no amount of time buys past. `--offsets` multiplies the
+# sample by taking each year at several nearby days: `--offsets "0 -5 5"` over
+# 22 years is 66 draws where the years alone were 22.
+#
+# **A few days is not a season.** The paragraph below argues for sampling across
+# years rather than across a span of dates within one year, and that argument is
+# about seasonal phase: a member drawn in May and one drawn in September differ
+# by the stratification cycle, which recentring can only take out of the mean.
+# An offset of a few days moves the seasonal phase by a few days, which is
+# nothing, while the mesoscale field decorrelates over a week or two, so the two
+# draws are close to independent in exactly the part of the state this ensemble
+# exists to sample. Keep the offsets inside a fortnight or the argument stops
+# holding, and note that two draws five days apart in the same year are less
+# independent than two different years: the sample grows faster than its rank.
+#
+# Offsets are applied outermost, so `mem001..N` are every year at the first
+# offset. A draw truncated at the settle therefore degrades to the one-date
+# ensemble rather than to an arbitrary corner of the outer product, and
+# `--offsets "0"` is exactly the behaviour this script had before offsets
+# existed.
 #
 # ---------------------------------------------------------------------------
 # Why this and not `tools/ensemble-ic.sh`
@@ -98,7 +127,26 @@ set -euo pipefail
 ACKBAR_ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 source "$ACKBAR_ROOT/site/activate.sh"
 
-USAGE="usage: ensemble-ic-lagged.sh <domain> <control ic> <year>..."
+USAGE="usage: ensemble-ic-lagged.sh [--offsets \"<days>...\"] <domain> <control ic> <year>..."
+
+# Day offsets from the control's own month and day, one member per year per
+# offset. Defaults to the single offset this script had before, so a command
+# written against the old signature draws the same ensemble it always did.
+OFFSETS=(0)
+if [ "${1:-}" = "--offsets" ]; then
+    [ $# -ge 2 ] || { echo "$USAGE" >&2; exit 1; }
+    read -r -a OFFSETS <<< "$2"
+    shift 2
+fi
+[ ${#OFFSETS[@]} -gt 0 ] || { echo "ensemble-ic-lagged: --offsets is empty" >&2; exit 1; }
+for OFFSET in "${OFFSETS[@]}"; do
+    case $OFFSET in
+        0|-[0-9]*|[0-9]*) ;;
+        *) echo "ensemble-ic-lagged: offset '$OFFSET' is not a whole number of days" >&2
+           exit 1 ;;
+    esac
+done
+
 DOMAIN=${1:?$USAGE}
 CONTROL=${2:?$USAGE}
 shift 2
@@ -120,13 +168,28 @@ MONTHDAY=$(date -u -d "$START" +%m-%d)            # 07-11
 # domain in changes the latter and not the water.
 TOPOGRAPHY=$(cksum "$ACKBAR_STATIC_ROOT/domain/$DOMAIN/INPUT/ocean_topog.nc" | cut -d" " -f1)
 
-MEMBERS=${#YEARS[@]}
+# The draw, as one GLORYS date per member. Offsets outermost, so the first
+# block of members is every year at the first offset; see the header for why
+# that ordering is the one a truncated draw wants.
+DRAWS=()
+for OFFSET in "${OFFSETS[@]}"; do
+    for YEAR in "${YEARS[@]}"; do
+        # Resolved against the year being drawn from rather than the control's,
+        # so every draw is the same distance from the same seasonal phase. `date`
+        # refuses 02-29 in a common year, which is the one month and day this
+        # cannot be run on without choosing offsets that avoid it.
+        DRAWS+=("$(date -u -d "$YEAR-$MONTHDAY $OFFSET days" +%Y-%m-%d)")
+    done
+done
+
+MEMBERS=${#DRAWS[@]}
 OUT=$CONTROL/lagged$MEMBERS
 INPUT=$ACKBAR_STATIC_ROOT/domain/$DOMAIN/INPUT
 CACHE=$ACKBAR_STATIC_ROOT/ic/$DOMAIN/glorys-ic-cache
 SAVED=$INPUT/ic.nc.ensemble-ic-lagged.saved
 
 echo "ensemble-ic-lagged: $MEMBERS member(s), GLORYS $MONTHDAY of ${YEARS[*]}"
+echo "ensemble-ic-lagged: offset ${OFFSETS[*]} day(s)"
 echo "ensemble-ic-lagged: integrated $START -> $TARGET, written to $OUT"
 
 # Put the domain back the way it was found, however this exits. The trap is set
@@ -143,19 +206,23 @@ cp -a "$INPUT/ic.nc" "$SAVED"
 
 mkdir -p "$OUT"
 MEMBER=0
-for YEAR in "${YEARS[@]}"; do
+for DRAW in "${DRAWS[@]}"; do
     MEMBER=$((MEMBER + 1))
     NAME=$(printf "mem%03d" "$MEMBER")
-    SLUG=lagged-$YEAR
+    SLUG=lagged-$DRAW
 
-    # The year a member already holds, if it holds one, *and* the sea floor it
-    # was integrated over. Re-running this to add a year to a draw would
-    # otherwise re-download every year already in it, and the download is the
-    # only slow part; keying on the year alone would silently keep members built
-    # over a bathymetry the domain no longer has, which is a restart whose layer
+    # The GLORYS day a member already holds, if it holds one, *and* the sea floor
+    # it was integrated over. Re-running this to add a draw would otherwise
+    # re-download every day already in it, and the download is the only slow
+    # part; keying on the day alone would silently keep members built over a
+    # bathymetry the domain no longer has, which is a restart whose layer
     # thicknesses do not sum to the column they claim.
-    if [ "$(cat "$OUT/$NAME/year" 2>/dev/null)" = "$YEAR $TOPOGRAPHY" ]; then
-        echo "ensemble-ic-lagged: $NAME is already GLORYS $YEAR-$MONTHDAY"
+    #
+    # The whole date rather than the year, because with offsets the year no
+    # longer identifies the draw: 1997 at +5 days and 1997 at -5 days are two
+    # members and share a year.
+    if [ "$(cat "$OUT/$NAME/year" 2>/dev/null)" = "$DRAW $TOPOGRAPHY" ]; then
+        echo "ensemble-ic-lagged: $NAME is already GLORYS $DRAW"
         continue
     fi
 
@@ -164,23 +231,23 @@ for YEAR in "${YEARS[@]}"; do
     # `ocean_hgrid.nc` and never `ocean_topog.nc`, so a smoothing change
     # invalidates every member's *restart* and none of its input, and the
     # download is minutes where the cold start that follows is seconds.
-    CACHED=$CACHE/$YEAR-$MONTHDAY-valid-$START.nc
+    CACHED=$CACHE/$DRAW-valid-$START.nc
     if [ -s "$CACHED" ]; then
-        echo "ensemble-ic-lagged: $NAME from GLORYS $YEAR-$MONTHDAY (cached)"
+        echo "ensemble-ic-lagged: $NAME from GLORYS $DRAW (cached)"
         cp -a "$CACHED" "$INPUT/ic.nc"
     else
-        echo "ensemble-ic-lagged: $NAME from GLORYS $YEAR-$MONTHDAY"
+        echo "ensemble-ic-lagged: $NAME from GLORYS $DRAW"
         env -u PYTHONPATH "$ACKBAR_ROOT/.venv-data/bin/python" \
             "$ACKBAR_ROOT/tools/fetch-glorys.py" ic "$DOMAIN" \
-            "$YEAR-$MONTHDAY" --valid-at "$START" >/dev/null
+            "$DRAW" --valid-at "$START" >/dev/null
         mkdir -p "$CACHE"
         # Written under a temporary name and moved, so an interrupted copy is
         # not a cache entry that looks complete.
         cp -a "$INPUT/ic.nc" "$CACHED.partial" && mv "$CACHED.partial" "$CACHED"
     fi
 
-    # Named for the year it came from rather than for the member index, because
-    # the index is a position in this ensemble and the year is what the state
+    # Named for the day it came from rather than for the member index, because
+    # the index is a position in this ensemble and the day is what the state
     # is. The member directory below is the position.
     "$ACKBAR_ROOT/tools/coldstart-ic.sh" "$DOMAIN" "${START}T00" 24 "$SLUG" >/dev/null
 
@@ -190,24 +257,26 @@ for YEAR in "${YEARS[@]}"; do
     # Written last, so a member interrupted part way through is rebuilt rather
     # than believed. The restart itself records the GLORYS day it came from, but
     # not in anything cheap to read, and the member index is a position in this
-    # ensemble rather than a year.
-    echo "$YEAR $TOPOGRAPHY" > "$OUT/$NAME/year"
+    # ensemble rather than a day.
+    echo "$DRAW $TOPOGRAPHY" > "$OUT/$NAME/year"
 done
 
 cat > "$OUT/README.md" <<EOF
 # Lagged ensemble initial condition (the raw sample)
 
-$MEMBERS members for \`$DOMAIN\`, valid at $TARGET, one per year: ${YEARS[*]}.
-Each is GLORYS12V1 for $MONTHDAY of its own year, asserted to be an estimate of
+$MEMBERS members for \`$DOMAIN\`, valid at $TARGET, drawn from ${#YEARS[@]} year(s)
+(${YEARS[*]}) at ${#OFFSETS[@]} offset(s) in days from $MONTHDAY (${OFFSETS[*]}).
+Each is GLORYS12V1 for its own day, asserted to be an estimate of
 $START and integrated 24 hours to $TARGET under this domain's own boundary and
 forcing, exactly as the control beside this was.
 
-Each member holds the year it was drawn from, and a checksum of the topography it
-was integrated over, in \`year\`. The ensemble order is the order the years were
-given, so \`mem001\` is ${YEARS[0]}.
+Each member holds the GLORYS day it was drawn from, and a checksum of the
+topography it was integrated over, in \`year\`. Offsets vary slowest, so
+\`mem001\` is ${DRAWS[0]} and the first ${#YEARS[@]} members are the
+offset ${OFFSETS[0]} draw.
 
 **Neither settled nor recentred, and therefore not the one to run.** The mean
-here is a $MEMBERS year climatology of $MONTHDAY, not the control, and every
+here is a climatology of ${#YEARS[@]} years around $MONTHDAY, not the control, and every
 member still carries the shock of being interpolated from a z-level field a day
 ago. Two steps follow, in this order:
 
@@ -222,7 +291,7 @@ reuses whatever of it is still here rather than downloading it again.
 
 Rebuild with:
 
-    tools/ensemble-ic-lagged.sh $DOMAIN $CONTROL ${YEARS[*]}
+    tools/ensemble-ic-lagged.sh --offsets "${OFFSETS[*]}" $DOMAIN $CONTROL ${YEARS[*]}
 EOF
 
 echo "ensemble-ic-lagged: wrote $MEMBERS member(s) to $OUT"
