@@ -41,7 +41,7 @@ inherit:
   # that are deliberate. GEFS rather than the model's climatology, because the
   # arms that inherit these members read GEFS and a member settled under a
   # different atmosphere arrives carrying a fresh imbalance. Shared rather than
-  # per-member, because this run draws twenty three members against an archive
+  # per-member, because this run draws forty five members against an archive
   # of twenty one, and because one day of forcing difference is not where the
   # spread comes from: the members are lagged states, and the arms give each of
   # them its own atmosphere and boundary for the whole of the run that follows.
@@ -57,21 +57,26 @@ cycle:
   count: 1
 
 ensemble:
-  # Twenty two, for an ensemble of twenty. The draw is over-sized because this
+  # Forty four, for an ensemble of forty. The draw is over-sized because this
   # is the run that decides which members exist: a member that cannot be
   # integrated freely for one day is not a sample of anything and is dropped,
   # and which member that is has moved every time the recentring recipe changed
   # at all. The failures are all in ten to twenty five metre columns on the
   # shelf, where this domain's sea floor is close enough to the surface that a
   # shifted state is occasionally a state MOM6 will not take.
-  size: 22
+  #
+  # The draw is twenty two years at two offsets rather than forty four years,
+  # because GLORYS12V1 starts in 1993 and the control's own year and the nature
+  # run's have to stay out of it; see `tools/ensemble-ic-lagged.sh`. Offsets vary
+  # slowest, so mem001 to mem022 are the one-date draw this run used to settle.
+  size: 44
   control: true
   source: none
   # Every member matters here, because every member is the product. A member
   # rebuilt from the mean would be a state with no independent information
   # sitting in an ensemble whose whole purpose is to carry some.
   on_missing_member: fail_cycle
-  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/lagged22
+  initial_condition: $(static_root)/ic/gom_25km/osse-control-25km/20150712T00/lagged44
 
 cleanup:
   # Nothing may be reaped: the restarts are the product.
